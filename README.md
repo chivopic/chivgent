@@ -1,5 +1,7 @@
 # chivgent
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 > A small, readable coding-agent CLI for learning how an agent harness actually
 > works.
 
