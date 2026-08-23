@@ -10,6 +10,7 @@ import {
 } from "./cli-options.js";
 import type { LLMClient } from "./llm.js";
 import { DeepSeekChatClient } from "./providers/deepseek.js";
+import { OpenAICompatibleChatClient } from "./providers/openai-compatible-chat.js";
 import { OpenAIClient } from "./providers/openai.js";
 import { ReadFileTool } from "./tools/read-file.js";
 import { LocalWorkspace } from "./workspace.js";
@@ -35,8 +36,22 @@ async function main(argv: readonly string[]): Promise<number> {
     return 1;
   }
 
+  if (options.model === undefined) {
+    process.stderr.write(
+      "OPENAI_MODEL or --model is required for openai-compatible.\n",
+    );
+    return 1;
+  }
+
+  if (options.provider === "openai-compatible" && options.baseURL === undefined) {
+    process.stderr.write(
+      "OPENAI_BASE_URL is required for openai-compatible.\n",
+    );
+    return 1;
+  }
+
   const apiKeyName =
-    options.provider === "openai" ? "OPENAI_API_KEY" : "DEEPSEEK_API_KEY";
+    options.provider === "deepseek" ? "DEEPSEEK_API_KEY" : "OPENAI_API_KEY";
   const apiKey = process.env[apiKeyName];
   if (apiKey === undefined || apiKey.length === 0) {
     process.stderr.write(`${apiKeyName} is not set.\n`);
@@ -46,7 +61,12 @@ async function main(argv: readonly string[]): Promise<number> {
   const agent = new Agent({
     systemPrompt: SYSTEM_PROMPT,
     maxTurns: 8,
-    llm: createClient(options.provider, apiKey, options.model),
+    llm: createClient(
+      options.provider,
+      apiKey,
+      options.model,
+      options.baseURL,
+    ),
     tools: [new ReadFileTool()],
     workspace: new LocalWorkspace(process.cwd()),
   });
@@ -70,10 +90,24 @@ function createClient(
   provider: Provider,
   apiKey: string,
   model: string,
+  baseURL?: string,
 ): LLMClient {
-  return provider === "openai"
-    ? new OpenAIClient({ apiKey, model })
-    : new DeepSeekChatClient({ apiKey, model });
+  switch (provider) {
+    case "openai":
+      return new OpenAIClient({ apiKey, model });
+    case "deepseek":
+      return new DeepSeekChatClient({ apiKey, model });
+    case "openai-compatible":
+      if (baseURL === undefined) {
+        throw new TypeError("OpenAI-compatible Provider requires a base URL.");
+      }
+      return new OpenAICompatibleChatClient({
+        apiKey,
+        baseURL,
+        model,
+        continuationTag: "openai-compatible-chat",
+      });
+  }
 }
 
 main(process.argv.slice(2))

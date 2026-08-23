@@ -1,21 +1,23 @@
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";
 
-export type Provider = "openai" | "deepseek";
+export type Provider = "openai" | "deepseek" | "openai-compatible";
 
-const DEFAULT_MODELS: Readonly<Record<Provider, string>> = {
+const DEFAULT_MODELS = {
   openai: "gpt-5.6",
   deepseek: "deepseek-v4-flash",
-};
+} as const;
 
 export interface CliEnvironment {
   readonly OPENAI_MODEL?: string;
+  readonly OPENAI_BASE_URL?: string;
   readonly DEEPSEEK_MODEL?: string;
 }
 
 export interface CliOptions {
   readonly prompt?: string;
   readonly provider: Provider;
-  readonly model: string;
+  readonly model?: string;
+  readonly baseURL?: string;
   readonly help: boolean;
   readonly version: boolean;
 }
@@ -51,14 +53,20 @@ export function parseCliArgs(
   }
 
   const environmentModel =
-    provider === "openai"
-      ? environment.OPENAI_MODEL
-      : environment.DEEPSEEK_MODEL;
+    provider === "deepseek"
+      ? environment.DEEPSEEK_MODEL
+      : environment.OPENAI_MODEL;
+  const defaultModel =
+    provider === "openai-compatible" ? undefined : DEFAULT_MODELS[provider];
+  const model = requestedModel || environmentModel || defaultModel;
 
   return {
     ...(promptParts.length === 0 ? {} : { prompt: promptParts.join(" ") }),
     provider,
-    model: requestedModel || environmentModel || DEFAULT_MODELS[provider],
+    ...(model === undefined ? {} : { model }),
+    ...(provider === "openai-compatible" && environment.OPENAI_BASE_URL
+      ? { baseURL: environment.OPENAI_BASE_URL }
+      : {}),
     help,
     version,
   };
@@ -68,17 +76,18 @@ export function helpText(): string {
   return `chivgent ${VERSION}
 
 Usage:
-  chivgent [--provider openai|deepseek] [--model MODEL] "question"
+  chivgent [--provider openai|deepseek|openai-compatible] [--model MODEL] "question"
 
 Options:
-  --provider NAME  LLM Provider: openai or deepseek (default: openai)
+  --provider NAME  openai, deepseek, or openai-compatible (default: openai)
   --model MODEL    Provider model override
   -h, --help       Show help
   -v, --version    Show version
 
 Environment:
-  OPENAI_API_KEY   Required when --provider openai
-  OPENAI_MODEL     Optional OpenAI model (default: ${DEFAULT_MODELS.openai})
+  OPENAI_API_KEY   Required for openai and openai-compatible
+  OPENAI_MODEL     OpenAI model (default: ${DEFAULT_MODELS.openai}); required for compatible
+  OPENAI_BASE_URL  Required when --provider openai-compatible
   DEEPSEEK_API_KEY Required when --provider deepseek
   DEEPSEEK_MODEL   Optional DeepSeek model (default: ${DEFAULT_MODELS.deepseek})
 `;
@@ -97,9 +106,13 @@ function readOptionValue(
 }
 
 function parseProvider(value: string): Provider {
-  if (value !== "openai" && value !== "deepseek") {
+  if (
+    value !== "openai" &&
+    value !== "deepseek" &&
+    value !== "openai-compatible"
+  ) {
     throw new TypeError(
-      `Unsupported provider: ${value}. Expected openai or deepseek.`,
+      `Unsupported provider: ${value}. Expected openai, deepseek, or openai-compatible.`,
     );
   }
   return value;

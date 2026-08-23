@@ -11,7 +11,8 @@
 
 `chivgent` connects a Provider-independent agent loop to LLM APIs, tools, and a
 workspace boundary. The current MVP can inspect a local project with a safe,
-read-only `read_file` tool and answer questions using OpenAI or DeepSeek.
+read-only `read_file` tool and answer questions using OpenAI, DeepSeek, or any
+compatible Chat Completions endpoint.
 
 The project is intentionally compact: it is designed to make the mechanics of
 tool calling, conversation state, Provider adapters, and loop termination easy
@@ -23,6 +24,7 @@ to study before adding production-harness complexity.
 - Provider-independent runtime messages and tool contracts.
 - OpenAI support through the Responses API.
 - DeepSeek support through a reusable OpenAI-compatible Chat Completions client.
+- Custom OpenAI-compatible endpoints through environment-only configuration.
 - Safe, read-only workspace access with traversal and symlink-escape protection.
 - Tool argument validation, explicit tool errors, and an eight-turn safety limit.
 - A packaged Node.js CLI with no framework dependency.
@@ -34,7 +36,7 @@ to study before adding production-harness complexity.
 
 - Node.js 20 or newer
 - npm
-- An OpenAI or DeepSeek API key
+- An API key for OpenAI, DeepSeek, or a compatible Provider
 
 ### Install from source
 
@@ -64,16 +66,26 @@ export DEEPSEEK_API_KEY="your-api-key"
 chivgent --provider deepseek "Explain the architecture in src/"
 ```
 
+With any OpenAI-compatible Chat Completions endpoint:
+
+```bash
+export OPENAI_API_KEY="your-provider-api-key"
+export OPENAI_BASE_URL="https://api.vendor.example/v1"
+export OPENAI_MODEL="vendor-model"
+
+chivgent --provider openai-compatible "Explain the architecture in src/"
+```
+
 The CLI prints only the final answer. Provider failures and diagnostics go to
 stderr and produce a non-zero exit code.
 
 ## CLI reference
 
 ```text
-chivgent [--provider openai|deepseek] [--model MODEL] "question"
+chivgent [--provider openai|deepseek|openai-compatible] [--model MODEL] "question"
 
 Options:
-  --provider NAME  LLM Provider: openai or deepseek (default: openai)
+  --provider NAME  openai, deepseek, or openai-compatible (default: openai)
   --model MODEL    Provider model override
   -h, --help       Show help
   -v, --version    Show version
@@ -85,13 +97,16 @@ Options:
 | --- | --- | --- | --- | --- |
 | OpenAI | `OPENAI_API_KEY` | `OPENAI_MODEL` | `gpt-5.6` | Responses API |
 | DeepSeek | `DEEPSEEK_API_KEY` | `DEEPSEEK_MODEL` | `deepseek-v4-flash` | OpenAI-compatible Chat Completions |
+| Custom compatible | `OPENAI_API_KEY` | `OPENAI_MODEL` | Required | OpenAI-compatible Chat Completions |
 
 An explicit `--model` value takes precedence over the Provider-specific model
-environment variable.
+environment variable. Custom compatible Providers also require
+`OPENAI_BASE_URL`.
 
 ```bash
 chivgent --provider openai --model gpt-5.6 "Explain package.json"
 chivgent --provider deepseek --model deepseek-v4-pro "Explain package.json"
+chivgent --provider openai-compatible --model vendor-model "Explain package.json"
 ```
 
 ## Architecture
@@ -99,7 +114,7 @@ chivgent --provider deepseek --model deepseek-v4-pro "Explain package.json"
 ```text
                                   +-> OpenAI Responses API
 User -> CLI -> Agent -> LLMClient |
-                 |                +-> OpenAI-compatible Chat -> DeepSeek
+                 |                +-> OpenAI-compatible Chat -> DeepSeek / custom
                  |
                  +-> Tool Registry -> read_file -> Workspace
 ```
@@ -118,8 +133,21 @@ format.
 
 ### OpenAI-compatible Providers
 
-Yes, compatible Providers can reuse the official `openai` npm package by
-changing `baseURL`, credentials, and model:
+Compatible Providers reuse the official `openai` npm package by changing
+`baseURL`, credentials, and model. CLI users do not need to edit code:
+
+```bash
+export OPENAI_API_KEY="your-provider-api-key"
+export OPENAI_BASE_URL="https://api.vendor.example/v1"
+export OPENAI_MODEL="vendor-model"
+
+chivgent --provider openai-compatible "What does src/agent.ts do?"
+```
+
+`OPENAI_BASE_URL` must point to the Provider's OpenAI-compatible API root. The
+Provider must implement `POST /chat/completions` and function tool calling.
+
+When adding a named Provider in source code, use the same adapter:
 
 ```ts
 const client = new OpenAICompatibleChatClient({
@@ -173,7 +201,7 @@ Build a locally installable tarball:
 
 ```bash
 npm pack
-npm install -g ./chivgent-0.2.0.tgz
+npm install -g ./chivgent-0.3.0.tgz
 ```
 
 Tests use scripted or mocked LLM clients. A real API smoke test is deliberately
@@ -182,6 +210,8 @@ manual so the default test suite never consumes credits.
 ## Security model
 
 - API keys are read from environment variables and must never be committed.
+- A custom `OPENAI_BASE_URL` receives the configured API key and prompts; use
+  only endpoints you trust.
 - The only current tool is read-only.
 - Paths must remain inside the current workspace.
 - Real-path checks block `..` traversal and symlink escapes.
@@ -198,6 +228,7 @@ model before granting future write or shell tools access to sensitive projects.
 - [x] Safe `read_file` tool
 - [x] OpenAI and DeepSeek Providers
 - [x] Reusable OpenAI-compatible Chat Completions adapter
+- [x] Custom OpenAI-compatible CLI Provider
 - [ ] Streaming output and runtime events
 - [ ] Persistent multi-turn sessions
 - [ ] Context-window management and compaction

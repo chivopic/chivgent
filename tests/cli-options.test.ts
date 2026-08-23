@@ -29,6 +29,26 @@ describe("CLI options", () => {
     ).toMatchObject({ model: "deepseek-custom" });
   });
 
+  it("configures an OpenAI-compatible Provider from standard environment variables", () => {
+    expect(
+      parseCliArgs(["--provider", "openai-compatible", "Question"], {
+        OPENAI_BASE_URL: "https://api.vendor.example/v1",
+        OPENAI_MODEL: "vendor-model",
+      }),
+    ).toMatchObject({
+      provider: "openai-compatible",
+      baseURL: "https://api.vendor.example/v1",
+      model: "vendor-model",
+      prompt: "Question",
+    });
+  });
+
+  it("does not invent a model for an OpenAI-compatible Provider", () => {
+    expect(
+      parseCliArgs(["--provider", "openai-compatible", "Question"], {}),
+    ).not.toHaveProperty("model");
+  });
+
   it("prefers an explicit model", () => {
     expect(
       parseCliArgs(
@@ -46,7 +66,9 @@ describe("CLI options", () => {
 
   it("documents both Providers", () => {
     expect(helpText()).toContain("--provider openai|deepseek");
+    expect(helpText()).toContain("openai-compatible");
+    expect(helpText()).toContain("OPENAI_BASE_URL");
     expect(helpText()).toContain("DEEPSEEK_API_KEY");
-    expect(VERSION).toBe("0.2.0");
+    expect(VERSION).toBe("0.3.0");
   });
 });
