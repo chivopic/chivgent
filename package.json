@@ -1,0 +1,48 @@
+{
+  "name": "chivgent",
+  "version": "0.2.0",
+  "description": "A minimal coding agent CLI built to learn agent harness architecture.",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chivopic/chivgent.git"
+  },
+  "homepage": "https://github.com/chivopic/chivgent#readme",
+  "bugs": {
+    "url": "https://github.com/chivopic/chivgent/issues"
+  },
+  "keywords": [
+    "agent",
+    "cli",
+    "coding-agent",
+    "deepseek",
+    "openai",
+    "tool-calling"
+  ],
+  "type": "module",
+  "bin": {
+    "chivgent": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "openai": "7.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  }
+}
