@@ -6,6 +6,7 @@
 ![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-339933?logo=nodedotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-ESM-3178C6?logo=typescript&logoColor=white)
 [![CI](https://github.com/chivopic/chivgent/actions/workflows/ci.yml/badge.svg)](https://github.com/chivopic/chivgent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Status](https://img.shields.io/badge/status-MVP-orange)
 
 `chivgent` connects a Provider-independent agent loop to LLM APIs, tools, and a
@@ -224,5 +225,4 @@ Agent runtime independent from vendor SDK schemas.
 
 ## License
 
-No open-source license has been granted yet. The repository is publicly visible,
-but the code remains `UNLICENSED` until a license is selected.
+Licensed under the [MIT License](LICENSE).

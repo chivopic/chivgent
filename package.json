@@ -2,7 +2,7 @@
   "name": "chivgent",
   "version": "0.2.0",
   "description": "A minimal coding agent CLI built to learn agent harness architecture.",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/chivopic/chivgent.git"
