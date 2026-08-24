@@ -1,6 +1,6 @@
 {
   "name": "chivgent",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A minimal coding agent CLI built to learn agent harness architecture.",
   "license": "MIT",
   "repository": {
@@ -39,6 +39,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
+    "ignore": "7.0.6",
     "openai": "7.5.0"
   },
   "devDependencies": {

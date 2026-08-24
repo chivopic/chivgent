@@ -12,8 +12,8 @@
 ![Status](https://img.shields.io/badge/status-MVP-orange)
 
 `chivgent` connects a Provider-independent agent loop to LLM APIs, tools, and a
-workspace boundary. The current MVP can inspect a local project with a safe,
-read-only `read_file` tool and answer questions using OpenAI, DeepSeek, or any
+workspace boundary. The current MVP can discover files, search source text, and
+read bounded file ranges before answering with OpenAI, DeepSeek, or any
 compatible Chat Completions endpoint.
 
 The project is intentionally compact: it is designed to make the mechanics of
@@ -27,7 +27,10 @@ to study before adding production-harness complexity.
 - OpenAI support through the Responses API.
 - DeepSeek support through a reusable OpenAI-compatible Chat Completions client.
 - Custom OpenAI-compatible endpoints through environment-only configuration.
+- Deterministic project discovery through `list_files` and literal `search_text`.
+- Ranged `read_file` output with continuation hints and bounded tool results.
 - Safe, read-only workspace access with traversal and symlink-escape protection.
+- Root `.gitignore`, generated-directory, and sensitive-path filtering.
 - Tool argument validation, explicit tool errors, and an eight-turn safety limit.
 - A packaged Node.js CLI with no framework dependency.
 - Unit tests that do not spend API credits.
@@ -118,7 +121,7 @@ chivgent --provider openai-compatible --model vendor-model "Explain package.json
 User -> CLI -> Agent -> LLMClient |
                  |                +-> OpenAI-compatible Chat -> DeepSeek / custom
                  |
-                 +-> Tool Registry -> read_file -> Workspace
+                 +-> Tool Registry -> list_files / search_text / read_file -> Workspace
 ```
 
 The Agent runtime owns its own messages. Provider-specific schemas are converted
@@ -185,7 +188,10 @@ src/
     deepseek.ts                  DeepSeek configuration wrapper
   tools/
     tool.ts                      Tool contract
-    read-file.ts                 Read-only file tool
+    output.ts                    Shared 64 KiB tool-output boundary
+    list-files.ts                Deterministic project-tree discovery
+    search-text.ts               Bounded literal source search
+    read-file.ts                 Ranged text-file reader
 tests/                           Provider, loop, and workspace tests
 docs/                            Architecture and learning notes
 ```
@@ -203,7 +209,7 @@ Build a locally installable tarball:
 
 ```bash
 npm pack
-npm install -g ./chivgent-0.3.0.tgz
+npm install -g ./chivgent-0.4.0.tgz
 ```
 
 Tests use scripted or mocked LLM clients. A real API smoke test is deliberately
@@ -214,10 +220,13 @@ manual so the default test suite never consumes credits.
 - API keys are read from environment variables and must never be committed.
 - A custom `OPENAI_BASE_URL` receives the configured API key and prompts; use
   only endpoints you trust.
-- The only current tool is read-only.
+- All current workspace tools are read-only.
 - Paths must remain inside the current workspace.
 - Real-path checks block `..` traversal and symlink escapes.
 - File size and binary-content checks limit unsafe reads.
+- Discovery respects the root `.gitignore` and fixed generated-directory ignores.
+- Common credential and private-key paths are denied across all workspace tools.
+- Tool results are limited to 64 KiB; reads, scans, depth, and result counts are bounded.
 - Tool inputs are untrusted and validated before execution.
 - The agent stops after a bounded number of model turns.
 
@@ -231,6 +240,7 @@ model before granting future write or shell tools access to sensitive projects.
 - [x] OpenAI and DeepSeek Providers
 - [x] Reusable OpenAI-compatible Chat Completions adapter
 - [x] Custom OpenAI-compatible CLI Provider
+- [x] Project discovery tools: `list_files`, `search_text`, and ranged `read_file`
 - [ ] Streaming output and runtime events
 - [ ] Persistent multi-turn sessions
 - [ ] Context-window management and compaction
@@ -242,6 +252,7 @@ model before granting future write or shell tools access to sensitive projects.
 
 - [Stage 1: Minimal Agent design](docs/stage-1-minimal-agent.md)
 - [DeepSeek Provider design](docs/deepseek-provider.md)
+- [Stage 2: Project Discovery implementation design](docs/stage-2-project-discovery.md)
 
 ## Contributing
 

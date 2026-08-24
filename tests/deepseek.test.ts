@@ -2,6 +2,9 @@ import OpenAI from "openai";
 import { describe, expect, it, vi } from "vitest";
 import type { LLMRequest } from "../src/llm.js";
 import { DeepSeekChatClient } from "../src/providers/deepseek.js";
+import { ListFilesTool } from "../src/tools/list-files.js";
+import { ReadFileTool } from "../src/tools/read-file.js";
+import { SearchTextTool } from "../src/tools/search-text.js";
 
 const tools: LLMRequest["tools"] = [
   {
@@ -278,5 +281,40 @@ describe("DeepSeekChatClient", () => {
         continuation: { provider: "openai-responses" },
       }),
     ).rejects.toThrow("incompatible continuation");
+  });
+
+  it("maps every discovery tool through the compatible function boundary", async () => {
+    const create = vi.fn().mockResolvedValue({
+      choices: [{ message: { role: "assistant", content: "Done" } }],
+    });
+    const client = new DeepSeekChatClient({
+      apiKey: "test-key",
+      model: "deepseek-test",
+      client: { chat: { completions: { create } } } as unknown as OpenAI,
+    });
+    const discoveryTools = [
+      new ListFilesTool(),
+      new SearchTextTool(),
+      new ReadFileTool(),
+    ];
+
+    await client.complete({
+      systemPrompt: "System prompt",
+      messages: [{ role: "user", content: "Explain this project" }],
+      tools: discoveryTools,
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tools: discoveryTools.map((tool) => ({
+          type: "function",
+          function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.inputSchema,
+          },
+        })),
+      }),
+    );
   });
 });

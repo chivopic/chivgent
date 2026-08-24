@@ -2,6 +2,9 @@ import OpenAI from "openai";
 import { describe, expect, it, vi } from "vitest";
 import type { LLMRequest } from "../src/llm.js";
 import { OpenAIClient } from "../src/providers/openai.js";
+import { ListFilesTool } from "../src/tools/list-files.js";
+import { ReadFileTool } from "../src/tools/read-file.js";
+import { SearchTextTool } from "../src/tools/search-text.js";
 
 const tools: LLMRequest["tools"] = [
   {
@@ -200,5 +203,48 @@ describe("OpenAIClient", () => {
         continuation: { provider: "other" },
       }),
     ).rejects.toThrow("incompatible continuation");
+  });
+
+  it("maps every discovery tool as a strict function schema", async () => {
+    const create = vi.fn().mockResolvedValue({
+      id: "resp-tools",
+      output_text: "Done",
+      output: [{ type: "message" }],
+    });
+    const client = new OpenAIClient({
+      apiKey: "test-key",
+      model: "test-model",
+      client: { responses: { create } } as unknown as OpenAI,
+    });
+    const discoveryTools = [
+      new ListFilesTool(),
+      new SearchTextTool(),
+      new ReadFileTool(),
+    ];
+
+    await client.complete({
+      systemPrompt: "System prompt",
+      messages: [{ role: "user", content: "Explain this project" }],
+      tools: discoveryTools,
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tools: discoveryTools.map((tool) =>
+          expect.objectContaining({
+            type: "function",
+            name: tool.name,
+            parameters: tool.inputSchema,
+            strict: true,
+          }),
+        ),
+      }),
+    );
+    for (const tool of discoveryTools) {
+      expect(tool.inputSchema.required).toEqual(
+        Object.keys(tool.inputSchema.properties),
+      );
+      expect(tool.inputSchema.additionalProperties).toBe(false);
+    }
   });
 });

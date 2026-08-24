@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { Agent, AgentProtocolError } from "../src/agent.js";
+import { ListFilesTool } from "../src/tools/list-files.js";
+import { ReadFileTool } from "../src/tools/read-file.js";
+import { SearchTextTool } from "../src/tools/search-text.js";
 import type { Tool, ToolOutput } from "../src/tools/tool.js";
 import type { Workspace } from "../src/workspace.js";
 import { assistant, FakeLLMClient } from "./fakes.js";
@@ -7,7 +10,33 @@ import { assistant, FakeLLMClient } from "./fakes.js";
 const workspace: Workspace = {
   root: "/workspace",
   async readTextFile(path) {
-    return `contents:${path}`;
+    return {
+      content: `contents:${path}`,
+      startLine: 1,
+      endLine: 1,
+      totalLines: 1,
+      truncated: false,
+    };
+  },
+  async listFiles() {
+    return {
+      entries: [
+        { path: "package.json", type: "file" },
+        { path: "src/", type: "directory" },
+        { path: "src/agent.ts", type: "file" },
+      ],
+      truncated: false,
+    };
+  },
+  async searchText() {
+    return {
+      matches: [
+        { path: "src/agent.ts", line: 46, preview: "export class Agent" },
+      ],
+      truncated: false,
+      scannedFiles: 3,
+      skippedFiles: 0,
+    };
   },
 };
 
@@ -174,5 +203,66 @@ describe("Agent", () => {
     expect(() => createAgent(new FakeLLMClient([]), [same, same])).toThrow(
       "Duplicate tool name",
     );
+  });
+
+  it("discovers an unfamiliar project before answering", async () => {
+    const llm = new FakeLLMClient([
+      assistant("", [
+        {
+          id: "call-list",
+          name: "list_files",
+          arguments: { path: ".", max_depth: 4 },
+        },
+      ]),
+      assistant("", [
+        {
+          id: "call-package",
+          name: "read_file",
+          arguments: {
+            path: "package.json",
+            start_line: 1,
+            line_count: 200,
+          },
+        },
+      ]),
+      assistant("", [
+        {
+          id: "call-search",
+          name: "search_text",
+          arguments: {
+            query: "class Agent",
+            path: "src",
+            max_results: 50,
+          },
+        },
+      ]),
+      assistant("", [
+        {
+          id: "call-read",
+          name: "read_file",
+          arguments: {
+            path: "src/agent.ts",
+            start_line: 46,
+            line_count: 120,
+          },
+        },
+      ]),
+      assistant("The project contains a tool-calling Agent runtime."),
+    ]);
+
+    const result = await createAgent(
+      llm,
+      [new ListFilesTool(), new SearchTextTool(), new ReadFileTool()],
+      6,
+    ).run("What does this project do?");
+
+    expect(result).toMatchObject({ status: "completed", turnCount: 5 });
+    expect(
+      llm.requests
+        .slice(1)
+        .map((request) => request.messages.at(-1))
+        .filter((message) => message?.role === "tool")
+        .map((message) => (message?.role === "tool" ? message.toolName : "")),
+    ).toEqual(["list_files", "read_file", "search_text", "read_file"]);
   });
 });

@@ -69,6 +69,6 @@ describe("CLI options", () => {
     expect(helpText()).toContain("openai-compatible");
     expect(helpText()).toContain("OPENAI_BASE_URL");
     expect(helpText()).toContain("DEEPSEEK_API_KEY");
-    expect(VERSION).toBe("0.3.0");
+    expect(VERSION).toBe("0.4.0");
   });
 });

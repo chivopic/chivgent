@@ -11,8 +11,8 @@
 ![Status](https://img.shields.io/badge/status-MVP-orange)
 
 `chivgent` 将 Provider 无关的 Agent Loop 与 LLM API、工具和工作区边界连接起来。
-当前 MVP 可以通过安全、只读的 `read_file` 工具分析本地项目，并使用 OpenAI、
-DeepSeek 或任意兼容 Chat Completions 的 API 回答代码问题。
+当前 MVP 可以先发现文件、搜索源码并分段读取内容，再使用 OpenAI、DeepSeek 或
+任意兼容 Chat Completions 的 API 回答代码问题。
 
 这个项目刻意保持精简：先让 Tool Calling、Conversation State、Provider Adapter
 和循环终止条件容易理解，再逐步加入成熟 Agent Harness 所需的工程复杂度。
@@ -24,7 +24,10 @@ DeepSeek 或任意兼容 Chat Completions 的 API 回答代码问题。
 - 通过 Responses API 支持 OpenAI。
 - 通过通用 OpenAI-compatible Chat Completions 客户端支持 DeepSeek。
 - 无需修改代码即可配置自定义 OpenAI-compatible API。
+- 通过 `list_files` 和字面量 `search_text` 确定性地发现项目内容。
+- 支持带续读提示的分段 `read_file`，所有工具结果都有容量上限。
 - 安全、只读的工作区访问，阻止路径穿越和符号链接逃逸。
+- 支持根 `.gitignore`、生成目录和敏感路径过滤。
 - 工具参数验证、明确的工具错误和最多八轮的安全限制。
 - 可打包安装的 Node.js CLI，不依赖 Agent 框架。
 - 默认测试不调用真实 API，不消耗模型额度。
@@ -121,7 +124,7 @@ chivgent --provider openai-compatible --model vendor-model "解释 package.json"
 用户 -> CLI -> Agent -> LLMClient |
                  |                +-> OpenAI-compatible Chat -> DeepSeek / 自定义
                  |
-                 +-> Tool Registry -> read_file -> Workspace
+                 +-> Tool Registry -> list_files / search_text / read_file -> Workspace
 ```
 
 Agent Runtime 拥有自己的消息模型。Provider 特有的数据结构只在 `LLMClient` 边界
@@ -185,7 +188,10 @@ src/
     deepseek.ts                  DeepSeek 配置包装器
   tools/
     tool.ts                      Tool 契约
-    read-file.ts                 只读文件工具
+    output.ts                    共享的 64 KiB 工具输出边界
+    list-files.ts                确定性的项目树发现工具
+    search-text.ts               有界的源码字面量搜索工具
+    read-file.ts                 分段文本读取工具
 tests/                           Provider、Agent Loop 和 Workspace 测试
 docs/                            架构与学习文档
 ```
@@ -203,7 +209,7 @@ npm run build
 
 ```bash
 npm pack
-npm install -g ./chivgent-0.3.0.tgz
+npm install -g ./chivgent-0.4.0.tgz
 ```
 
 测试使用脚本化或 Mock LLM Client。真实 API Smoke Test 需要手工执行，因此默认
@@ -213,10 +219,13 @@ npm install -g ./chivgent-0.3.0.tgz
 
 - API Key 只从环境变量读取，绝不能提交到仓库。
 - 自定义 `OPENAI_BASE_URL` 会收到配置的 API Key 和提示词，只能使用可信端点。
-- 当前唯一的工具是只读工具。
+- 当前所有工作区工具都是只读工具。
 - 文件路径必须位于当前工作区内。
 - Real Path 检查会阻止 `..` 路径穿越和符号链接逃逸。
 - 文件大小和二进制内容检查会限制不安全的读取。
+- 自动发现遵循根 `.gitignore` 和固定的生成目录忽略规则。
+- 所有工具统一禁止常见凭据、私钥和敏感配置路径。
+- 工具结果限制为 64 KiB，读取、扫描、深度和结果数量都有硬上限。
 - 工具输入是不可信数据，执行前必须验证。
 - Agent 会在有限的模型轮数后终止。
 
@@ -230,6 +239,7 @@ npm install -g ./chivgent-0.3.0.tgz
 - [x] OpenAI 和 DeepSeek Provider
 - [x] 通用 OpenAI-compatible Chat Completions Adapter
 - [x] 自定义 OpenAI-compatible CLI Provider
+- [x] 项目发现工具：`list_files`、`search_text` 和分段 `read_file`
 - [ ] 流式输出和运行时事件
 - [ ] 持久化多轮 Session
 - [ ] Context Window 管理和压缩
@@ -241,6 +251,7 @@ npm install -g ./chivgent-0.3.0.tgz
 
 - [Stage 1：Minimal Agent 设计](docs/stage-1-minimal-agent.md)
 - [DeepSeek Provider 设计](docs/deepseek-provider.md)
+- [Stage 2：Project Discovery 实现设计](docs/stage-2-project-discovery.md)
 
 ## 参与贡献
 
