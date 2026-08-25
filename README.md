@@ -27,6 +27,9 @@ to study before adding production-harness complexity.
 - OpenAI support through the Responses API.
 - DeepSeek support through a reusable OpenAI-compatible Chat Completions client.
 - Custom OpenAI-compatible endpoints through environment-only configuration.
+- Streamed answers rendered from a typed runtime event stream.
+- Interruptible runs: Ctrl+C ends the current run without losing the transcript.
+- Per-attempt Provider timeouts and bounded exponential-backoff retries.
 - Deterministic project discovery through `list_files` and literal `search_text`.
 - Ranged `read_file` output with continuation hints and bounded tool results.
 - Safe, read-only workspace access with traversal and symlink-escape protection.
@@ -81,8 +84,10 @@ export OPENAI_MODEL="vendor-model"
 chivgent --provider openai-compatible "Explain the architecture in src/"
 ```
 
-The CLI prints only the final answer. Provider failures and diagnostics go to
-stderr and produce a non-zero exit code.
+Answers stream to stdout as the model produces them, so stdout stays pipeable.
+Tool activity, retries, and run status go to stderr; Provider failures produce a
+non-zero exit code. Use `--no-stream` for one final write, and `--quiet` to hide
+tool activity.
 
 ## CLI reference
 
@@ -92,9 +97,15 @@ chivgent [--provider openai|deepseek|openai-compatible] [--model MODEL] "questio
 Options:
   --provider NAME  openai, deepseek, or openai-compatible (default: openai)
   --model MODEL    Provider model override
+  --max-turns N    Tool-calling turn limit (default: 8)
+  --no-stream      Wait for the full answer instead of streaming tokens
+  -q, --quiet      Hide tool activity on stderr
   -h, --help       Show help
   -v, --version    Show version
 ```
+
+Exit codes: `0` answered, `1` configuration or Provider failure, `2` turn limit
+reached, `130` interrupted with Ctrl+C.
 
 ### Provider configuration
 
@@ -135,6 +146,29 @@ AssistantMessage <- normalized result
 
 This prevents the Agent, tools, and CLI from depending on one vendor's message
 format.
+
+### Runtime events
+
+The Agent Loop reports what it is doing through a typed event stream instead of
+printing anything itself. One run emits:
+
+```text
+agent_start
+  turn_start -> message_start -> message_update* -> message_end
+    tool_execution_start -> tool_execution_end   (once per tool call)
+  turn_end
+  ...
+agent_end (completed | max_turns | aborted | error)
+```
+
+`message_update` carries deltas only, never a cumulative snapshot, so the stream
+stays linear in the length of the answer. Events are structured-cloneable and
+each listener receives a copy, so a renderer can never mutate the transcript.
+The CLI renderer in `src/render.ts` is one consumer; a log file, a JSON stream,
+or a TUI are others.
+
+`LLMClient.stream` is optional. When a Provider does not implement it, the Agent
+falls back to `complete` and the same events are emitted without deltas.
 
 ### OpenAI-compatible Providers
 
@@ -179,7 +213,10 @@ src/
   cli.ts                         CLI entry point and process boundary
   cli-options.ts                 Argument and Provider configuration
   agent.ts                       Agent loop and run state
+  events.ts                      Runtime event model
+  render.ts                      Terminal renderer for runtime events
   llm.ts                         Provider-independent LLM contract
+  retry.ts                       Provider timeout and retry decorator
   messages.ts                    Runtime message model
   workspace.ts                   Safe local workspace access
   providers/
@@ -209,7 +246,7 @@ Build a locally installable tarball:
 
 ```bash
 npm pack
-npm install -g ./chivgent-0.4.0.tgz
+npm install -g ./chivgent-0.5.0.tgz
 ```
 
 Tests use scripted or mocked LLM clients. A real API smoke test is deliberately
@@ -241,7 +278,7 @@ model before granting future write or shell tools access to sensitive projects.
 - [x] Reusable OpenAI-compatible Chat Completions adapter
 - [x] Custom OpenAI-compatible CLI Provider
 - [x] Project discovery tools: `list_files`, `search_text`, and ranged `read_file`
-- [ ] Streaming output and runtime events
+- [x] Streaming output and runtime events
 - [ ] Persistent multi-turn sessions
 - [ ] Context-window management and compaction
 - [ ] Permission-gated `write_file`, `edit_file`, and shell tools
@@ -253,6 +290,7 @@ model before granting future write or shell tools access to sensitive projects.
 - [Stage 1: Minimal Agent design](docs/stage-1-minimal-agent.md)
 - [DeepSeek Provider design](docs/deepseek-provider.md)
 - [Stage 2: Project Discovery implementation design](docs/stage-2-project-discovery.md)
+- [Stage 3: Runtime Events and Streaming design](docs/stage-3-runtime-events.md)
 
 ## Contributing
 

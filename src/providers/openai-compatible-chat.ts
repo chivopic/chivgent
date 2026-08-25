@@ -2,11 +2,19 @@ import OpenAI from "openai";
 import type {
   ChatCompletion,
   ChatCompletionAssistantMessageParam,
+  ChatCompletionChunk,
+  ChatCompletionCreateParamsNonStreaming,
   ChatCompletionMessage,
   ChatCompletionMessageParam,
+  ChatCompletionMessageToolCall,
   ChatCompletionTool,
 } from "openai/resources/chat/completions/completions";
-import type { LLMClient, LLMRequest, LLMResponse } from "../llm.js";
+import type {
+  LLMClient,
+  LLMRequest,
+  LLMResponse,
+  LLMStreamHandlers,
+} from "../llm.js";
 import type { AssistantMessage, Message } from "../messages.js";
 
 interface CompatibleAssistantMessage extends ChatCompletionMessage {
@@ -58,32 +66,159 @@ export class OpenAICompatibleChatClient implements LLMClient {
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
+    const history = this.createHistory(request);
+    const parameters = {
+      ...this.createParameters(request, history),
+      stream: false as const,
+    };
+    const response =
+      request.signal === undefined
+        ? await this.client.chat.completions.create(parameters)
+        : await this.client.chat.completions.create(parameters, {
+            signal: request.signal,
+          });
+
+    return this.toLLMResponse(request, history, getProviderMessage(response));
+  }
+
+  async stream(
+    request: LLMRequest,
+    handlers: LLMStreamHandlers,
+  ): Promise<LLMResponse> {
+    const history = this.createHistory(request);
+    const parameters = {
+      ...this.createParameters(request, history),
+      stream: true as const,
+    };
+    const chunks =
+      request.signal === undefined
+        ? await this.client.chat.completions.create(parameters)
+        : await this.client.chat.completions.create(parameters, {
+            signal: request.signal,
+          });
+
+    const accumulator = new ChatCompletionAccumulator();
+    for await (const chunk of chunks as AsyncIterable<ChatCompletionChunk>) {
+      const delta = accumulator.add(chunk);
+      if (delta.length > 0) {
+        handlers.onTextDelta(delta);
+      }
+    }
+
+    return this.toLLMResponse(request, history, accumulator.toMessage());
+  }
+
+  private createHistory(request: LLMRequest): CompatibleHistoryMessage[] {
     const continuation = parseContinuation(
       request.continuation,
       this.continuationTag,
     );
-    const history =
-      continuation === undefined
-        ? createInitialHistory(request.systemPrompt, request.messages)
-        : continueHistory(continuation, request);
+    return continuation === undefined
+      ? createInitialHistory(request.systemPrompt, request.messages)
+      : continueHistory(continuation, request);
+  }
 
-    const response = await this.client.chat.completions.create({
-      model: this.model,
-      messages: history,
-      tools: request.tools.map(toCompatibleTool),
-      stream: false,
-    });
-    const providerMessage = getProviderMessage(response);
-    const message = toInternalMessage(providerMessage);
-    const nextHistory = [...history, toHistoryMessage(providerMessage)];
-
+  private createParameters(
+    request: LLMRequest,
+    history: readonly CompatibleHistoryMessage[],
+  ): Omit<ChatCompletionCreateParamsNonStreaming, "stream"> {
     return {
-      message,
+      model: this.model,
+      messages: [...history],
+      tools: request.tools.map(toCompatibleTool),
+    };
+  }
+
+  private toLLMResponse(
+    request: LLMRequest,
+    history: readonly CompatibleHistoryMessage[],
+    providerMessage: CompatibleAssistantMessage,
+  ): LLMResponse {
+    return {
+      message: toInternalMessage(providerMessage),
       continuation: {
         provider: this.continuationTag,
         systemPrompt: request.systemPrompt,
-        messages: structuredClone(nextHistory),
+        messages: structuredClone([
+          ...history,
+          toHistoryMessage(providerMessage),
+        ]),
       } satisfies CompatibleContinuation,
+    };
+  }
+}
+
+interface PartialToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
+/**
+ * Rebuilds one assistant message from Chat Completions chunks. Tool call
+ * fragments arrive out of band and are keyed by their stream index, so the
+ * final message matches what a non-streaming call would have returned.
+ */
+class ChatCompletionAccumulator {
+  private content = "";
+  private reasoningContent = "";
+  private readonly toolCalls = new Map<number, PartialToolCall>();
+
+  /** Returns the text delta contributed by this chunk. */
+  add(chunk: ChatCompletionChunk): string {
+    const delta = chunk.choices[0]?.delta;
+    if (delta === undefined) {
+      return "";
+    }
+
+    const reasoning = (delta as { reasoning_content?: string | null })
+      .reasoning_content;
+    if (typeof reasoning === "string") {
+      this.reasoningContent += reasoning;
+    }
+
+    for (const toolCall of delta.tool_calls ?? []) {
+      const partial = this.toolCalls.get(toolCall.index) ?? {
+        id: "",
+        name: "",
+        arguments: "",
+      };
+      this.toolCalls.set(toolCall.index, {
+        id: toolCall.id ?? partial.id,
+        name: toolCall.function?.name ?? partial.name,
+        arguments: partial.arguments + (toolCall.function?.arguments ?? ""),
+      });
+    }
+
+    const text = delta.content ?? "";
+    this.content += text;
+    return text;
+  }
+
+  toMessage(): CompatibleAssistantMessage {
+    const toolCalls = [...this.toolCalls.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([, toolCall]): ChatCompletionMessageToolCall => {
+        if (toolCall.id.length === 0 || toolCall.name.length === 0) {
+          throw new TypeError(
+            "OpenAI-compatible stream produced an incomplete tool call.",
+          );
+        }
+        return {
+          id: toolCall.id,
+          type: "function",
+          function: { name: toolCall.name, arguments: toolCall.arguments },
+        };
+      });
+
+    return {
+      role: "assistant",
+      content: this.content,
+      refusal: null,
+      ...(this.reasoningContent.length === 0
+        ? {}
+        : { reasoning_content: this.reasoningContent }),
+      ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls }),
     };
   }
 }

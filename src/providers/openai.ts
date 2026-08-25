@@ -1,10 +1,17 @@
 import OpenAI from "openai";
 import type {
   Response as OpenAIResponse,
+  ResponseCreateParamsNonStreaming,
   ResponseInput,
+  ResponseStreamEvent,
   Tool as OpenAITool,
 } from "openai/resources/responses/responses";
-import type { LLMClient, LLMRequest, LLMResponse } from "../llm.js";
+import type {
+  LLMClient,
+  LLMRequest,
+  LLMResponse,
+  LLMStreamHandlers,
+} from "../llm.js";
 import type { AssistantMessage, Message } from "../messages.js";
 
 interface OpenAIContinuation {
@@ -28,8 +35,53 @@ export class OpenAIClient implements LLMClient {
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
+    const parameters = { ...this.createParameters(request), stream: false as const };
+    const response =
+      request.signal === undefined
+        ? await this.client.responses.create(parameters)
+        : await this.client.responses.create(parameters, {
+            signal: request.signal,
+          });
+
+    return toLLMResponse(response);
+  }
+
+  async stream(
+    request: LLMRequest,
+    handlers: LLMStreamHandlers,
+  ): Promise<LLMResponse> {
+    const parameters = { ...this.createParameters(request), stream: true as const };
+    const events =
+      request.signal === undefined
+        ? await this.client.responses.create(parameters)
+        : await this.client.responses.create(parameters, {
+            signal: request.signal,
+          });
+
+    let completed: OpenAIResponse | undefined;
+    for await (const event of events as AsyncIterable<ResponseStreamEvent>) {
+      if (event.type === "response.output_text.delta") {
+        handlers.onTextDelta(event.delta);
+      } else if (event.type === "response.completed") {
+        completed = event.response;
+      } else if (event.type === "response.failed") {
+        throw new TypeError(
+          `OpenAI stream failed: ${event.response.error?.message ?? "unknown error"}`,
+        );
+      }
+    }
+
+    if (completed === undefined) {
+      throw new TypeError("OpenAI stream ended without a completed response.");
+    }
+    return toLLMResponse(completed);
+  }
+
+  private createParameters(
+    request: LLMRequest,
+  ): Omit<ResponseCreateParamsNonStreaming, "stream"> {
     const continuation = parseContinuation(request.continuation);
-    const response = await this.client.responses.create({
+    return {
       model: this.model,
       instructions: request.systemPrompt,
       input:
@@ -38,20 +90,21 @@ export class OpenAIClient implements LLMClient {
           : toContinuationInput(request.messages),
       tools: request.tools.map(toOpenAITool),
       parallel_tool_calls: false,
-      stream: false,
       ...(continuation === undefined
         ? {}
         : { previous_response_id: continuation.previousResponseId }),
-    });
-
-    return {
-      message: fromOpenAIResponse(response),
-      continuation: {
-        provider: "openai-responses",
-        previousResponseId: response.id,
-      } satisfies OpenAIContinuation,
     };
   }
+}
+
+function toLLMResponse(response: OpenAIResponse): LLMResponse {
+  return {
+    message: fromOpenAIResponse(response),
+    continuation: {
+      provider: "openai-responses",
+      previousResponseId: response.id,
+    } satisfies OpenAIContinuation,
+  };
 }
 
 function parseContinuation(value: unknown): OpenAIContinuation | undefined {

@@ -64,11 +64,32 @@ describe("CLI options", () => {
     ).toThrow("Unsupported provider");
   });
 
+  it("defaults to streaming with visible tool activity", () => {
+    expect(parseCliArgs(["Question"], {})).toMatchObject({
+      stream: true,
+      quiet: false,
+      maxTurns: 8,
+    });
+  });
+
+  it("accepts runtime overrides", () => {
+    expect(
+      parseCliArgs(["--no-stream", "--quiet", "--max-turns", "3", "Q"], {}),
+    ).toMatchObject({ stream: false, quiet: true, maxTurns: 3 });
+  });
+
+  it("rejects an out-of-range turn limit", () => {
+    expect(() => parseCliArgs(["--max-turns", "0", "Q"], {})).toThrow(
+      "--max-turns",
+    );
+  });
+
   it("documents both Providers", () => {
     expect(helpText()).toContain("--provider openai|deepseek");
     expect(helpText()).toContain("openai-compatible");
     expect(helpText()).toContain("OPENAI_BASE_URL");
     expect(helpText()).toContain("DEEPSEEK_API_KEY");
-    expect(VERSION).toBe("0.4.0");
+    expect(helpText()).toContain("--no-stream");
+    expect(VERSION).toBe("0.5.0");
   });
 });

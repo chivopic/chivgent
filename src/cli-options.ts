@@ -1,6 +1,9 @@
-export const VERSION = "0.4.0";
+export const VERSION = "0.5.0";
 
 export type Provider = "openai" | "deepseek" | "openai-compatible";
+
+export const DEFAULT_MAX_TURNS = 8;
+const MAX_MAX_TURNS = 100;
 
 const DEFAULT_MODELS = {
   openai: "gpt-5.6",
@@ -18,6 +21,9 @@ export interface CliOptions {
   readonly provider: Provider;
   readonly model?: string;
   readonly baseURL?: string;
+  readonly maxTurns: number;
+  readonly stream: boolean;
+  readonly quiet: boolean;
   readonly help: boolean;
   readonly version: boolean;
 }
@@ -28,6 +34,9 @@ export function parseCliArgs(
 ): CliOptions {
   let provider: Provider = "openai";
   let requestedModel: string | undefined;
+  let maxTurns = DEFAULT_MAX_TURNS;
+  let stream = true;
+  let quiet = false;
   let help = false;
   let version = false;
   const promptParts: string[] = [];
@@ -45,6 +54,13 @@ export function parseCliArgs(
     } else if (argument === "--model") {
       requestedModel = readOptionValue(argv, index, "--model");
       index += 1;
+    } else if (argument === "--max-turns") {
+      maxTurns = parseMaxTurns(readOptionValue(argv, index, "--max-turns"));
+      index += 1;
+    } else if (argument === "--no-stream") {
+      stream = false;
+    } else if (argument === "--quiet" || argument === "-q") {
+      quiet = true;
     } else if (argument?.startsWith("-")) {
       throw new TypeError(`Unknown option: ${argument}`);
     } else if (argument !== undefined) {
@@ -67,6 +83,9 @@ export function parseCliArgs(
     ...(provider === "openai-compatible" && environment.OPENAI_BASE_URL
       ? { baseURL: environment.OPENAI_BASE_URL }
       : {}),
+    maxTurns,
+    stream,
+    quiet,
     help,
     version,
   };
@@ -81,6 +100,9 @@ Usage:
 Options:
   --provider NAME  openai, deepseek, or openai-compatible (default: openai)
   --model MODEL    Provider model override
+  --max-turns N    Tool-calling turn limit (default: ${DEFAULT_MAX_TURNS})
+  --no-stream      Wait for the full answer instead of streaming tokens
+  -q, --quiet      Hide tool activity on stderr
   -h, --help       Show help
   -v, --version    Show version
 
@@ -103,6 +125,16 @@ function readOptionValue(
     throw new TypeError(`${option} requires a value.`);
   }
   return value;
+}
+
+function parseMaxTurns(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > MAX_MAX_TURNS) {
+    throw new TypeError(
+      `--max-turns must be an integer from 1 to ${MAX_MAX_TURNS}.`,
+    );
+  }
+  return parsed;
 }
 
 function parseProvider(value: string): Provider {
