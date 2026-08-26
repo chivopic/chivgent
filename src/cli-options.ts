@@ -1,4 +1,4 @@
-export const VERSION = "0.5.0";
+export const VERSION = "0.6.0";
 
 export type Provider = "openai" | "deepseek" | "openai-compatible";
 
@@ -14,6 +14,7 @@ export interface CliEnvironment {
   readonly OPENAI_MODEL?: string;
   readonly OPENAI_BASE_URL?: string;
   readonly DEEPSEEK_MODEL?: string;
+  readonly CHIVGENT_HOME?: string;
 }
 
 export interface CliOptions {
@@ -24,6 +25,16 @@ export interface CliOptions {
   readonly maxTurns: number;
   readonly stream: boolean;
   readonly quiet: boolean;
+  /** Write the run as JSON lines instead of rendering it for a terminal. */
+  readonly json: boolean;
+  /** Record the session under the chivgent home directory. */
+  readonly session: boolean;
+  /** Resume this session id. */
+  readonly resume?: string;
+  /** Resume the most recent session recorded for this workspace. */
+  readonly continueSession: boolean;
+  /** List recorded sessions and exit. */
+  readonly listSessions: boolean;
   readonly help: boolean;
   readonly version: boolean;
 }
@@ -37,6 +48,11 @@ export function parseCliArgs(
   let maxTurns = DEFAULT_MAX_TURNS;
   let stream = true;
   let quiet = false;
+  let json = false;
+  let session = true;
+  let resume: string | undefined;
+  let continueSession = false;
+  let listSessions = false;
   let help = false;
   let version = false;
   const promptParts: string[] = [];
@@ -61,6 +77,17 @@ export function parseCliArgs(
       stream = false;
     } else if (argument === "--quiet" || argument === "-q") {
       quiet = true;
+    } else if (argument === "--json") {
+      json = true;
+    } else if (argument === "--no-session") {
+      session = false;
+    } else if (argument === "--resume") {
+      resume = readOptionValue(argv, index, "--resume");
+      index += 1;
+    } else if (argument === "--continue" || argument === "-c") {
+      continueSession = true;
+    } else if (argument === "--sessions") {
+      listSessions = true;
     } else if (argument?.startsWith("-")) {
       throw new TypeError(`Unknown option: ${argument}`);
     } else if (argument !== undefined) {
@@ -86,6 +113,11 @@ export function parseCliArgs(
     maxTurns,
     stream,
     quiet,
+    json,
+    session,
+    ...(resume === undefined ? {} : { resume }),
+    continueSession,
+    listSessions,
     help,
     version,
   };
@@ -95,7 +127,8 @@ export function helpText(): string {
   return `chivgent ${VERSION}
 
 Usage:
-  chivgent [--provider openai|deepseek|openai-compatible] [--model MODEL] "question"
+  chivgent [options] "question"     Answer one question and exit
+  chivgent [options]                Start an interactive session
 
 Options:
   --provider NAME  openai, deepseek, or openai-compatible (default: openai)
@@ -103,6 +136,11 @@ Options:
   --max-turns N    Tool-calling turn limit (default: ${DEFAULT_MAX_TURNS})
   --no-stream      Wait for the full answer instead of streaming tokens
   -q, --quiet      Hide tool activity on stderr
+  --json           Write the run as JSON lines instead of rendered text
+  -c, --continue   Resume the most recent session for this workspace
+  --resume ID      Resume a specific session
+  --sessions       List recorded sessions and exit
+  --no-session     Do not record this run
   -h, --help       Show help
   -v, --version    Show version
 
@@ -112,6 +150,7 @@ Environment:
   OPENAI_BASE_URL  Required when --provider openai-compatible
   DEEPSEEK_API_KEY Required when --provider deepseek
   DEEPSEEK_MODEL   Optional DeepSeek model (default: ${DEFAULT_MODELS.deepseek})
+  CHIVGENT_HOME    Session directory (default: ~/.chivgent)
 `;
 }
 

@@ -15,7 +15,11 @@ import type {
   LLMResponse,
   LLMStreamHandlers,
 } from "../llm.js";
-import type { AssistantMessage, Message } from "../messages.js";
+import type {
+  AssistantMessage,
+  Message,
+  ToolResultMessage,
+} from "../messages.js";
 
 interface CompatibleAssistantMessage extends ChatCompletionMessage {
   readonly reasoning_content?: string | null;
@@ -247,6 +251,11 @@ function parseContinuation(
   return value as unknown as CompatibleContinuation;
 }
 
+/**
+ * Replays a whole transcript as Chat Completions history. A session's second
+ * prompt starts a new request with earlier assistant turns and tool results
+ * already in it, so the initial history cannot be limited to user messages.
+ */
 function createInitialHistory(
   systemPrompt: string,
   messages: readonly Message[],
@@ -256,14 +265,53 @@ function createInitialHistory(
   ];
 
   for (const message of messages) {
-    if (message.role !== "user") {
-      throw new TypeError(
-        "An initial OpenAI-compatible request must contain only user messages.",
-      );
+    switch (message.role) {
+      case "user":
+        history.push({ role: "user", content: message.content });
+        break;
+
+      case "assistant":
+        history.push(toAssistantParam(message));
+        break;
+
+      case "tool":
+        history.push({
+          role: "tool",
+          tool_call_id: message.toolCallId,
+          content: toolOutput(message),
+        });
+        break;
     }
-    history.push({ role: "user", content: message.content });
   }
   return history;
+}
+
+function toAssistantParam(
+  message: AssistantMessage,
+): ChatCompletionAssistantMessageParam {
+  const toolCalls = message.toolCalls.map(
+    (toolCall): ChatCompletionMessageToolCall => ({
+      id: toolCall.id,
+      type: "function",
+      function: {
+        name: toolCall.name,
+        arguments:
+          typeof toolCall.arguments === "string"
+            ? toolCall.arguments
+            : JSON.stringify(toolCall.arguments ?? {}),
+      },
+    }),
+  );
+
+  return {
+    role: "assistant",
+    content: message.content,
+    ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls }),
+  };
+}
+
+function toolOutput(message: ToolResultMessage): string {
+  return message.isError ? `Tool error: ${message.content}` : message.content;
 }
 
 function continueHistory(
@@ -305,9 +353,7 @@ function continueHistory(
     history.push({
       role: "tool",
       tool_call_id: message.toolCallId,
-      content: message.isError
-        ? `Tool error: ${message.content}`
-        : message.content,
+      content: toolOutput(message),
     });
   }
   return history;

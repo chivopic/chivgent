@@ -12,7 +12,11 @@ import type {
   LLMResponse,
   LLMStreamHandlers,
 } from "../llm.js";
-import type { AssistantMessage, Message } from "../messages.js";
+import type {
+  AssistantMessage,
+  Message,
+  ToolResultMessage,
+} from "../messages.js";
 
 interface OpenAIContinuation {
   readonly provider: "openai-responses";
@@ -124,18 +128,49 @@ function parseContinuation(value: unknown): OpenAIContinuation | undefined {
   return value as OpenAIContinuation;
 }
 
+/**
+ * Replays a whole transcript as Responses input. A session's second prompt
+ * starts a new request with earlier assistant turns and tool results already in
+ * it, so the initial input cannot be limited to user messages.
+ */
 function toInitialInput(messages: readonly Message[]): ResponseInput {
-  return messages.map((message) => {
+  const input: ResponseInput = [];
+
+  for (const message of messages) {
     switch (message.role) {
       case "user":
-        return { role: "user", content: message.content };
+        input.push({ role: "user", content: message.content });
+        break;
+
       case "assistant":
+        if (message.content.length > 0) {
+          input.push({ role: "assistant", content: message.content });
+        }
+        for (const toolCall of message.toolCalls) {
+          input.push({
+            type: "function_call",
+            call_id: toolCall.id,
+            name: toolCall.name,
+            arguments: stringifyArguments(toolCall.arguments),
+          });
+        }
+        break;
+
       case "tool":
-        throw new TypeError(
-          "An initial OpenAI request must contain only user messages in Stage 1.",
-        );
+        input.push({
+          type: "function_call_output",
+          call_id: message.toolCallId,
+          output: toolOutput(message),
+        });
+        break;
     }
-  });
+  }
+
+  return input;
+}
+
+function stringifyArguments(value: unknown): string {
+  return typeof value === "string" ? value : JSON.stringify(value ?? {});
 }
 
 function toContinuationInput(messages: readonly Message[]): ResponseInput {
@@ -159,9 +194,13 @@ function toContinuationInput(messages: readonly Message[]): ResponseInput {
     return {
       type: "function_call_output" as const,
       call_id: message.toolCallId,
-      output: message.isError ? `Tool error: ${message.content}` : message.content,
+      output: toolOutput(message),
     };
   });
+}
+
+function toolOutput(message: ToolResultMessage): string {
+  return message.isError ? `Tool error: ${message.content}` : message.content;
 }
 
 function toOpenAITool(tool: LLMRequest["tools"][number]): OpenAITool {

@@ -27,6 +27,9 @@ to study before adding production-harness complexity.
 - OpenAI support through the Responses API.
 - DeepSeek support through a reusable OpenAI-compatible Chat Completions client.
 - Custom OpenAI-compatible endpoints through environment-only configuration.
+- An interactive session with slash commands, or a single-shot question.
+- Sessions that persist as JSON lines and can be resumed in a later process.
+- A `--json` event stream for scripting and other front ends.
 - Streamed answers rendered from a typed runtime event stream.
 - Interruptible runs: Ctrl+C ends the current run without losing the transcript.
 - Per-attempt Provider timeouts and bounded exponential-backoff retries.
@@ -84,6 +87,19 @@ export OPENAI_MODEL="vendor-model"
 chivgent --provider openai-compatible "Explain the architecture in src/"
 ```
 
+Start an interactive session by running `chivgent` with no question:
+
+```bash
+chivgent
+› What does src/agent.ts do?
+› Where is that loop tested?
+› /exit
+```
+
+The conversation is kept across prompts, so follow-up questions do not repeat
+the earlier context. Resume it later with `chivgent --continue` (or
+`chivgent --resume <id>`; `chivgent --sessions` lists what is recorded).
+
 Answers stream to stdout as the model produces them, so stdout stays pipeable.
 Tool activity, retries, and run status go to stderr; Provider failures produce a
 non-zero exit code. Use `--no-stream` for one final write, and `--quiet` to hide
@@ -92,7 +108,8 @@ tool activity.
 ## CLI reference
 
 ```text
-chivgent [--provider openai|deepseek|openai-compatible] [--model MODEL] "question"
+chivgent [options] "question"     Answer one question and exit
+chivgent [options]                Start an interactive session
 
 Options:
   --provider NAME  openai, deepseek, or openai-compatible (default: openai)
@@ -100,9 +117,18 @@ Options:
   --max-turns N    Tool-calling turn limit (default: 8)
   --no-stream      Wait for the full answer instead of streaming tokens
   -q, --quiet      Hide tool activity on stderr
+  --json           Write the run as JSON lines instead of rendered text
+  -c, --continue   Resume the most recent session for this workspace
+  --resume ID      Resume a specific session
+  --sessions       List recorded sessions and exit
+  --no-session     Do not record this run
   -h, --help       Show help
   -v, --version    Show version
 ```
+
+In an interactive session, `/help` lists the slash commands: `/session`,
+`/tools`, `/clear`, and `/exit`. Ctrl+C stops the answer in progress without
+leaving the session; Ctrl+D leaves it.
 
 Exit codes: `0` answered, `1` configuration or Provider failure, `2` turn limit
 reached, `130` interrupted with Ctrl+C.
@@ -117,7 +143,8 @@ reached, `130` interrupted with Ctrl+C.
 
 An explicit `--model` value takes precedence over the Provider-specific model
 environment variable. Custom compatible Providers also require
-`OPENAI_BASE_URL`.
+`OPENAI_BASE_URL`. Sessions are written under `CHIVGENT_HOME` (default
+`~/.chivgent`).
 
 ```bash
 chivgent --provider openai --model gpt-5.6 "Explain package.json"
@@ -218,6 +245,9 @@ src/
   llm.ts                         Provider-independent LLM contract
   retry.ts                       Provider timeout and retry decorator
   messages.ts                    Runtime message model
+  session.ts                     Conversation state and event fan-out
+  session-store.ts               JSONL session log and resume support
+  repl.ts                        Interactive prompt and slash commands
   workspace.ts                   Safe local workspace access
   providers/
     openai.ts                    OpenAI Responses adapter
@@ -246,7 +276,7 @@ Build a locally installable tarball:
 
 ```bash
 npm pack
-npm install -g ./chivgent-0.5.0.tgz
+npm install -g ./chivgent-0.6.0.tgz
 ```
 
 Tests use scripted or mocked LLM clients. A real API smoke test is deliberately
@@ -266,6 +296,10 @@ manual so the default test suite never consumes credits.
 - Tool results are limited to 64 KiB; reads, scans, depth, and result counts are bounded.
 - Tool inputs are untrusted and validated before execution.
 - The agent stops after a bounded number of model turns.
+- Session logs under `~/.chivgent/sessions` contain prompts, answers, and tool
+  results, including file excerpts. Use `--no-session` in sensitive workspaces,
+  and treat the log directory like the project it describes.
+- Session ids are validated before they become file paths.
 
 This is an educational MVP, not a hardened sandbox. Review the code and threat
 model before granting future write or shell tools access to sensitive projects.
@@ -279,7 +313,7 @@ model before granting future write or shell tools access to sensitive projects.
 - [x] Custom OpenAI-compatible CLI Provider
 - [x] Project discovery tools: `list_files`, `search_text`, and ranged `read_file`
 - [x] Streaming output and runtime events
-- [ ] Persistent multi-turn sessions
+- [x] Persistent multi-turn sessions
 - [ ] Context-window management and compaction
 - [ ] Permission-gated `write_file`, `edit_file`, and shell tools
 - [ ] Provider registry and user configuration file
@@ -291,6 +325,7 @@ model before granting future write or shell tools access to sensitive projects.
 - [DeepSeek Provider design](docs/deepseek-provider.md)
 - [Stage 2: Project Discovery implementation design](docs/stage-2-project-discovery.md)
 - [Stage 3: Runtime Events and Streaming design](docs/stage-3-runtime-events.md)
+- [Stage 4: Sessions and interactive mode design](docs/stage-4-sessions.md)
 
 ## Contributing
 

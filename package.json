@@ -1,6 +1,6 @@
 {
   "name": "chivgent",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "A minimal coding agent CLI built to learn agent harness architecture.",
   "license": "MIT",
   "repository": {

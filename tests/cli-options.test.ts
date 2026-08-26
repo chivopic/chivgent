@@ -84,12 +84,38 @@ describe("CLI options", () => {
     );
   });
 
+  it("records sessions by default", () => {
+    expect(parseCliArgs(["Question"], {})).toMatchObject({
+      session: true,
+      json: false,
+      continueSession: false,
+      listSessions: false,
+    });
+    expect(parseCliArgs(["Question"], {})).not.toHaveProperty("resume");
+  });
+
+  it("parses session selection flags", () => {
+    expect(
+      parseCliArgs(["--resume", "session-1", "--json", "--no-session", "Q"], {}),
+    ).toMatchObject({ resume: "session-1", json: true, session: false });
+    expect(parseCliArgs(["-c"], {})).toMatchObject({ continueSession: true });
+    expect(parseCliArgs(["--sessions"], {})).toMatchObject({
+      listSessions: true,
+    });
+  });
+
+  it("reads an interactive invocation as a missing prompt", () => {
+    expect(parseCliArgs([], {})).not.toHaveProperty("prompt");
+  });
+
   it("documents both Providers", () => {
-    expect(helpText()).toContain("--provider openai|deepseek");
+    expect(helpText()).toContain("openai, deepseek, or openai-compatible");
     expect(helpText()).toContain("openai-compatible");
     expect(helpText()).toContain("OPENAI_BASE_URL");
     expect(helpText()).toContain("DEEPSEEK_API_KEY");
     expect(helpText()).toContain("--no-stream");
-    expect(VERSION).toBe("0.5.0");
+    expect(helpText()).toContain("--resume ID");
+    expect(helpText()).toContain("CHIVGENT_HOME");
+    expect(VERSION).toBe("0.6.0");
   });
 });

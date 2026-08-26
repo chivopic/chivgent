@@ -130,23 +130,26 @@ describe("event renderer", () => {
     expect(output.stderr).toBe("Interrupted.\n");
   });
 
-  it("reports a turn limit and a failure on stderr", () => {
+  it("reports a turn limit on stderr", () => {
     expect(
       render([
         { type: "agent_end", status: "max_turns", turnCount: 8, messages: [] },
       ]).stderr,
     ).toBe("Stopped after 8 turns without a final answer.\n");
+  });
 
-    expect(
-      render([
-        {
-          type: "agent_end",
-          status: "error",
-          turnCount: 2,
-          messages: [],
-          error: "Provider unavailable",
-        },
-      ]).stderr,
-    ).toBe("Run failed: Provider unavailable\n");
+  it("leaves a failed run to the caller that awaited it", () => {
+    const output = render([
+      {
+        type: "agent_end",
+        status: "error",
+        turnCount: 2,
+        messages: [],
+        error: "Provider unavailable",
+      },
+    ]);
+
+    expect(output.stderr).toBe("");
+    expect(output.stdout).toBe("");
   });
 });

@@ -88,16 +88,29 @@ export function createEventRenderer(
           );
         } else if (event.status === "aborted") {
           streams.stderr.write("Interrupted.\n");
-        } else if (event.status === "error") {
-          streams.stderr.write(
-            `Run failed: ${event.error ?? "Unknown error"}\n`,
-          );
         }
+        // A failed run is reported by whoever awaited it, with the real error.
         return;
 
       default:
         return;
     }
+  };
+}
+
+/**
+ * Writes one JSON object per line: the session header first, then every event.
+ * This is the machine-readable counterpart of the terminal renderer.
+ */
+export function createJsonEventWriter(
+  output: OutputStream,
+  header?: object,
+): AgentEventListener {
+  if (header !== undefined) {
+    output.write(`${JSON.stringify(header)}\n`);
+  }
+  return (event: AgentEvent): void => {
+    output.write(`${JSON.stringify(event)}\n`);
   };
 }
 
