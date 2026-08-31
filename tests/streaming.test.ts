@@ -99,6 +99,31 @@ describe("OpenAIClient streaming", () => {
     });
   });
 
+  it("reports Provider usage when the response carries it", async () => {
+    const create = vi.fn().mockResolvedValue(
+      iterate([
+        {
+          type: "response.completed",
+          response: {
+            id: "resp-1",
+            output_text: "Hello",
+            output: [],
+            usage: { input_tokens: 120, output_tokens: 8 },
+          },
+        },
+      ]),
+    );
+    const client = new OpenAIClient({
+      apiKey: "test-key",
+      model: "test-model",
+      client: { responses: { create } } as unknown as OpenAI,
+    });
+
+    const result = await client.stream(request, collect().handlers);
+
+    expect(result.usage).toEqual({ inputTokens: 120, outputTokens: 8 });
+  });
+
   it("rejects a stream that never completes", async () => {
     const create = vi
       .fn()
@@ -141,6 +166,30 @@ describe("OpenAI-compatible streaming", () => {
       content: "Hello",
       toolCalls: [],
     });
+  });
+
+  it("asks for usage and reports it from the final chunk", async () => {
+    const create = vi.fn().mockResolvedValue(
+      iterate([
+        { choices: [{ delta: { content: "Hi" } }] },
+        {
+          choices: [],
+          usage: { prompt_tokens: 90, completion_tokens: 4 },
+        },
+      ]),
+    );
+    const client = new DeepSeekChatClient({
+      apiKey: "test-key",
+      model: "deepseek-test",
+      client: { chat: { completions: { create } } } as unknown as OpenAI,
+    });
+
+    const result = await client.stream(request, collect().handlers);
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ stream_options: { include_usage: true } }),
+    );
+    expect(result.usage).toEqual({ inputTokens: 90, outputTokens: 4 });
   });
 
   it("assembles tool call fragments by stream index", async () => {

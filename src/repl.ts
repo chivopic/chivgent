@@ -1,10 +1,14 @@
 import { createInterface } from "node:readline";
+import { formatTokens, type OutputStream } from "./render.js";
 import type { AgentSession } from "./session.js";
-import type { OutputStream } from "./render.js";
 
 export const REPL_PROMPT = "› ";
 
-export type SlashCommandOutcome = "handled" | "exit" | "not-a-command";
+export type SlashCommandOutcome =
+  | "handled"
+  | "exit"
+  | "compact"
+  | "not-a-command";
 
 export interface SlashCommandContext {
   readonly session: AgentSession;
@@ -15,6 +19,8 @@ export interface SlashCommandContext {
 const HELP = `Commands:
   /help      Show this help
   /session   Show the current session id, workspace, and size
+  /context   Show the estimated context use and token totals
+  /compact   Summarise earlier turns to free context now
   /tools     List the tools available to the model
   /clear     Start a new transcript in the same session
   /exit      Leave chivgent (Ctrl+D also works)
@@ -45,6 +51,14 @@ export function handleSlashCommand(
       context.write(describeSession(context));
       return "handled";
 
+    case "/context":
+      context.write(describeContext(context));
+      return "handled";
+
+    case "/compact":
+      // Compaction is asynchronous; the REPL loop performs it.
+      return "compact";
+
     case "/tools":
       context.write(
         `${context.session.toolNames.map((name) => `  ${name}`).join("\n")}\n`,
@@ -64,6 +78,23 @@ export function handleSlashCommand(
       context.write(`Unknown command: ${trimmed}. Try /help.\n`);
       return "handled";
   }
+}
+
+function describeContext(context: SlashCommandContext): string {
+  const status = context.session.contextStatus();
+  const usage = context.session.usage;
+  const lines = [
+    status === undefined
+      ? "context:   no budget configured (compaction is off)"
+      : `context:   ~${formatTokens(status.estimatedTokens)} of ${formatTokens(
+          status.maxInputTokens,
+        )} tokens, compacting above ${formatTokens(status.budgetTokens)}`,
+    `messages:  ${context.session.messages.length}`,
+    `usage:     ${formatTokens(usage.inputTokens)} in, ${formatTokens(
+      usage.outputTokens,
+    )} out (Provider-reported, this session)`,
+  ];
+  return `${lines.join("\n")}\n`;
 }
 
 function describeSession(context: SlashCommandContext): string {
@@ -136,6 +167,14 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       break;
     }
     if (outcome === "handled") {
+      readline.prompt();
+      continue;
+    }
+    if (outcome === "compact") {
+      const compacted = await options.session.compact();
+      if (compacted === undefined) {
+        write("Nothing to compact: no context budget is configured.\n");
+      }
       readline.prompt();
       continue;
     }

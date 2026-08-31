@@ -1,9 +1,18 @@
-export const VERSION = "0.6.0";
+export const VERSION = "0.7.0";
 
 export type Provider = "openai" | "deepseek" | "openai-compatible";
 
 export const DEFAULT_MAX_TURNS = 8;
 const MAX_MAX_TURNS = 100;
+
+/**
+ * Input-token budget used when the model's real window is unknown. Chosen to
+ * be safe on small windows rather than generous on large ones; override it
+ * with --context-window.
+ */
+export const DEFAULT_CONTEXT_WINDOW = 100_000;
+const MIN_CONTEXT_WINDOW = 1_000;
+const MAX_CONTEXT_WINDOW = 10_000_000;
 
 const DEFAULT_MODELS = {
   openai: "gpt-5.6",
@@ -35,6 +44,10 @@ export interface CliOptions {
   readonly continueSession: boolean;
   /** List recorded sessions and exit. */
   readonly listSessions: boolean;
+  /** Input-token budget for one request. */
+  readonly contextWindow: number;
+  /** Compact the transcript automatically when it exceeds the budget. */
+  readonly compact: boolean;
   readonly help: boolean;
   readonly version: boolean;
 }
@@ -53,6 +66,8 @@ export function parseCliArgs(
   let resume: string | undefined;
   let continueSession = false;
   let listSessions = false;
+  let contextWindow = DEFAULT_CONTEXT_WINDOW;
+  let compact = true;
   let help = false;
   let version = false;
   const promptParts: string[] = [];
@@ -88,6 +103,13 @@ export function parseCliArgs(
       continueSession = true;
     } else if (argument === "--sessions") {
       listSessions = true;
+    } else if (argument === "--context-window") {
+      contextWindow = parseContextWindow(
+        readOptionValue(argv, index, "--context-window"),
+      );
+      index += 1;
+    } else if (argument === "--no-compact") {
+      compact = false;
     } else if (argument?.startsWith("-")) {
       throw new TypeError(`Unknown option: ${argument}`);
     } else if (argument !== undefined) {
@@ -118,6 +140,8 @@ export function parseCliArgs(
     ...(resume === undefined ? {} : { resume }),
     continueSession,
     listSessions,
+    contextWindow,
+    compact,
     help,
     version,
   };
@@ -141,6 +165,8 @@ Options:
   --resume ID      Resume a specific session
   --sessions       List recorded sessions and exit
   --no-session     Do not record this run
+  --context-window N  Input-token budget (default: ${DEFAULT_CONTEXT_WINDOW})
+  --no-compact     Never compact; fail if the transcript outgrows the window
   -h, --help       Show help
   -v, --version    Show version
 
@@ -164,6 +190,20 @@ function readOptionValue(
     throw new TypeError(`${option} requires a value.`);
   }
   return value;
+}
+
+function parseContextWindow(value: string): number {
+  const parsed = Number(value);
+  if (
+    !Number.isSafeInteger(parsed) ||
+    parsed < MIN_CONTEXT_WINDOW ||
+    parsed > MAX_CONTEXT_WINDOW
+  ) {
+    throw new TypeError(
+      `--context-window must be an integer from ${MIN_CONTEXT_WINDOW} to ${MAX_CONTEXT_WINDOW}.`,
+    );
+  }
+  return parsed;
 }
 
 function parseMaxTurns(value: string): number {

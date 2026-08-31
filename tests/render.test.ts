@@ -130,6 +130,92 @@ describe("event renderer", () => {
     expect(output.stderr).toBe("Interrupted.\n");
   });
 
+  it("reports compaction on stderr", () => {
+    const output = render([
+      {
+        type: "compaction_start",
+        turn: 2,
+        estimatedTokens: 9_800,
+        budgetTokens: 8_000,
+      },
+      {
+        type: "compaction_end",
+        turn: 2,
+        beforeTokens: 9_800,
+        afterTokens: 3_200,
+        summarisedMessages: 6,
+        shrunkToolResults: 2,
+        droppedMessages: 0,
+        degraded: false,
+      },
+    ]);
+
+    expect(output.stdout).toBe("");
+    expect(output.stderr).toBe(
+      "· compacting context (9.8k > 8.0k budget)\n" +
+        "  ↳ 9.8k → 3.2k, 6 messages summarised, 2 tool results trimmed\n",
+    );
+  });
+
+  it("does not claim a forced compaction was over budget", () => {
+    const output = render([
+      {
+        type: "compaction_start",
+        turn: 0,
+        estimatedTokens: 4_000,
+        budgetTokens: 16_000,
+      },
+      {
+        type: "compaction_end",
+        turn: 0,
+        beforeTokens: 4_000,
+        afterTokens: 4_000,
+        summarisedMessages: 0,
+        shrunkToolResults: 0,
+        droppedMessages: 0,
+        degraded: false,
+      },
+    ]);
+
+    expect(output.stderr).toBe(
+      "· compacting context (4.0k of 16.0k budget)\n  ↳ nothing to compact\n",
+    );
+  });
+
+  it("says when a compaction fell back to the digest", () => {
+    const output = render([
+      {
+        type: "compaction_end",
+        turn: 1,
+        beforeTokens: 900,
+        afterTokens: 400,
+        summarisedMessages: 4,
+        shrunkToolResults: 0,
+        droppedMessages: 2,
+        degraded: true,
+      },
+    ]);
+
+    expect(output.stderr).toContain("2 messages dropped");
+    expect(output.stderr).toContain("summary unavailable, used a digest");
+  });
+
+  it("hides compaction with the rest of the tool activity", () => {
+    const output = render(
+      [
+        {
+          type: "compaction_start",
+          turn: 1,
+          estimatedTokens: 100,
+          budgetTokens: 50,
+        },
+      ],
+      { showToolActivity: false },
+    );
+
+    expect(output.stderr).toBe("");
+  });
+
   it("reports a turn limit on stderr", () => {
     expect(
       render([

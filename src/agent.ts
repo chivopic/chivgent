@@ -1,3 +1,4 @@
+import type { ContextManager } from "./context.js";
 import {
   emitEvent,
   type AgentEventListener,
@@ -10,6 +11,7 @@ import type {
   ToolCall,
   ToolResultMessage,
 } from "./messages.js";
+import { addUsage, EMPTY_USAGE, type TokenUsage } from "./tokens.js";
 import type { Tool, ToolDefinition, ToolOutput } from "./tools/tool.js";
 import type { Workspace } from "./workspace.js";
 
@@ -23,6 +25,8 @@ export interface AgentOptions {
   readonly onEvent?: AgentEventListener;
   /** Use the Provider's streaming API when it offers one. Defaults to true. */
   readonly streaming?: boolean;
+  /** Keeps the transcript inside the Provider's input window. */
+  readonly context?: ContextManager;
 }
 
 export interface AgentRunOptions {
@@ -41,17 +45,20 @@ export type AgentRunResult =
       readonly finalMessage: AssistantMessage;
       readonly messages: readonly Message[];
       readonly turnCount: number;
+      readonly usage: TokenUsage;
     }
   | {
       readonly status: "max_turns" | "aborted";
       readonly messages: readonly Message[];
       readonly turnCount: number;
+      readonly usage: TokenUsage;
     };
 
 interface RunState {
-  readonly messages: Message[];
+  messages: Message[];
   readonly seenToolCallIds: Set<string>;
   turnCount: number;
+  usage: TokenUsage;
   continuation?: LLMContinuation;
 }
 
@@ -71,6 +78,7 @@ export class Agent {
   private readonly workspace: Workspace;
   private readonly onEvent?: AgentEventListener;
   private readonly streaming: boolean;
+  private readonly context: ContextManager | undefined;
 
   constructor(options: AgentOptions) {
     if (!Number.isSafeInteger(options.maxTurns) || options.maxTurns <= 0) {
@@ -91,10 +99,16 @@ export class Agent {
       this.onEvent = options.onEvent;
     }
     this.streaming = options.streaming ?? true;
+    this.context = options.context;
   }
 
   get toolNames(): readonly string[] {
     return [...this.registry.keys()];
+  }
+
+  /** The definitions sent to the Provider, for context accounting. */
+  get tools(): readonly ToolDefinition[] {
+    return structuredClone(this.toolDefinitions) as ToolDefinition[];
   }
 
   async run(
@@ -112,6 +126,7 @@ export class Agent {
       ],
       seenToolCallIds: new Set<string>(),
       turnCount: 0,
+      usage: EMPTY_USAGE,
     };
     const signal = options.signal;
 
@@ -151,10 +166,12 @@ export class Agent {
       state.turnCount += 1;
       const turn = state.turnCount;
       this.emit({ type: "turn_start", turn });
+      await this.compactIfNeeded(state, turn, signal);
       this.emit({ type: "message_start", turn });
 
       const response = await this.requestAssistantMessage(state, turn, signal);
       const assistant = validateAndCloneAssistantMessage(response.message);
+      state.usage = addUsage(state.usage, response.usage);
       this.assertUniqueToolCallIds(assistant.toolCalls, state.seenToolCallIds);
       state.messages.push(assistant);
       state.continuation = response.continuation;
@@ -172,6 +189,7 @@ export class Agent {
           finalMessage: assistant,
           messages: snapshotMessages(state.messages),
           turnCount: state.turnCount,
+          usage: state.usage,
         };
       }
 
@@ -191,7 +209,61 @@ export class Agent {
       status: "max_turns",
       messages: snapshotMessages(state.messages),
       turnCount: state.turnCount,
+      usage: state.usage,
     };
+  }
+
+  /**
+   * Compacts before the request is built. A compaction rewrites history, so the
+   * Provider continuation is dropped: the next request must be rebuilt from the
+   * compacted transcript rather than resumed from the Provider's copy.
+   */
+  private async compactIfNeeded(
+    state: RunState,
+    turn: number,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    if (this.context === undefined) {
+      return;
+    }
+
+    const shape = {
+      systemPrompt: this.systemPrompt,
+      messages: state.messages,
+      tools: this.toolDefinitions,
+    };
+    const status = this.context.status(shape);
+    if (!status.overBudget) {
+      return;
+    }
+
+    this.emit({
+      type: "compaction_start",
+      turn,
+      estimatedTokens: status.estimatedTokens,
+      budgetTokens: status.budgetTokens,
+    });
+
+    const compacted = await this.context.compact(shape, {
+      ...(signal === undefined ? {} : { signal }),
+    });
+    if (compacted === undefined) {
+      return;
+    }
+
+    state.messages = [...compacted.messages];
+    state.continuation = undefined;
+
+    this.emit({
+      type: "compaction_end",
+      turn,
+      beforeTokens: compacted.beforeTokens,
+      afterTokens: compacted.afterTokens,
+      summarisedMessages: compacted.summarisedMessages,
+      shrunkToolResults: compacted.shrunkToolResults,
+      droppedMessages: compacted.droppedMessages,
+      degraded: compacted.degraded,
+    });
   }
 
   private async requestAssistantMessage(
@@ -307,6 +379,7 @@ export class Agent {
       status,
       turnCount: state.turnCount,
       messages: snapshotMessages(state.messages),
+      usage: state.usage,
       ...(error === undefined ? {} : { error }),
     });
   }
@@ -322,6 +395,7 @@ function abortedResult(state: RunState): AgentRunResult {
     status: "aborted",
     messages: snapshotMessages(state.messages),
     turnCount: state.turnCount,
+    usage: state.usage,
   };
 }
 

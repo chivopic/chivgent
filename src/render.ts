@@ -62,6 +62,29 @@ export function createEventRenderer(
         endLine();
         return;
 
+      case "compaction_start":
+        if (showToolActivity) {
+          endLine();
+          // A forced compaction is not over budget, so do not claim it is.
+          const comparison =
+            event.estimatedTokens > event.budgetTokens ? ">" : "of";
+          streams.stderr.write(
+            paint(
+              `· compacting context (${formatTokens(event.estimatedTokens)} ${comparison} ${formatTokens(event.budgetTokens)} budget)\n`,
+              DIM,
+            ),
+          );
+        }
+        return;
+
+      case "compaction_end":
+        if (showToolActivity) {
+          streams.stderr.write(
+            paint(`  ↳ ${describeCompaction(event)}\n`, DIM),
+          );
+        }
+        return;
+
       case "tool_execution_start":
         if (showToolActivity) {
           streams.stderr.write(
@@ -112,6 +135,44 @@ export function createJsonEventWriter(
   return (event: AgentEvent): void => {
     output.write(`${JSON.stringify(event)}\n`);
   };
+}
+
+function describeCompaction(event: {
+  readonly beforeTokens: number;
+  readonly afterTokens: number;
+  readonly summarisedMessages: number;
+  readonly shrunkToolResults: number;
+  readonly droppedMessages: number;
+  readonly degraded: boolean;
+}): string {
+  if (
+    event.summarisedMessages === 0 &&
+    event.shrunkToolResults === 0 &&
+    event.droppedMessages === 0
+  ) {
+    return "nothing to compact";
+  }
+
+  const parts = [
+    `${formatTokens(event.beforeTokens)} → ${formatTokens(event.afterTokens)}`,
+  ];
+  if (event.summarisedMessages > 0) {
+    parts.push(`${event.summarisedMessages} messages summarised`);
+  }
+  if (event.shrunkToolResults > 0) {
+    parts.push(`${event.shrunkToolResults} tool results trimmed`);
+  }
+  if (event.droppedMessages > 0) {
+    parts.push(`${event.droppedMessages} messages dropped`);
+  }
+  if (event.degraded) {
+    parts.push("summary unavailable, used a digest");
+  }
+  return parts.join(", ");
+}
+
+export function formatTokens(tokens: number): string {
+  return tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : `${tokens}`;
 }
 
 function summariseArguments(value: unknown): string {

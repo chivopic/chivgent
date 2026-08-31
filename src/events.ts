@@ -3,6 +3,7 @@ import type {
   Message,
   ToolResultMessage,
 } from "./messages.js";
+import type { TokenUsage } from "./tokens.js";
 
 /**
  * Terminal state of one Agent run. `aborted` is reported, never thrown, so a
@@ -25,6 +26,8 @@ export type AgentRunStatus =
 export type AgentEvent =
   | AgentStartEvent
   | TurnStartEvent
+  | CompactionStartEvent
+  | CompactionEndEvent
   | MessageStartEvent
   | MessageUpdateEvent
   | MessageEndEvent
@@ -42,6 +45,26 @@ export interface AgentStartEvent {
 export interface TurnStartEvent {
   readonly type: "turn_start";
   readonly turn: number;
+}
+
+/** The transcript no longer fits the context budget and is being compacted. */
+export interface CompactionStartEvent {
+  readonly type: "compaction_start";
+  readonly turn: number;
+  readonly estimatedTokens: number;
+  readonly budgetTokens: number;
+}
+
+export interface CompactionEndEvent {
+  readonly type: "compaction_end";
+  readonly turn: number;
+  readonly beforeTokens: number;
+  readonly afterTokens: number;
+  readonly summarisedMessages: number;
+  readonly shrunkToolResults: number;
+  readonly droppedMessages: number;
+  /** True when the summary came from the deterministic fallback digest. */
+  readonly degraded: boolean;
 }
 
 /** An assistant message is about to be produced for the current turn. */
@@ -96,6 +119,8 @@ export interface AgentEndEvent {
   readonly status: AgentRunStatus;
   readonly turnCount: number;
   readonly messages: readonly Message[];
+  /** Provider-reported totals for the run, when the Provider reports them. */
+  readonly usage?: TokenUsage;
   readonly error?: string;
 }
 

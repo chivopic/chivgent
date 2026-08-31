@@ -2,6 +2,7 @@
 
 import process from "node:process";
 import type { AgentOptions } from "./agent.js";
+import { ContextManager, createLLMSummariser } from "./context.js";
 import {
   helpText,
   parseCliArgs,
@@ -108,6 +109,14 @@ async function main(argv: readonly string[]): Promise<number> {
     tools: [new ListFilesTool(), new SearchTextTool(), new ReadFileTool()],
     workspace: new LocalWorkspace(cwd),
     streaming: options.stream,
+    ...(options.compact
+      ? {
+          context: new ContextManager({
+            maxInputTokens: options.contextWindow,
+            summarise: createLLMSummariser(llm),
+          }),
+        }
+      : {}),
   };
   const session = new AgentSession({
     agent: agentOptions,

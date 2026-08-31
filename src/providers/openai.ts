@@ -108,6 +108,14 @@ function toLLMResponse(response: OpenAIResponse): LLMResponse {
       provider: "openai-responses",
       previousResponseId: response.id,
     } satisfies OpenAIContinuation,
+    ...(response.usage === undefined
+      ? {}
+      : {
+          usage: {
+            inputTokens: response.usage.input_tokens,
+            outputTokens: response.usage.output_tokens,
+          },
+        }),
   };
 }
 

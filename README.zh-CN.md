@@ -24,6 +24,8 @@
 - 通过 Responses API 支持 OpenAI。
 - 通过通用 OpenAI-compatible Chat Completions 客户端支持 DeepSeek。
 - 无需修改代码即可配置自定义 OpenAI-compatible API。
+- 带自动压缩的上下文预算，长会话不会因为撞上输入窗口而失败。
+- 基于 Provider 真实 usage 的 token 记账。
 - 既可以进入带斜杠命令的交互式会话，也可以单次提问后退出。
 - Session 以 JSON Lines 持久化，可以在之后的进程中恢复。
 - 提供 `--json` 事件流，便于脚本和其他前端消费。
@@ -125,12 +127,14 @@ chivgent [选项]                   进入交互式会话
   --resume ID      恢复指定 Session
   --sessions       列出已记录的 Session 并退出
   --no-session     不记录本次运行
+  --context-window N  输入 token 预算（默认：100000）
+  --no-compact     从不压缩；transcript 超出窗口时直接失败
   -h, --help       显示帮助
   -v, --version    显示版本
 ```
 
-交互式会话中 `/help` 会列出全部斜杠命令：`/session`、`/tools`、`/clear` 和
-`/exit`。Ctrl+C 只中断当前回答，不会退出会话；Ctrl+D 才会离开。
+交互式会话中 `/help` 会列出全部斜杠命令：`/session`、`/context`、`/compact`、
+`/tools`、`/clear` 和 `/exit`。Ctrl+C 只中断当前回答，不会退出会话；Ctrl+D 才会离开。
 
 退出码：`0` 正常回答，`1` 配置或 Provider 失败，`2` 达到轮次上限，`130` 被
 Ctrl+C 中断。
@@ -179,7 +183,9 @@ Agent Loop 自己不打印任何内容，而是通过类型化的事件流对外
 
 ```text
 agent_start
-  turn_start -> message_start -> message_update* -> message_end
+  turn_start
+    compaction_start -> compaction_end           (仅在超出预算时)
+    message_start -> message_update* -> message_end
     tool_execution_start -> tool_execution_end   (每个 Tool Call 一次)
   turn_end
   ...
@@ -193,6 +199,25 @@ TUI 同样可以消费。
 
 `LLMClient.stream` 是可选的。Provider 未实现时，Agent 会退回 `complete`，事件序列
 不变，只是没有增量事件。
+
+### 上下文预算
+
+每次请求在组装之前先估算。超出预算时按"损失最小"的顺序压缩：先把更早的轮次
+摘要成一条带标记的消息，再裁剪陈旧的 tool result，最后才丢弃最老的消息。有两条
+消息被钉住不丢：最后一个 user prompt，以及摘要本身——它是 transcript 里信息
+密度最高的一条。
+
+压缩改写了历史，因此之后会丢弃 Provider continuation：下一次请求从压缩后的
+transcript 重建，而不是让 Provider 接着它自己那份历史继续。每一步的产物都是
+Provider 会接受的序列：以 user 消息开头，且任何 tool result 都不与调用它的
+assistant 消息分离。
+
+摘要通过同一个 Provider 生成，使用独立的 system prompt 且不带任何工具，因此它
+无法反过来修改正在摘要的 transcript。摘要失败时退回确定性 digest，运行继续；
+`compaction_end` 会用 `degraded: true` 如实标出。
+
+Token 估算是启发式的，并且刻意偏大：提前压缩只多花一次摘要调用，而超出真实窗口
+会让整轮失败。报告出来的 token 用量是另一回事——只来自 Provider 自己的 `usage`。
 
 ### OpenAI-compatible 供应商
 
@@ -240,6 +265,8 @@ src/
   llm.ts                         Provider 无关的 LLM 契约
   retry.ts                       Provider 超时与重试装饰器
   messages.ts                    运行时消息模型
+  tokens.ts                      Token 估算与用量累计
+  context.ts                     上下文预算与 transcript 压缩
   session.ts                     会话状态与事件分发
   session-store.ts               JSONL 会话日志与恢复
   repl.ts                        交互式输入与斜杠命令
@@ -271,7 +298,7 @@ npm run build
 
 ```bash
 npm pack
-npm install -g ./chivgent-0.6.0.tgz
+npm install -g ./chivgent-0.7.0.tgz
 ```
 
 测试使用脚本化或 Mock LLM Client。真实 API Smoke Test 需要手工执行，因此默认
@@ -307,7 +334,7 @@ npm install -g ./chivgent-0.6.0.tgz
 - [x] 项目发现工具：`list_files`、`search_text` 和分段 `read_file`
 - [x] 流式输出和运行时事件
 - [x] 持久化多轮 Session
-- [ ] Context Window 管理和压缩
+- [x] Context Window 管理和压缩
 - [ ] 需要权限确认的 `write_file`、`edit_file` 和 Shell 工具
 - [ ] Provider Registry 和用户配置文件
 - [ ] TUI、Extensions、Telemetry 和 Evals
@@ -319,6 +346,7 @@ npm install -g ./chivgent-0.6.0.tgz
 - [Stage 2：Project Discovery 实现设计](docs/stage-2-project-discovery.md)
 - [Stage 3：Runtime Events 与流式输出设计](docs/stage-3-runtime-events.md)
 - [Stage 4：Session 与交互模式设计](docs/stage-4-sessions.md)
+- [Stage 5：Context 预算与压缩设计](docs/stage-5-context-budget.md)
 
 ## 参与贡献
 

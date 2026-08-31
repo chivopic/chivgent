@@ -1,4 +1,5 @@
 import type { AssistantMessage, Message } from "./messages.js";
+import type { TokenUsage } from "./tokens.js";
 import type { ToolDefinition } from "./tools/tool.js";
 
 /**
@@ -19,6 +20,8 @@ export interface LLMRequest {
 export interface LLMResponse {
   readonly message: AssistantMessage;
   readonly continuation?: LLMContinuation;
+  /** Reported by the Provider when it returns usage; never estimated here. */
+  readonly usage?: TokenUsage;
 }
 
 export interface LLMStreamHandlers {

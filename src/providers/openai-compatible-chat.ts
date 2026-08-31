@@ -15,6 +15,7 @@ import type {
   LLMResponse,
   LLMStreamHandlers,
 } from "../llm.js";
+import type { TokenUsage } from "../tokens.js";
 import type {
   AssistantMessage,
   Message,
@@ -82,7 +83,12 @@ export class OpenAICompatibleChatClient implements LLMClient {
             signal: request.signal,
           });
 
-    return this.toLLMResponse(request, history, getProviderMessage(response));
+    return this.toLLMResponse(
+      request,
+      history,
+      getProviderMessage(response),
+      toUsage(response.usage),
+    );
   }
 
   async stream(
@@ -93,6 +99,9 @@ export class OpenAICompatibleChatClient implements LLMClient {
     const parameters = {
       ...this.createParameters(request, history),
       stream: true as const,
+      // Without this the final chunk carries no usage and token accounting
+      // silently falls back to the estimate.
+      stream_options: { include_usage: true },
     };
     const chunks =
       request.signal === undefined
@@ -109,7 +118,12 @@ export class OpenAICompatibleChatClient implements LLMClient {
       }
     }
 
-    return this.toLLMResponse(request, history, accumulator.toMessage());
+    return this.toLLMResponse(
+      request,
+      history,
+      accumulator.toMessage(),
+      accumulator.usage,
+    );
   }
 
   private createHistory(request: LLMRequest): CompatibleHistoryMessage[] {
@@ -137,6 +151,7 @@ export class OpenAICompatibleChatClient implements LLMClient {
     request: LLMRequest,
     history: readonly CompatibleHistoryMessage[],
     providerMessage: CompatibleAssistantMessage,
+    usage: TokenUsage | undefined,
   ): LLMResponse {
     return {
       message: toInternalMessage(providerMessage),
@@ -148,6 +163,7 @@ export class OpenAICompatibleChatClient implements LLMClient {
           toHistoryMessage(providerMessage),
         ]),
       } satisfies CompatibleContinuation,
+      ...(usage === undefined ? {} : { usage }),
     };
   }
 }
@@ -168,8 +184,12 @@ class ChatCompletionAccumulator {
   private reasoningContent = "";
   private readonly toolCalls = new Map<number, PartialToolCall>();
 
+  /** Set from the usage chunk the Provider sends last, when it sends one. */
+  usage: TokenUsage | undefined;
+
   /** Returns the text delta contributed by this chunk. */
   add(chunk: ChatCompletionChunk): string {
+    this.usage = toUsage(chunk.usage) ?? this.usage;
     const delta = chunk.choices[0]?.delta;
     if (delta === undefined) {
       return "";
@@ -312,6 +332,17 @@ function toAssistantParam(
 
 function toolOutput(message: ToolResultMessage): string {
   return message.isError ? `Tool error: ${message.content}` : message.content;
+}
+
+function toUsage(
+  usage: { prompt_tokens: number; completion_tokens: number } | null | undefined,
+): TokenUsage | undefined {
+  return usage == null
+    ? undefined
+    : {
+        inputTokens: usage.prompt_tokens,
+        outputTokens: usage.completion_tokens,
+      };
 }
 
 function continueHistory(

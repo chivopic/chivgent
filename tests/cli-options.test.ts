@@ -108,6 +108,25 @@ describe("CLI options", () => {
     expect(parseCliArgs([], {})).not.toHaveProperty("prompt");
   });
 
+  it("defaults to a context budget with compaction on", () => {
+    expect(parseCliArgs(["Question"], {})).toMatchObject({
+      contextWindow: 100_000,
+      compact: true,
+    });
+  });
+
+  it("parses context flags", () => {
+    expect(
+      parseCliArgs(["--context-window", "8000", "--no-compact", "Q"], {}),
+    ).toMatchObject({ contextWindow: 8_000, compact: false });
+  });
+
+  it("rejects an out-of-range context window", () => {
+    expect(() => parseCliArgs(["--context-window", "10", "Q"], {})).toThrow(
+      "--context-window",
+    );
+  });
+
   it("documents both Providers", () => {
     expect(helpText()).toContain("openai, deepseek, or openai-compatible");
     expect(helpText()).toContain("openai-compatible");
@@ -116,6 +135,7 @@ describe("CLI options", () => {
     expect(helpText()).toContain("--no-stream");
     expect(helpText()).toContain("--resume ID");
     expect(helpText()).toContain("CHIVGENT_HOME");
-    expect(VERSION).toBe("0.6.0");
+    expect(helpText()).toContain("--context-window");
+    expect(VERSION).toBe("0.7.0");
   });
 });

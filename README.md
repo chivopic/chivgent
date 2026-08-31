@@ -27,6 +27,8 @@ to study before adding production-harness complexity.
 - OpenAI support through the Responses API.
 - DeepSeek support through a reusable OpenAI-compatible Chat Completions client.
 - Custom OpenAI-compatible endpoints through environment-only configuration.
+- A context budget with automatic compaction, so long sessions keep working.
+- Token accounting from the Provider's own usage numbers.
 - An interactive session with slash commands, or a single-shot question.
 - Sessions that persist as JSON lines and can be resumed in a later process.
 - A `--json` event stream for scripting and other front ends.
@@ -122,12 +124,14 @@ Options:
   --resume ID      Resume a specific session
   --sessions       List recorded sessions and exit
   --no-session     Do not record this run
+  --context-window N  Input-token budget (default: 100000)
+  --no-compact     Never compact; fail if the transcript outgrows the window
   -h, --help       Show help
   -v, --version    Show version
 ```
 
 In an interactive session, `/help` lists the slash commands: `/session`,
-`/tools`, `/clear`, and `/exit`. Ctrl+C stops the answer in progress without
+`/context`, `/compact`, `/tools`, `/clear`, and `/exit`. Ctrl+C stops the answer in progress without
 leaving the session; Ctrl+D leaves it.
 
 Exit codes: `0` answered, `1` configuration or Provider failure, `2` turn limit
@@ -181,7 +185,9 @@ printing anything itself. One run emits:
 
 ```text
 agent_start
-  turn_start -> message_start -> message_update* -> message_end
+  turn_start
+    compaction_start -> compaction_end           (only when over budget)
+    message_start -> message_update* -> message_end
     tool_execution_start -> tool_execution_end   (once per tool call)
   turn_end
   ...
@@ -196,6 +202,30 @@ or a TUI are others.
 
 `LLMClient.stream` is optional. When a Provider does not implement it, the Agent
 falls back to `complete` and the same events are emitted without deltas.
+
+### Context budget
+
+Every request is estimated before it is built. Over budget, the transcript is
+compacted in the order that loses the least: older turns are summarised into one
+marked message, then stale tool results are trimmed, then the oldest messages are
+dropped. Two messages are pinned — the last user prompt, and the summary itself,
+which is the densest message in the transcript.
+
+Compaction rewrites history, so the Provider continuation is dropped afterwards:
+the next request is rebuilt from the compacted transcript rather than resumed
+from the Provider's own copy. Every step leaves a sequence a Provider accepts —
+it starts at a user message, and no tool result is separated from the assistant
+message that called it.
+
+The summary is produced through the same Provider with its own system prompt and
+no tools, so it cannot touch the transcript it is summarising. If it fails, a
+deterministic digest is used instead and the run continues; `compaction_end`
+reports that with `degraded: true`.
+
+Token estimation is heuristic and deliberately over-counts, because compacting
+early costs one summarisation call while exceeding the real window fails the
+whole turn. Reported token usage is separate: it only ever comes from the
+Provider's own `usage` numbers.
 
 ### OpenAI-compatible Providers
 
@@ -245,6 +275,8 @@ src/
   llm.ts                         Provider-independent LLM contract
   retry.ts                       Provider timeout and retry decorator
   messages.ts                    Runtime message model
+  tokens.ts                      Token estimation and usage totals
+  context.ts                     Context budget and transcript compaction
   session.ts                     Conversation state and event fan-out
   session-store.ts               JSONL session log and resume support
   repl.ts                        Interactive prompt and slash commands
@@ -276,7 +308,7 @@ Build a locally installable tarball:
 
 ```bash
 npm pack
-npm install -g ./chivgent-0.6.0.tgz
+npm install -g ./chivgent-0.7.0.tgz
 ```
 
 Tests use scripted or mocked LLM clients. A real API smoke test is deliberately
@@ -314,7 +346,7 @@ model before granting future write or shell tools access to sensitive projects.
 - [x] Project discovery tools: `list_files`, `search_text`, and ranged `read_file`
 - [x] Streaming output and runtime events
 - [x] Persistent multi-turn sessions
-- [ ] Context-window management and compaction
+- [x] Context-window management and compaction
 - [ ] Permission-gated `write_file`, `edit_file`, and shell tools
 - [ ] Provider registry and user configuration file
 - [ ] TUI, extensions, telemetry, and evals
@@ -326,6 +358,7 @@ model before granting future write or shell tools access to sensitive projects.
 - [Stage 2: Project Discovery implementation design](docs/stage-2-project-discovery.md)
 - [Stage 3: Runtime Events and Streaming design](docs/stage-3-runtime-events.md)
 - [Stage 4: Sessions and interactive mode design](docs/stage-4-sessions.md)
+- [Stage 5: Context budget and compaction design](docs/stage-5-context-budget.md)
 
 ## Contributing
 

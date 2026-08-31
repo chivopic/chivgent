@@ -1,6 +1,13 @@
 import { Agent, type AgentOptions, type AgentRunResult } from "./agent.js";
+import type { CompactionResult, ContextStatus } from "./context.js";
 import type { AgentEvent, AgentEventListener } from "./events.js";
 import type { Message } from "./messages.js";
+import {
+  addUsage,
+  EMPTY_USAGE,
+  type RequestShape,
+  type TokenUsage,
+} from "./tokens.js";
 import {
   createSessionId,
   SESSION_FORMAT_VERSION,
@@ -32,12 +39,15 @@ export class AgentSession {
   readonly cwd: string;
 
   private readonly agent: Agent;
+  private readonly systemPrompt: string;
   private readonly listeners = new Set<AgentEventListener>();
   private readonly store: SessionStore | undefined;
+  private readonly context: AgentOptions["context"];
   private readonly now: () => Date;
   private transcript: readonly Message[];
   private headerWritten: boolean;
   private promptCount = 0;
+  private totalUsage: TokenUsage = EMPTY_USAGE;
 
   constructor(options: AgentSessionOptions) {
     this.id = options.id ?? createSessionId();
@@ -46,6 +56,8 @@ export class AgentSession {
     this.now = options.now ?? (() => new Date());
     this.transcript = structuredClone(options.messages ?? []);
     this.headerWritten = options.resumed ?? false;
+    this.systemPrompt = options.agent.systemPrompt;
+    this.context = options.agent.context;
     this.agent = new Agent({
       ...options.agent,
       onEvent: (event) => {
@@ -64,6 +76,58 @@ export class AgentSession {
 
   get toolNames(): readonly string[] {
     return this.agent.toolNames;
+  }
+
+  /** Provider-reported totals across every prompt in this session. */
+  get usage(): TokenUsage {
+    return this.totalUsage;
+  }
+
+  /** What the next request would cost, or undefined when no budget is set. */
+  contextStatus(): ContextStatus | undefined {
+    return this.context?.status(this.requestShape());
+  }
+
+  /**
+   * Compacts the transcript now, whether or not it is over budget. Used by the
+   * REPL's `/compact`; automatic compaction happens inside the Agent Loop.
+   */
+  async compact(
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<CompactionResult | undefined> {
+    if (this.context === undefined) {
+      return undefined;
+    }
+
+    const shape = this.requestShape();
+    const status = this.context.status(shape);
+    this.dispatch({
+      type: "compaction_start",
+      turn: 0,
+      estimatedTokens: status.estimatedTokens,
+      budgetTokens: status.budgetTokens,
+    });
+
+    const compacted = await this.context.compact(shape, {
+      force: true,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+    if (compacted === undefined) {
+      return undefined;
+    }
+
+    this.transcript = compacted.messages;
+    this.dispatch({
+      type: "compaction_end",
+      turn: 0,
+      beforeTokens: compacted.beforeTokens,
+      afterTokens: compacted.afterTokens,
+      summarisedMessages: compacted.summarisedMessages,
+      shrunkToolResults: compacted.shrunkToolResults,
+      droppedMessages: compacted.droppedMessages,
+      degraded: compacted.degraded,
+    });
+    return compacted;
   }
 
   subscribe(listener: AgentEventListener): () => void {
@@ -90,6 +154,7 @@ export class AgentSession {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
     this.transcript = result.messages;
+    this.totalUsage = addUsage(this.totalUsage, result.usage);
     await this.flush();
     return result;
   }
@@ -101,6 +166,14 @@ export class AgentSession {
       id: this.id,
       timestamp: this.now().toISOString(),
       cwd: this.cwd,
+    };
+  }
+
+  private requestShape(): RequestShape {
+    return {
+      systemPrompt: this.systemPrompt,
+      messages: this.transcript,
+      tools: this.agent.tools,
     };
   }
 
