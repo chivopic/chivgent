@@ -1,11 +1,22 @@
 import OpenAI from "openai";
 import type {
   Response as OpenAIResponse,
+  ResponseCreateParamsNonStreaming,
   ResponseInput,
+  ResponseStreamEvent,
   Tool as OpenAITool,
 } from "openai/resources/responses/responses";
-import type { LLMClient, LLMRequest, LLMResponse } from "../llm.js";
-import type { AssistantMessage, Message } from "../messages.js";
+import type {
+  LLMClient,
+  LLMRequest,
+  LLMResponse,
+  LLMStreamHandlers,
+} from "../llm.js";
+import type {
+  AssistantMessage,
+  Message,
+  ToolResultMessage,
+} from "../messages.js";
 
 interface OpenAIContinuation {
   readonly provider: "openai-responses";
@@ -28,8 +39,53 @@ export class OpenAIClient implements LLMClient {
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
+    const parameters = { ...this.createParameters(request), stream: false as const };
+    const response =
+      request.signal === undefined
+        ? await this.client.responses.create(parameters)
+        : await this.client.responses.create(parameters, {
+            signal: request.signal,
+          });
+
+    return toLLMResponse(response);
+  }
+
+  async stream(
+    request: LLMRequest,
+    handlers: LLMStreamHandlers,
+  ): Promise<LLMResponse> {
+    const parameters = { ...this.createParameters(request), stream: true as const };
+    const events =
+      request.signal === undefined
+        ? await this.client.responses.create(parameters)
+        : await this.client.responses.create(parameters, {
+            signal: request.signal,
+          });
+
+    let completed: OpenAIResponse | undefined;
+    for await (const event of events as AsyncIterable<ResponseStreamEvent>) {
+      if (event.type === "response.output_text.delta") {
+        handlers.onTextDelta(event.delta);
+      } else if (event.type === "response.completed") {
+        completed = event.response;
+      } else if (event.type === "response.failed") {
+        throw new TypeError(
+          `OpenAI stream failed: ${event.response.error?.message ?? "unknown error"}`,
+        );
+      }
+    }
+
+    if (completed === undefined) {
+      throw new TypeError("OpenAI stream ended without a completed response.");
+    }
+    return toLLMResponse(completed);
+  }
+
+  private createParameters(
+    request: LLMRequest,
+  ): Omit<ResponseCreateParamsNonStreaming, "stream"> {
     const continuation = parseContinuation(request.continuation);
-    const response = await this.client.responses.create({
+    return {
       model: this.model,
       instructions: request.systemPrompt,
       input:
@@ -38,20 +94,21 @@ export class OpenAIClient implements LLMClient {
           : toContinuationInput(request.messages),
       tools: request.tools.map(toOpenAITool),
       parallel_tool_calls: false,
-      stream: false,
       ...(continuation === undefined
         ? {}
         : { previous_response_id: continuation.previousResponseId }),
-    });
-
-    return {
-      message: fromOpenAIResponse(response),
-      continuation: {
-        provider: "openai-responses",
-        previousResponseId: response.id,
-      } satisfies OpenAIContinuation,
     };
   }
+}
+
+function toLLMResponse(response: OpenAIResponse): LLMResponse {
+  return {
+    message: fromOpenAIResponse(response),
+    continuation: {
+      provider: "openai-responses",
+      previousResponseId: response.id,
+    } satisfies OpenAIContinuation,
+  };
 }
 
 function parseContinuation(value: unknown): OpenAIContinuation | undefined {
@@ -71,18 +128,49 @@ function parseContinuation(value: unknown): OpenAIContinuation | undefined {
   return value as OpenAIContinuation;
 }
 
+/**
+ * Replays a whole transcript as Responses input. A session's second prompt
+ * starts a new request with earlier assistant turns and tool results already in
+ * it, so the initial input cannot be limited to user messages.
+ */
 function toInitialInput(messages: readonly Message[]): ResponseInput {
-  return messages.map((message) => {
+  const input: ResponseInput = [];
+
+  for (const message of messages) {
     switch (message.role) {
       case "user":
-        return { role: "user", content: message.content };
+        input.push({ role: "user", content: message.content });
+        break;
+
       case "assistant":
+        if (message.content.length > 0) {
+          input.push({ role: "assistant", content: message.content });
+        }
+        for (const toolCall of message.toolCalls) {
+          input.push({
+            type: "function_call",
+            call_id: toolCall.id,
+            name: toolCall.name,
+            arguments: stringifyArguments(toolCall.arguments),
+          });
+        }
+        break;
+
       case "tool":
-        throw new TypeError(
-          "An initial OpenAI request must contain only user messages in Stage 1.",
-        );
+        input.push({
+          type: "function_call_output",
+          call_id: message.toolCallId,
+          output: toolOutput(message),
+        });
+        break;
     }
-  });
+  }
+
+  return input;
+}
+
+function stringifyArguments(value: unknown): string {
+  return typeof value === "string" ? value : JSON.stringify(value ?? {});
 }
 
 function toContinuationInput(messages: readonly Message[]): ResponseInput {
@@ -106,9 +194,13 @@ function toContinuationInput(messages: readonly Message[]): ResponseInput {
     return {
       type: "function_call_output" as const,
       call_id: message.toolCallId,
-      output: message.isError ? `Tool error: ${message.content}` : message.content,
+      output: toolOutput(message),
     };
   });
+}
+
+function toolOutput(message: ToolResultMessage): string {
+  return message.isError ? `Tool error: ${message.content}` : message.content;
 }
 
 function toOpenAITool(tool: LLMRequest["tools"][number]): OpenAITool {

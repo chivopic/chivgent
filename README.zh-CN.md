@@ -24,6 +24,12 @@
 - 通过 Responses API 支持 OpenAI。
 - 通过通用 OpenAI-compatible Chat Completions 客户端支持 DeepSeek。
 - 无需修改代码即可配置自定义 OpenAI-compatible API。
+- 既可以进入带斜杠命令的交互式会话，也可以单次提问后退出。
+- Session 以 JSON Lines 持久化，可以在之后的进程中恢复。
+- 提供 `--json` 事件流，便于脚本和其他前端消费。
+- 基于类型化运行时事件流的流式输出。
+- 可中断的运行：Ctrl+C 结束当前运行，且不会丢失已产生的 transcript。
+- Provider 调用具备单次超时和有上限的指数退避重试。
 - 通过 `list_files` 和字面量 `search_text` 确定性地发现项目内容。
 - 支持带续读提示的分段 `read_file`，所有工具结果都有容量上限。
 - 安全、只读的工作区访问，阻止路径穿越和符号链接逃逸。
@@ -85,20 +91,49 @@ export OPENAI_MODEL="vendor-model"
 chivgent --provider openai-compatible "解释 src/ 目录的架构"
 ```
 
-CLI 只向 stdout 输出最终答案。Provider 错误和诊断信息写入 stderr，并返回非零
-退出码。
+不带问题直接运行 `chivgent` 会进入交互式会话：
+
+```bash
+chivgent
+› src/agent.ts 在做什么？
+› 这个循环在哪里测试？
+› /exit
+```
+
+会话会跨多轮保留上下文，因此追问不需要重复之前的信息。之后可以用
+`chivgent --continue`（或 `chivgent --resume <id>`）恢复；`chivgent --sessions`
+可以列出已记录的会话。
+
+答案会随模型生成实时写入 stdout，因此 stdout 仍然可以直接管道使用。工具活动、
+重试和运行状态写入 stderr；Provider 错误会返回非零退出码。使用 `--no-stream`
+可改为一次性输出完整答案，`--quiet` 可隐藏工具活动。
 
 ## CLI 参考
 
 ```text
-chivgent [--provider openai|deepseek|openai-compatible] [--model MODEL] "问题"
+chivgent [选项] "问题"            回答一次后退出
+chivgent [选项]                   进入交互式会话
 
 选项：
   --provider NAME  openai、deepseek 或 openai-compatible（默认：openai）
   --model MODEL    覆盖 Provider 模型
+  --max-turns N    工具调用轮次上限（默认：8）
+  --no-stream      关闭流式输出，等待完整答案
+  -q, --quiet      不在 stderr 打印工具活动
+  --json           以 JSON Lines 输出整次运行，而不是渲染文本
+  -c, --continue   恢复当前工作区最近的一次 Session
+  --resume ID      恢复指定 Session
+  --sessions       列出已记录的 Session 并退出
+  --no-session     不记录本次运行
   -h, --help       显示帮助
   -v, --version    显示版本
 ```
+
+交互式会话中 `/help` 会列出全部斜杠命令：`/session`、`/tools`、`/clear` 和
+`/exit`。Ctrl+C 只中断当前回答，不会退出会话；Ctrl+D 才会离开。
+
+退出码：`0` 正常回答，`1` 配置或 Provider 失败，`2` 达到轮次上限，`130` 被
+Ctrl+C 中断。
 
 ### Provider 配置
 
@@ -109,7 +144,7 @@ chivgent [--provider openai|deepseek|openai-compatible] [--model MODEL] "问题"
 | 自定义兼容供应商 | `OPENAI_API_KEY` | `OPENAI_MODEL` | 必填 | OpenAI-compatible Chat Completions |
 
 显式传入的 `--model` 优先于 Provider 对应的模型环境变量。自定义兼容供应商还必须
-配置 `OPENAI_BASE_URL`。
+配置 `OPENAI_BASE_URL`。Session 记录在 `CHIVGENT_HOME`（默认 `~/.chivgent`）下。
 
 ```bash
 chivgent --provider openai --model gpt-5.6 "解释 package.json"
@@ -137,6 +172,27 @@ AssistantMessage <- Normalized Result
 ```
 
 因此 Agent、工具和 CLI 不会依赖任何单一供应商的消息格式。
+
+### 运行时事件
+
+Agent Loop 自己不打印任何内容，而是通过类型化的事件流对外汇报。一次运行会产生：
+
+```text
+agent_start
+  turn_start -> message_start -> message_update* -> message_end
+    tool_execution_start -> tool_execution_end   (每个 Tool Call 一次)
+  turn_end
+  ...
+agent_end (completed | max_turns | aborted | error)
+```
+
+`message_update` 只携带增量，不携带累计快照，因此事件流的体积与答案长度保持线性
+关系。事件都是可结构化克隆的，且每个监听者拿到的是副本，渲染层无法修改
+transcript。`src/render.ts` 中的 CLI 渲染器只是其中一个消费者，日志、JSON 流或
+TUI 同样可以消费。
+
+`LLMClient.stream` 是可选的。Provider 未实现时，Agent 会退回 `complete`，事件序列
+不变，只是没有增量事件。
 
 ### OpenAI-compatible 供应商
 
@@ -179,8 +235,14 @@ src/
   cli.ts                         CLI 入口与进程边界
   cli-options.ts                 参数和 Provider 配置
   agent.ts                       Agent Loop 与运行状态
+  events.ts                      运行时事件模型
+  render.ts                      运行时事件的终端渲染
   llm.ts                         Provider 无关的 LLM 契约
+  retry.ts                       Provider 超时与重试装饰器
   messages.ts                    运行时消息模型
+  session.ts                     会话状态与事件分发
+  session-store.ts               JSONL 会话日志与恢复
+  repl.ts                        交互式输入与斜杠命令
   workspace.ts                   安全的本地工作区访问
   providers/
     openai.ts                    OpenAI Responses Adapter
@@ -209,7 +271,7 @@ npm run build
 
 ```bash
 npm pack
-npm install -g ./chivgent-0.4.0.tgz
+npm install -g ./chivgent-0.6.0.tgz
 ```
 
 测试使用脚本化或 Mock LLM Client。真实 API Smoke Test 需要手工执行，因此默认
@@ -228,6 +290,9 @@ npm install -g ./chivgent-0.4.0.tgz
 - 工具结果限制为 64 KiB，读取、扫描、深度和结果数量都有硬上限。
 - 工具输入是不可信数据，执行前必须验证。
 - Agent 会在有限的模型轮数后终止。
+- `~/.chivgent/sessions` 下的会话日志包含提问、回答和工具结果（含文件片段）。
+  在敏感项目中请使用 `--no-session`，并像对待项目本身一样对待该目录。
+- Session id 在拼接成文件路径前会先做校验。
 
 这是一个用于学习的 MVP，并不是经过加固的 Sandbox。在为它增加写文件或 Shell
 工具，并允许其访问敏感项目之前，请先审查代码和威胁模型。
@@ -240,8 +305,8 @@ npm install -g ./chivgent-0.4.0.tgz
 - [x] 通用 OpenAI-compatible Chat Completions Adapter
 - [x] 自定义 OpenAI-compatible CLI Provider
 - [x] 项目发现工具：`list_files`、`search_text` 和分段 `read_file`
-- [ ] 流式输出和运行时事件
-- [ ] 持久化多轮 Session
+- [x] 流式输出和运行时事件
+- [x] 持久化多轮 Session
 - [ ] Context Window 管理和压缩
 - [ ] 需要权限确认的 `write_file`、`edit_file` 和 Shell 工具
 - [ ] Provider Registry 和用户配置文件
@@ -252,6 +317,8 @@ npm install -g ./chivgent-0.4.0.tgz
 - [Stage 1：Minimal Agent 设计](docs/stage-1-minimal-agent.md)
 - [DeepSeek Provider 设计](docs/deepseek-provider.md)
 - [Stage 2：Project Discovery 实现设计](docs/stage-2-project-discovery.md)
+- [Stage 3：Runtime Events 与流式输出设计](docs/stage-3-runtime-events.md)
+- [Stage 4：Session 与交互模式设计](docs/stage-4-sessions.md)
 
 ## 参与贡献
 
