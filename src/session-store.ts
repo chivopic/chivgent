@@ -51,7 +51,7 @@ export interface SessionStore {
   read(id: string): Promise<SessionTranscript | undefined>;
   list(options?: SessionListOptions): Promise<readonly SessionSummary[]>;
   location(id: string): string;
-  /** Resolves once every queued append has been written. */
+  /** Resolves once every queued append has settled. */
   flush?(): Promise<void>;
 }
 
@@ -75,7 +75,7 @@ export function createSessionId(now: Date = new Date()): string {
  */
 export class FileSessionStore implements SessionStore {
   private readonly directory: string;
-  private pendingWrites: Promise<unknown> = Promise.resolve();
+  private pendingWrites: Promise<void> = Promise.resolve();
 
   constructor(home: string = defaultSessionHome()) {
     this.directory = path.join(home, SESSIONS_DIRECTORY);
@@ -85,14 +85,19 @@ export class FileSessionStore implements SessionStore {
     return path.join(this.directory, `${assertSessionId(id)}.jsonl`);
   }
 
-  async append(id: string, record: SessionRecord): Promise<void> {
+  append(id: string, record: SessionRecord): Promise<void> {
     const file = this.location(id);
     const line = `${JSON.stringify(record)}\n`;
-    this.pendingWrites = this.pendingWrites.then(async () => {
+    const write = this.pendingWrites.then(async () => {
       await mkdir(this.directory, { recursive: true });
       await appendFile(file, line, "utf8");
     });
-    return this.pendingWrites as Promise<void>;
+
+    // Keep the queue usable after an individual write fails. The caller still
+    // receives `write` and can observe that failure, while later appends are
+    // chained from a recovered promise instead of a permanently rejected one.
+    this.pendingWrites = write.catch(() => undefined);
+    return write;
   }
 
   async flush(): Promise<void> {

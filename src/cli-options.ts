@@ -1,4 +1,10 @@
-export const VERSION = "0.6.0";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const packageMetadata = require("../package.json") as { readonly version?: unknown };
+
+export const VERSION =
+  typeof packageMetadata.version === "string" ? packageMetadata.version : "0.0.0";
 
 export type Provider = "openai" | "deepseek" | "openai-compatible";
 

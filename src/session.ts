@@ -116,7 +116,11 @@ export class AgentSession {
   }
 
   private record(event: AgentEvent): void {
-    if (this.store === undefined || event.type === "message_update") {
+    if (
+      this.store === undefined ||
+      !this.headerWritten ||
+      event.type === "message_update"
+    ) {
       return;
     }
     // Events are emitted synchronously; the store serialises the writes.
@@ -129,11 +133,19 @@ export class AgentSession {
     if (this.store === undefined || this.headerWritten) {
       return;
     }
-    this.headerWritten = true;
-    await this.store.append(this.id, this.header());
+    try {
+      await this.store.append(this.id, this.header());
+      this.headerWritten = true;
+    } catch {
+      // Skip persistence for this run. A later prompt can retry the header.
+    }
   }
 
   private async flush(): Promise<void> {
-    await this.store?.flush?.();
+    try {
+      await this.store?.flush?.();
+    } catch {
+      // Persistence is best-effort and must not change the Agent result.
+    }
   }
 }

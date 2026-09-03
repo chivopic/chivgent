@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -9,6 +9,7 @@ import {
   defaultSessionHome,
   FileSessionStore,
   parseTranscript,
+  type SessionStore,
 } from "../src/session-store.js";
 import type { Tool, ToolOutput } from "../src/tools/tool.js";
 import type { Workspace } from "../src/workspace.js";
@@ -189,6 +190,42 @@ describe("AgentSession", () => {
       .filter((line) => (JSON.parse(line) as { type: string }).type === "session");
     expect(headers).toHaveLength(1);
   });
+
+  it("keeps Agent results successful when persistence is unavailable", async () => {
+    let appendCalls = 0;
+    const unavailableStore: SessionStore = {
+      async append() {
+        appendCalls += 1;
+        throw new Error("disk unavailable");
+      },
+      async read() {
+        return undefined;
+      },
+      async list() {
+        return [];
+      },
+      location() {
+        return "/unavailable/session.jsonl";
+      },
+      async flush() {
+        throw new Error("disk unavailable");
+      },
+    };
+    const session = createSession(new FakeLLMClient([assistant("Answer.")]), {
+      store: unavailableStore,
+      id: "unavailable-session",
+    });
+
+    await expect(session.prompt("Question")).resolves.toMatchObject({
+      status: "completed",
+    });
+    expect(session.messages).toEqual([
+      { role: "user", content: "Question" },
+      { role: "assistant", content: "Answer.", toolCalls: [] },
+    ]);
+    // A failed header disables event persistence for that run.
+    expect(appendCalls).toBe(1);
+  });
 });
 
 describe("FileSessionStore", () => {
@@ -241,6 +278,30 @@ describe("FileSessionStore", () => {
     await writeFile(path.join(home, "sessions", "notes.txt"), "ignored");
 
     await expect(store.list()).resolves.toEqual([]);
+  });
+
+  it("recovers the write queue after an append fails", async () => {
+    const home = await temporaryHome();
+    const blockedHome = path.join(home, "blocked-home");
+    await writeFile(blockedHome, "not a directory");
+    const store = new FileSessionStore(blockedHome);
+    const header = {
+      type: "session" as const,
+      version: 1,
+      id: "session-a",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      cwd: "/workspace",
+    };
+
+    await expect(store.append("session-a", header)).rejects.toBeDefined();
+
+    await rm(blockedHome);
+    await mkdir(blockedHome);
+    await expect(store.append("session-a", header)).resolves.toBeUndefined();
+    await expect(store.flush()).resolves.toBeUndefined();
+
+    const contents = await readFile(store.location("session-a"), "utf8");
+    expect(contents.trim()).toBe(JSON.stringify(header));
   });
 
   it("keeps the last complete run when the file ends mid-line", () => {
