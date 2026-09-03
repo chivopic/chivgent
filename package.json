@@ -28,6 +28,9 @@
     "README.md",
     "README.zh-CN.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=20"
   },
@@ -36,6 +39,8 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "release:check": "npm run check && npm test && npm run build && npm pack --dry-run",
+    "prepublishOnly": "npm run check && npm test",
     "prepack": "npm run build"
   },
   "dependencies": {
