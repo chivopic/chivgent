@@ -46,7 +46,14 @@
 - npm
 - OpenAI、DeepSeek 或其他兼容供应商的 API Key
 
-### 从源码安装
+### 从 npm 安装
+
+```bash
+npm install -g chivgent
+chivgent --version
+```
+
+如果希望安装当前源码版本：
 
 ```bash
 git clone https://github.com/chivopic/chivgent.git
@@ -54,13 +61,6 @@ cd chivgent
 npm install
 npm run build
 npm install -g .
-```
-
-检查安装结果：
-
-```bash
-chivgent --version
-chivgent --help
 ```
 
 ### 分析一个项目
@@ -267,6 +267,12 @@ npm test
 npm run build
 ```
 
+运行完整的发布检查（包含 npm tarball dry run）：
+
+```bash
+npm run release:check
+```
+
 构建一个可以在本地安装的 tarball：
 
 ```bash
@@ -319,6 +325,7 @@ npm install -g ./chivgent-0.6.0.tgz
 - [Stage 2：Project Discovery 实现设计](docs/stage-2-project-discovery.md)
 - [Stage 3：Runtime Events 与流式输出设计](docs/stage-3-runtime-events.md)
 - [Stage 4：Session 与交互模式设计](docs/stage-4-sessions.md)
+- [发布流程](docs/releasing.md)
 
 ## 参与贡献
 

@@ -49,7 +49,14 @@ to study before adding production-harness complexity.
 - npm
 - An API key for OpenAI, DeepSeek, or a compatible Provider
 
-### Install from source
+### Install from npm
+
+```bash
+npm install -g chivgent
+chivgent --version
+```
+
+To install the current source checkout instead:
 
 ```bash
 git clone https://github.com/chivopic/chivgent.git
@@ -272,6 +279,12 @@ npm test
 npm run build
 ```
 
+Run the complete release gate, including an npm tarball dry run:
+
+```bash
+npm run release:check
+```
+
 Build a locally installable tarball:
 
 ```bash
@@ -326,6 +339,7 @@ model before granting future write or shell tools access to sensitive projects.
 - [Stage 2: Project Discovery implementation design](docs/stage-2-project-discovery.md)
 - [Stage 3: Runtime Events and Streaming design](docs/stage-3-runtime-events.md)
 - [Stage 4: Sessions and interactive mode design](docs/stage-4-sessions.md)
+- [Release process](docs/releasing.md)
 
 ## Contributing
 
