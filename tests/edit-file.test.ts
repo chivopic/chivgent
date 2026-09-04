@@ -130,6 +130,86 @@ describe("EditFileTool", () => {
     expect(result.content).toContain("--allow-writes");
   });
 
+  it("matches LF old_text against a CRLF file and keeps CRLF", async () => {
+    const root = await temporaryDirectory("chivgent-workspace-");
+    await writeFile(
+      path.join(root, "crlf.ts"),
+      "const a = 1;\r\nconst b = 2;\r\nconst c = 3;\r\n",
+    );
+
+    // A model that echoes the file back routinely normalises CRLF to LF.
+    const result = await new EditFileTool().execute(
+      {
+        path: "crlf.ts",
+        old_text: "const a = 1;\nconst b = 2;",
+        new_text: "const a = 9;\nconst b = 8;",
+      },
+      { workspace: writableWorkspace(root) },
+    );
+
+    expect(result.isError).toBe(false);
+    expect(await readFile(path.join(root, "crlf.ts"), "utf8")).toBe(
+      "const a = 9;\r\nconst b = 8;\r\nconst c = 3;\r\n",
+    );
+  });
+
+  it("also accepts CRLF old_text against a CRLF file", async () => {
+    const root = await temporaryDirectory("chivgent-workspace-");
+    await writeFile(path.join(root, "crlf.ts"), "a\r\nb\r\n");
+
+    const result = await new EditFileTool().execute(
+      { path: "crlf.ts", old_text: "a\r\nb", new_text: "x\r\ny" },
+      { workspace: writableWorkspace(root) },
+    );
+
+    expect(result.isError).toBe(false);
+    expect(await readFile(path.join(root, "crlf.ts"), "utf8")).toBe("x\r\ny\r\n");
+  });
+
+  it("preserves a byte order mark", async () => {
+    const root = await temporaryDirectory("chivgent-workspace-");
+    const file = path.join(root, "bom.ts");
+    await writeFile(file, "\uFEFFconst a = 1;\n");
+
+    const result = await new EditFileTool().execute(
+      { path: "bom.ts", old_text: "const a = 1;", new_text: "const a = 9;" },
+      { workspace: writableWorkspace(root) },
+    );
+
+    expect(result.isError).toBe(false);
+    const bytes = await readFile(file);
+    expect(bytes.subarray(0, 3)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
+    expect(bytes.toString("utf8")).toBe("\uFEFFconst a = 9;\n");
+  });
+
+  it("leaves untouched lines alone in a file with mixed line endings", async () => {
+    const root = await temporaryDirectory("chivgent-workspace-");
+    const file = path.join(root, "mixed.ts");
+    await writeFile(file, "alpha\r\nbeta\ngamma\r\n");
+
+    const result = await new EditFileTool().execute(
+      { path: "mixed.ts", old_text: "beta", new_text: "delta" },
+      { workspace: writableWorkspace(root) },
+    );
+
+    expect(result.isError).toBe(false);
+    // Normalising the whole file would have rewritten the other two lines.
+    expect(await readFile(file, "utf8")).toBe("alpha\r\ndelta\ngamma\r\n");
+  });
+
+  it("treats a CRLF-only difference as a no-op edit", async () => {
+    const root = await temporaryDirectory("chivgent-workspace-");
+    await writeFile(path.join(root, "crlf.ts"), "a\r\nb\r\n");
+
+    const result = await new EditFileTool().execute(
+      { path: "crlf.ts", old_text: "a\r\nb", new_text: "a\nb" },
+      { workspace: writableWorkspace(root) },
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("would change nothing");
+  });
+
   it("rejects an empty old_text", async () => {
     const root = await temporaryDirectory("chivgent-workspace-");
 

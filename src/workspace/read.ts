@@ -10,7 +10,9 @@ import { resolveExistingPath } from "./paths.js";
 import {
   boundedPositiveInteger,
   readUtf8File,
+  readUtf8FileWithBom,
   splitLinesPreservingEndings,
+  type Utf8FileContents,
 } from "./text.js";
 
 export async function readFullTextFile(
@@ -64,4 +66,16 @@ export async function readTextFile(
     totalLines: lines.length,
     truncated: endLine < lines.length,
   };
+}
+
+export async function readFullTextFileWithBom(
+  limits: WorkspaceLimits,
+  relativePath: string,
+): Promise<Utf8FileContents> {
+  const resolved = await resolveExistingPath(limits.root, relativePath);
+  return readUtf8FileWithBom(
+    resolved.realTarget,
+    relativePath,
+    limits.maxFileBytes,
+  );
 }

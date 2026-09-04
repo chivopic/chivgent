@@ -37,6 +37,7 @@ to study before adding production-harness complexity.
 - Ranged `read_file` output with continuation hints and bounded tool results.
 - Read-only by default; `--allow-writes` adds `write_file` and `edit_file`.
 - Exact-match `edit_file` that refuses missing or ambiguous edits.
+- Edits preserve the file's own byte order mark and CRLF line endings.
 - Atomic writes: a crash mid-write leaves the original file intact.
 - Safe workspace access with traversal and symlink-escape protection.
 - Root `.gitignore`, generated-directory, and sensitive-path filtering.
