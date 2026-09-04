@@ -3,10 +3,16 @@ import { Agent } from "../src/agent.js";
 import type { AgentEvent } from "../src/events.js";
 import type { Tool, ToolOutput } from "../src/tools/tool.js";
 import type { Workspace } from "../src/workspace.js";
-import { assistant, FakeLLMClient, FakeStreamingLLMClient } from "./fakes.js";
+import {
+  assistant,
+  FakeLLMClient,
+  FakeStreamingLLMClient,
+  readOnlyWorkspaceWrites,
+} from "./fakes.js";
 
 const workspace: Workspace = {
   root: "/workspace",
+  ...readOnlyWorkspaceWrites,
   async readTextFile() {
     return {
       content: "contents",

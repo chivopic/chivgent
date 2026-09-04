@@ -32,7 +32,10 @@
 - Provider 调用具备单次超时和有上限的指数退避重试。
 - 通过 `list_files` 和字面量 `search_text` 确定性地发现项目内容。
 - 支持带续读提示的分段 `read_file`，所有工具结果都有容量上限。
-- 安全、只读的工作区访问，阻止路径穿越和符号链接逃逸。
+- 默认只读；`--allow-writes` 才会启用 `write_file` 和 `edit_file`。
+- 精确匹配的 `edit_file`，命中缺失或不唯一时拒绝执行。
+- 原子写入：写入中途崩溃不会损坏原文件。
+- 安全的工作区访问，阻止路径穿越和符号链接逃逸。
 - 支持根 `.gitignore`、生成目录和敏感路径过滤。
 - 工具参数验证、明确的工具错误和最多八轮的安全限制。
 - 可打包安装的 Node.js CLI，不依赖 Agent 框架。
@@ -117,13 +120,14 @@ chivgent [选项]                   进入交互式会话
 选项：
   --provider NAME  openai、deepseek 或 openai-compatible（默认：openai）
   --model MODEL    覆盖 Provider 模型
-  --max-turns N    工具调用轮次上限（默认：8）
+  --max-turns N    工具调用轮次上限（默认：8，加 --allow-writes 时为 16）
   --no-stream      关闭流式输出，等待完整答案
   -q, --quiet      不在 stderr 打印工具活动
   --json           以 JSON Lines 输出整次运行，而不是渲染文本
   -c, --continue   恢复当前工作区最近的一次 Session
   --resume ID      恢复指定 Session
   --sessions       列出已记录的 Session 并退出
+  --allow-writes   允许 Agent 创建和修改文件（默认只读）
   --no-session     不记录本次运行
   -h, --help       显示帮助
   -v, --version    显示版本
@@ -160,6 +164,7 @@ chivgent --provider openai-compatible --model vendor-model "解释 package.json"
                  |                +-> OpenAI-compatible Chat -> DeepSeek / 自定义
                  |
                  +-> Tool Registry -> list_files / search_text / read_file -> Workspace
+                                      write_file / edit_file（--allow-writes）
 ```
 
 Agent Runtime 拥有自己的消息模型。Provider 特有的数据结构只在 `LLMClient` 边界
@@ -243,7 +248,16 @@ src/
   session.ts                     会话状态与事件分发
   session-store.ts               JSONL 会话日志与恢复
   repl.ts                        交互式输入与斜杠命令
-  workspace.ts                   安全的本地工作区访问
+  workspace.ts                   工作区配置与只读默认值
+  workspace/
+    types.ts                     上限、错误类型与 Workspace 契约
+    paths.ts                     路径归一化与逃逸防护
+    ignore.ts                    .gitignore 与生成目录过滤
+    text.ts                      UTF-8 解码、行切分与预览
+    read.ts                      分段读取
+    list.ts                      目录遍历
+    search.ts                    字面量文本搜索
+    write.ts                     原子整文件写入与精确编辑
   providers/
     openai.ts                    OpenAI Responses Adapter
     openai-compatible-chat.ts    通用 Chat Completions Adapter
@@ -254,6 +268,8 @@ src/
     list-files.ts                确定性的项目树发现工具
     search-text.ts               有界的源码字面量搜索工具
     read-file.ts                 分段文本读取工具
+    write-file.ts                整文件创建与替换
+    edit-file.ts                 精确唯一匹配编辑
 tests/                           Provider、Agent Loop 和 Workspace 测试
 docs/                            架构与学习文档
 ```
@@ -287,7 +303,12 @@ npm install -g ./chivgent-0.6.0.tgz
 
 - API Key 只从环境变量读取，绝不能提交到仓库。
 - 自定义 `OPENAI_BASE_URL` 会收到配置的 API Key 和提示词，只能使用可信端点。
-- 当前所有工作区工具都是只读工具。
+- 不传 `--allow-writes` 时工作区工具全部只读，`write_file` 和 `edit_file` 根本
+  不会被注册。
+- 写入会解析到最深层已存在的祖先目录，路径上任何一段是符号链接都会被拒绝，
+  因此预先植入的链接无法把写入重定向到工作区之外。
+- 写入先落到同目录的临时文件再 rename 就位，中断的写入不会截断已有文件。
+- `edit_file` 在 `old_text` 找不到或命中多处时拒绝执行，宁可失败也不改错行。
 - 文件路径必须位于当前工作区内。
 - Real Path 检查会阻止 `..` 路径穿越和符号链接逃逸。
 - 文件大小和二进制内容检查会限制不安全的读取。
@@ -300,8 +321,9 @@ npm install -g ./chivgent-0.6.0.tgz
   在敏感项目中请使用 `--no-session`，并像对待项目本身一样对待该目录。
 - Session id 在拼接成文件路径前会先做校验。
 
-这是一个用于学习的 MVP，并不是经过加固的 Sandbox。在为它增加写文件或 Shell
-工具，并允许其访问敏感项目之前，请先审查代码和威胁模型。
+这是一个用于学习的 MVP，并不是经过加固的 Sandbox。`--allow-writes` 不会对每次
+修改逐一确认，因此请在已提交的代码上使用；在允许它访问敏感项目之前，请先审查
+代码和威胁模型。
 
 ## 路线图
 
@@ -314,7 +336,9 @@ npm install -g ./chivgent-0.6.0.tgz
 - [x] 流式输出和运行时事件
 - [x] 持久化多轮 Session
 - [ ] Context Window 管理和压缩
-- [ ] 需要权限确认的 `write_file`、`edit_file` 和 Shell 工具
+- [x] 通过 `--allow-writes` 选择性开启的 `write_file` 和 `edit_file`
+- [ ] 逐次修改确认与撤销日志
+- [ ] 需要权限确认的 Shell 工具
 - [ ] Provider Registry 和用户配置文件
 - [ ] TUI、Extensions、Telemetry 和 Evals
 

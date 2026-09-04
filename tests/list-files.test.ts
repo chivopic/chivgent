@@ -1,3 +1,4 @@
+import { readOnlyWorkspaceWrites } from "./fakes.js";
 import {
   mkdtemp,
   mkdir,
@@ -184,6 +185,7 @@ describe("ListFilesTool", () => {
   it("keeps formatted listings within 64 KiB", async () => {
     const workspace: Workspace = {
       root: "/workspace",
+      ...readOnlyWorkspaceWrites,
       async readTextFile() {
         throw new Error("not used");
       },
