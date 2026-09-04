@@ -68,6 +68,8 @@ After the first npm version exists, open the package settings on npm and configu
 
 The workflow lives at `.github/workflows/publish.yml`. It uses a GitHub-hosted runner, Node.js 24, and `id-token: write` for OIDC. It deliberately does not use `NPM_TOKEN`.
 
+It also holds `contents: write` so it can create the GitHub release itself. The release is created only after `npm publish` succeeds, so a failed publish never leaves a tag pointing at a version that is not on the registry. Before publishing, the workflow fails fast if a release for the current `package.json` version already exists, which turns a forgotten version bump into an early error instead of a duplicate-version failure from npm.
+
 Trusted Publishing requires npm CLI 11.5.1 or newer and Node.js 22.14.0 or newer in the publishing environment. The workflow uses Node.js 24 to satisfy those requirements. This does not change chivgent's runtime requirement of Node.js 20 or newer for users.
 
 When Trusted Publishing is used from this public GitHub repository, npm automatically generates provenance attestations for the published public package.
@@ -92,6 +94,8 @@ Reference: https://docs.npmjs.com/trusted-publishers/
 
 4. In GitHub Actions, run **Publish npm package** from `main`.
 
-5. Verify the version on npm, then create the matching GitHub tag and release (`vX.Y.Z`).
+5. Verify the version on npm. The workflow creates the matching `vX.Y.Z` tag and
+   GitHub release automatically, with notes generated from the commits since the
+   previous tag.
 
 A package version cannot be overwritten on npm. If publishing fails after a version has already been released, bump to a new version rather than trying to reuse it.
