@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { helpText, parseCliArgs, VERSION } from "../src/cli-options.js";
+import {
+  DEFAULT_MAX_TURNS,
+  DEFAULT_WRITE_MAX_TURNS,
+  helpText,
+  parseCliArgs,
+  VERSION,
+} from "../src/cli-options.js";
 
 describe("CLI options", () => {
   it("defaults to OpenAI", () => {
@@ -104,6 +110,27 @@ describe("CLI options", () => {
     });
   });
 
+  it("keeps writes disabled unless --allow-writes is given", () => {
+    expect(parseCliArgs([], {})).toMatchObject({
+      allowWrites: false,
+      maxTurns: DEFAULT_MAX_TURNS,
+    });
+  });
+
+  it("raises the turn budget when writes are enabled", () => {
+    expect(parseCliArgs(["--allow-writes"], {})).toMatchObject({
+      allowWrites: true,
+      maxTurns: DEFAULT_WRITE_MAX_TURNS,
+    });
+  });
+
+  it("lets an explicit --max-turns win over the write default", () => {
+    expect(parseCliArgs(["--allow-writes", "--max-turns", "3"], {})).toMatchObject({
+      allowWrites: true,
+      maxTurns: 3,
+    });
+  });
+
   it("reads an interactive invocation as a missing prompt", () => {
     expect(parseCliArgs([], {})).not.toHaveProperty("prompt");
   });
@@ -116,6 +143,7 @@ describe("CLI options", () => {
     expect(helpText()).toContain("--no-stream");
     expect(helpText()).toContain("--resume ID");
     expect(helpText()).toContain("CHIVGENT_HOME");
-    expect(VERSION).toBe("0.6.0");
+    expect(helpText()).toContain("--allow-writes");
+    expect(VERSION).toBe("0.7.0");
   });
 });

@@ -35,9 +35,12 @@ to study before adding production-harness complexity.
 - Per-attempt Provider timeouts and bounded exponential-backoff retries.
 - Deterministic project discovery through `list_files` and literal `search_text`.
 - Ranged `read_file` output with continuation hints and bounded tool results.
-- Safe, read-only workspace access with traversal and symlink-escape protection.
+- Read-only by default; `--allow-writes` adds `write_file` and `edit_file`.
+- Exact-match `edit_file` that refuses missing or ambiguous edits.
+- Atomic writes: a crash mid-write leaves the original file intact.
+- Safe workspace access with traversal and symlink-escape protection.
 - Root `.gitignore`, generated-directory, and sensitive-path filtering.
-- Tool argument validation, explicit tool errors, and an eight-turn safety limit.
+- Tool argument validation, explicit tool errors, and a bounded turn limit.
 - A packaged Node.js CLI with no framework dependency.
 - Unit tests that do not spend API credits.
 
@@ -121,13 +124,14 @@ chivgent [options]                Start an interactive session
 Options:
   --provider NAME  openai, deepseek, or openai-compatible (default: openai)
   --model MODEL    Provider model override
-  --max-turns N    Tool-calling turn limit (default: 8)
+  --max-turns N    Tool-calling turn limit (default: 8, 16 with --allow-writes)
   --no-stream      Wait for the full answer instead of streaming tokens
   -q, --quiet      Hide tool activity on stderr
   --json           Write the run as JSON lines instead of rendered text
   -c, --continue   Resume the most recent session for this workspace
   --resume ID      Resume a specific session
   --sessions       List recorded sessions and exit
+  --allow-writes   Let the agent create and change files (default: read-only)
   --no-session     Do not record this run
   -h, --help       Show help
   -v, --version    Show version
@@ -167,6 +171,7 @@ User -> CLI -> Agent -> LLMClient |
                  |                +-> OpenAI-compatible Chat -> DeepSeek / custom
                  |
                  +-> Tool Registry -> list_files / search_text / read_file -> Workspace
+                                      write_file / edit_file (--allow-writes)
 ```
 
 The Agent runtime owns its own messages. Provider-specific schemas are converted
@@ -255,7 +260,16 @@ src/
   session.ts                     Conversation state and event fan-out
   session-store.ts               JSONL session log and resume support
   repl.ts                        Interactive prompt and slash commands
-  workspace.ts                   Safe local workspace access
+  workspace.ts                   Workspace configuration and the read-only default
+  workspace/
+    types.ts                     Limits, errors, and the Workspace contract
+    paths.ts                     Path normalisation and escape protection
+    ignore.ts                    .gitignore and generated-directory filtering
+    text.ts                      UTF-8 decoding, line splitting, previews
+    read.ts                      Ranged reads
+    list.ts                      Directory walking
+    search.ts                    Literal text search
+    write.ts                     Atomic whole-file writes and exact edits
   providers/
     openai.ts                    OpenAI Responses adapter
     openai-compatible-chat.ts    Shared Chat Completions adapter
@@ -266,6 +280,8 @@ src/
     list-files.ts                Deterministic project-tree discovery
     search-text.ts               Bounded literal source search
     read-file.ts                 Ranged text-file reader
+    write-file.ts                Whole-file create and replace
+    edit-file.ts                 Exact unique-match edit
 tests/                           Provider, loop, and workspace tests
 docs/                            Architecture and learning notes
 ```
@@ -300,7 +316,14 @@ manual so the default test suite never consumes credits.
 - API keys are read from environment variables and must never be committed.
 - A custom `OPENAI_BASE_URL` receives the configured API key and prompts; use
   only endpoints you trust.
-- All current workspace tools are read-only.
+- Workspace tools are read-only unless `--allow-writes` is passed; `write_file`
+  and `edit_file` are not registered at all without it.
+- Writes resolve the deepest existing ancestor and reject a symlink at any
+  segment, so a planted link cannot redirect a write out of the workspace.
+- Writes are staged in a sibling temp file and renamed into place, so an
+  interrupted write cannot truncate an existing file.
+- `edit_file` refuses an edit whose `old_text` is missing or matches more than
+  once, so an imprecise edit fails instead of changing the wrong line.
 - Paths must remain inside the current workspace.
 - Real-path checks block `..` traversal and symlink escapes.
 - File size and binary-content checks limit unsafe reads.
@@ -314,8 +337,10 @@ manual so the default test suite never consumes credits.
   and treat the log directory like the project it describes.
 - Session ids are validated before they become file paths.
 
-This is an educational MVP, not a hardened sandbox. Review the code and threat
-model before granting future write or shell tools access to sensitive projects.
+This is an educational MVP, not a hardened sandbox. `--allow-writes` lets the
+model change files without a per-edit confirmation prompt, so use it on work
+you have committed, and review the code and threat model before pointing it at
+a sensitive project.
 
 ## Roadmap
 
@@ -328,7 +353,9 @@ model before granting future write or shell tools access to sensitive projects.
 - [x] Streaming output and runtime events
 - [x] Persistent multi-turn sessions
 - [ ] Context-window management and compaction
-- [ ] Permission-gated `write_file`, `edit_file`, and shell tools
+- [x] Opt-in `write_file` and `edit_file` behind `--allow-writes`
+- [ ] Per-edit confirmation prompts and an undo log
+- [ ] Permission-gated shell tools
 - [ ] Provider registry and user configuration file
 - [ ] TUI, extensions, telemetry, and evals
 

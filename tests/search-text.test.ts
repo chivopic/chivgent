@@ -1,3 +1,4 @@
+import { readOnlyWorkspaceWrites } from "./fakes.js";
 import {
   mkdtemp,
   mkdir,
@@ -212,6 +213,7 @@ describe("SearchTextTool", () => {
   it("keeps formatted matches within 64 KiB", async () => {
     const workspace: Workspace = {
       root: "/workspace",
+      ...readOnlyWorkspaceWrites,
       async readTextFile() {
         throw new Error("not used");
       },

@@ -13,10 +13,15 @@ import {
 } from "../src/session-store.js";
 import type { Tool, ToolOutput } from "../src/tools/tool.js";
 import type { Workspace } from "../src/workspace.js";
-import { assistant, FakeLLMClient } from "./fakes.js";
+import {
+  assistant,
+  FakeLLMClient,
+  readOnlyWorkspaceWrites,
+} from "./fakes.js";
 
 const workspace: Workspace = {
   root: "/workspace",
+  ...readOnlyWorkspaceWrites,
   async readTextFile() {
     return {
       content: "contents",

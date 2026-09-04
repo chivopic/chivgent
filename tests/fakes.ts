@@ -1,3 +1,4 @@
+import { WorkspaceError } from "../src/workspace.js";
 import type {
   LLMClient,
   LLMRequest,
@@ -75,3 +76,16 @@ function cloneRequest(request: LLMRequest): LLMRequest {
   const { signal, ...rest } = request;
   return structuredClone(rest);
 }
+
+/**
+ * Write methods for read-only Workspace fakes. Spread into a fake to satisfy
+ * the contract without pretending the fake can persist anything.
+ */
+export const readOnlyWorkspaceWrites = {
+  async writeTextFile(): Promise<never> {
+    throw new WorkspaceError("writes_disabled", "This fake is read-only.");
+  },
+  async editTextFile(): Promise<never> {
+    throw new WorkspaceError("writes_disabled", "This fake is read-only.");
+  },
+};

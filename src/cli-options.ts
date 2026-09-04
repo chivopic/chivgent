@@ -9,6 +9,12 @@ export const VERSION =
 export type Provider = "openai" | "deepseek" | "openai-compatible";
 
 export const DEFAULT_MAX_TURNS = 8;
+/**
+ * Editing costs turns that reading does not: the model reads, edits, then
+ * re-reads to confirm. Eight turns runs out mid-change, so enabling writes
+ * raises the default unless --max-turns says otherwise.
+ */
+export const DEFAULT_WRITE_MAX_TURNS = 16;
 const MAX_MAX_TURNS = 100;
 
 const DEFAULT_MODELS = {
@@ -41,6 +47,8 @@ export interface CliOptions {
   readonly continueSession: boolean;
   /** List recorded sessions and exit. */
   readonly listSessions: boolean;
+  /** Allow the agent to create and modify files in the workspace. */
+  readonly allowWrites: boolean;
   readonly help: boolean;
   readonly version: boolean;
 }
@@ -59,6 +67,8 @@ export function parseCliArgs(
   let resume: string | undefined;
   let continueSession = false;
   let listSessions = false;
+  let allowWrites = false;
+  let maxTurnsExplicit = false;
   let help = false;
   let version = false;
   const promptParts: string[] = [];
@@ -78,6 +88,7 @@ export function parseCliArgs(
       index += 1;
     } else if (argument === "--max-turns") {
       maxTurns = parseMaxTurns(readOptionValue(argv, index, "--max-turns"));
+      maxTurnsExplicit = true;
       index += 1;
     } else if (argument === "--no-stream") {
       stream = false;
@@ -94,6 +105,8 @@ export function parseCliArgs(
       continueSession = true;
     } else if (argument === "--sessions") {
       listSessions = true;
+    } else if (argument === "--allow-writes") {
+      allowWrites = true;
     } else if (argument?.startsWith("-")) {
       throw new TypeError(`Unknown option: ${argument}`);
     } else if (argument !== undefined) {
@@ -116,7 +129,8 @@ export function parseCliArgs(
     ...(provider === "openai-compatible" && environment.OPENAI_BASE_URL
       ? { baseURL: environment.OPENAI_BASE_URL }
       : {}),
-    maxTurns,
+    maxTurns:
+      allowWrites && !maxTurnsExplicit ? DEFAULT_WRITE_MAX_TURNS : maxTurns,
     stream,
     quiet,
     json,
@@ -124,6 +138,7 @@ export function parseCliArgs(
     ...(resume === undefined ? {} : { resume }),
     continueSession,
     listSessions,
+    allowWrites,
     help,
     version,
   };
@@ -139,13 +154,14 @@ Usage:
 Options:
   --provider NAME  openai, deepseek, or openai-compatible (default: openai)
   --model MODEL    Provider model override
-  --max-turns N    Tool-calling turn limit (default: ${DEFAULT_MAX_TURNS})
+  --max-turns N    Tool-calling turn limit (default: ${DEFAULT_MAX_TURNS}, ${DEFAULT_WRITE_MAX_TURNS} with --allow-writes)
   --no-stream      Wait for the full answer instead of streaming tokens
   -q, --quiet      Hide tool activity on stderr
   --json           Write the run as JSON lines instead of rendered text
   -c, --continue   Resume the most recent session for this workspace
   --resume ID      Resume a specific session
   --sessions       List recorded sessions and exit
+  --allow-writes   Let the agent create and change files (default: read-only)
   --no-session     Do not record this run
   -h, --help       Show help
   -v, --version    Show version
