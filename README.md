@@ -40,7 +40,7 @@ to study before adding production-harness complexity.
 - Atomic writes: a crash mid-write leaves the original file intact.
 - Safe workspace access with traversal and symlink-escape protection.
 - Root `.gitignore`, generated-directory, and sensitive-path filtering.
-- Tool argument validation, explicit tool errors, and an eight-turn safety limit.
+- Tool argument validation, explicit tool errors, and a bounded turn limit.
 - A packaged Node.js CLI with no framework dependency.
 - Unit tests that do not spend API credits.
 
