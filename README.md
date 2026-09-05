@@ -24,6 +24,8 @@ to study before adding production-harness complexity.
 
 - A real multi-turn agent loop: model -> tool call -> tool result -> model.
 - Provider-independent runtime messages and tool contracts.
+- A Provider registry: adding a Provider is a declaration, not a CLI change.
+- API keys resolved from `--api-key`, the environment, then an optional file.
 - OpenAI support through the Responses API.
 - DeepSeek support through a reusable OpenAI-compatible Chat Completions client.
 - Custom OpenAI-compatible endpoints through environment-only configuration.
@@ -131,6 +133,7 @@ Options:
   --json           Write the run as JSON lines instead of rendered text
   -c, --continue   Resume the most recent session for this workspace
   --resume ID      Resume a specific session
+  --api-key KEY    API key for this run; prefer an environment variable
   --sessions       List recorded sessions and exit
   --allow-writes   Let the agent create and change files (default: read-only)
   --no-session     Do not record this run
@@ -152,11 +155,44 @@ reached, `130` interrupted with Ctrl+C.
 | OpenAI | `OPENAI_API_KEY` | `OPENAI_MODEL` | `gpt-5.6` | Responses API |
 | DeepSeek | `DEEPSEEK_API_KEY` | `DEEPSEEK_MODEL` | `deepseek-v4-flash` | OpenAI-compatible Chat Completions |
 | Custom compatible | `OPENAI_API_KEY` | `OPENAI_MODEL` | Required | OpenAI-compatible Chat Completions |
+| OpenRouter | `OPENROUTER_API_KEY` | `OPENROUTER_MODEL` | Required | OpenAI-compatible Chat Completions |
+| Groq | `GROQ_API_KEY` | `GROQ_MODEL` | Required | OpenAI-compatible Chat Completions |
+| xAI | `XAI_API_KEY` | `XAI_MODEL` | Required | OpenAI-compatible Chat Completions |
+| Moonshot | `MOONSHOT_API_KEY` | `MOONSHOT_MODEL` | Required | OpenAI-compatible Chat Completions |
 
 An explicit `--model` value takes precedence over the Provider-specific model
 environment variable. Custom compatible Providers also require
 `OPENAI_BASE_URL`. Sessions are written under `CHIVGENT_HOME` (default
 `~/.chivgent`).
+
+Providers are declared in a registry rather than branched on in the CLI, so
+`--help` and `--provider` validation are generated from the same list that
+creates the client.
+
+#### API key resolution
+
+Keys are resolved in this order, first match wins:
+
+1. `--api-key` for a single run
+2. the Provider's environment variable
+3. `<CHIVGENT_HOME>/auth.json`
+
+An environment variable deliberately beats the stored file, matching the
+convention other CLIs use, so a stored key can be overridden for one run
+without editing anything.
+
+`auth.json` is optional and holds literal keys only:
+
+```json
+{
+  "openai": { "type": "api_key", "key": "sk-..." },
+  "deepseek": "sk-..."
+}
+```
+
+Neither `$VAR` expansion nor `!command` substitution is supported: letting a
+config file spawn a process is a large attack surface for a small convenience.
+chivgent warns when the file is readable by other users; keep it at `chmod 600`.
 
 ```bash
 chivgent --provider openai --model gpt-5.6 "Explain package.json"
@@ -252,6 +288,11 @@ inside thin Provider adapters rather than leaking them into the Agent loop.
 src/
   cli.ts                         CLI entry point and process boundary
   cli-options.ts                 Argument and Provider configuration
+  auth/
+    credentials.ts               Credential contract and resolution order
+    runtime-credentials.ts       --api-key override
+    env-credentials.ts           Environment variable lookup
+    file-credentials.ts          Optional auth.json store
   agent.ts                       Agent loop and run state
   events.ts                      Runtime event model
   render.ts                      Terminal renderer for runtime events
@@ -272,6 +313,9 @@ src/
     search.ts                    Literal text search
     write.ts                     Atomic whole-file writes and exact edits
   providers/
+    registry.ts                  Provider registry
+    definitions.ts               Built-in Provider declarations
+    client.ts                    Credential resolution into an LLM client
     openai.ts                    OpenAI Responses adapter
     openai-compatible-chat.ts    Shared Chat Completions adapter
     deepseek.ts                  DeepSeek configuration wrapper
@@ -314,7 +358,12 @@ manual so the default test suite never consumes credits.
 
 ## Security model
 
-- API keys are read from environment variables and must never be committed.
+- API keys come from `--api-key`, an environment variable, or an optional
+  `auth.json`, in that order, and must never be committed.
+- `auth.json` stores keys in plain text. It is opt-in for that reason, and
+  chivgent warns when its permissions let other users read it.
+- The auth file accepts literal keys only; it cannot expand environment
+  variables or run shell commands.
 - A custom `OPENAI_BASE_URL` receives the configured API key and prompts; use
   only endpoints you trust.
 - Workspace tools are read-only unless `--allow-writes` is passed; `write_file`
@@ -357,7 +406,7 @@ a sensitive project.
 - [x] Opt-in `write_file` and `edit_file` behind `--allow-writes`
 - [ ] Per-edit confirmation prompts and an undo log
 - [ ] Permission-gated shell tools
-- [ ] Provider registry and user configuration file
+- [x] Provider registry and credential resolution chain
 - [ ] TUI, extensions, telemetry, and evals
 
 ## Documentation

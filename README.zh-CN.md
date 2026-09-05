@@ -21,6 +21,8 @@
 
 - 完整的多轮 Agent Loop：模型 -> Tool Call -> Tool Result -> 模型。
 - Provider 无关的运行时消息和工具契约。
+- Provider 注册表：新增 Provider 只是一条声明，不需要改 CLI。
+- API Key 依次从 `--api-key`、环境变量、可选文件解析。
 - 通过 Responses API 支持 OpenAI。
 - 通过通用 OpenAI-compatible Chat Completions 客户端支持 DeepSeek。
 - 无需修改代码即可配置自定义 OpenAI-compatible API。
@@ -127,6 +129,7 @@ chivgent [选项]                   进入交互式会话
   --json           以 JSON Lines 输出整次运行，而不是渲染文本
   -c, --continue   恢复当前工作区最近的一次 Session
   --resume ID      恢复指定 Session
+  --api-key KEY    本次运行使用的 API Key；更推荐用环境变量
   --sessions       列出已记录的 Session 并退出
   --allow-writes   允许 Agent 创建和修改文件（默认只读）
   --no-session     不记录本次运行
@@ -147,9 +150,40 @@ Ctrl+C 中断。
 | OpenAI | `OPENAI_API_KEY` | `OPENAI_MODEL` | `gpt-5.6` | Responses API |
 | DeepSeek | `DEEPSEEK_API_KEY` | `DEEPSEEK_MODEL` | `deepseek-v4-flash` | OpenAI-compatible Chat Completions |
 | 自定义兼容供应商 | `OPENAI_API_KEY` | `OPENAI_MODEL` | 必填 | OpenAI-compatible Chat Completions |
+| OpenRouter | `OPENROUTER_API_KEY` | `OPENROUTER_MODEL` | 必填 | OpenAI-compatible Chat Completions |
+| Groq | `GROQ_API_KEY` | `GROQ_MODEL` | 必填 | OpenAI-compatible Chat Completions |
+| xAI | `XAI_API_KEY` | `XAI_MODEL` | 必填 | OpenAI-compatible Chat Completions |
+| Moonshot | `MOONSHOT_API_KEY` | `MOONSHOT_MODEL` | 必填 | OpenAI-compatible Chat Completions |
 
 显式传入的 `--model` 优先于 Provider 对应的模型环境变量。自定义兼容供应商还必须
 配置 `OPENAI_BASE_URL`。Session 记录在 `CHIVGENT_HOME`（默认 `~/.chivgent`）下。
+
+Provider 通过注册表声明，而不是在 CLI 里分支判断，因此 `--help` 的内容、
+`--provider` 的校验和实际创建 Client 用的是同一份清单。
+
+#### API Key 解析顺序
+
+按以下顺序解析，命中即停：
+
+1. `--api-key`（仅本次运行）
+2. Provider 对应的环境变量
+3. `<CHIVGENT_HOME>/auth.json`
+
+环境变量刻意排在文件之前，与其他 CLI 的惯例一致，这样已存储的 Key 可以被
+一次性的环境变量临时覆盖，而不必改文件。
+
+`auth.json` 是可选的，只接受字面量 Key：
+
+```json
+{
+  "openai": { "type": "api_key", "key": "sk-..." },
+  "deepseek": "sk-..."
+}
+```
+
+不支持 `$VAR` 展开，也不支持 `!command` 替换：让配置文件能够启动进程，
+是用很小的便利换很大的攻击面。当该文件可被其他用户读取时 chivgent 会告警，
+请保持 `chmod 600`。
 
 ```bash
 chivgent --provider openai --model gpt-5.6 "解释 package.json"
@@ -240,6 +274,11 @@ const client = new OpenAICompatibleChatClient({
 src/
   cli.ts                         CLI 入口与进程边界
   cli-options.ts                 参数和 Provider 配置
+  auth/
+    credentials.ts               凭据契约与解析顺序
+    runtime-credentials.ts       --api-key 覆盖层
+    env-credentials.ts           环境变量查找
+    file-credentials.ts          可选的 auth.json 存储
   agent.ts                       Agent Loop 与运行状态
   events.ts                      运行时事件模型
   render.ts                      运行时事件的终端渲染
@@ -260,6 +299,9 @@ src/
     search.ts                    字面量文本搜索
     write.ts                     原子整文件写入与精确编辑
   providers/
+    registry.ts                  Provider 注册表
+    definitions.ts               内置 Provider 声明
+    client.ts                    凭据解析并构造 LLM Client
     openai.ts                    OpenAI Responses Adapter
     openai-compatible-chat.ts    通用 Chat Completions Adapter
     deepseek.ts                  DeepSeek 配置包装器
@@ -302,7 +344,9 @@ npm install -g ./chivgent-0.6.0.tgz
 
 ## 安全模型
 
-- API Key 只从环境变量读取，绝不能提交到仓库。
+- API Key 依次从 `--api-key`、环境变量、可选的 `auth.json` 解析，绝不能提交到仓库。
+- `auth.json` 以明文保存 Key，因此它是可选的；当文件权限允许其他用户读取时会告警。
+- 该文件只接受字面量 Key，无法展开环境变量或执行 Shell 命令。
 - 自定义 `OPENAI_BASE_URL` 会收到配置的 API Key 和提示词，只能使用可信端点。
 - 不传 `--allow-writes` 时工作区工具全部只读，`write_file` 和 `edit_file` 根本
   不会被注册。

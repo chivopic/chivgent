@@ -10,12 +10,8 @@ import {
   type Provider,
 } from "./cli-options.js";
 import type { LLMClient } from "./llm.js";
-import { DeepSeekChatClient } from "./providers/deepseek.js";
-import { OpenAICompatibleChatClient } from "./providers/openai-compatible-chat.js";
-import { OpenAIClient } from "./providers/openai.js";
 import { createEventRenderer, createJsonEventWriter } from "./render.js";
 import { runRepl } from "./repl.js";
-import { RetryingLLMClient } from "./retry.js";
 import { AgentSession } from "./session.js";
 import {
   defaultSessionHome,
@@ -29,6 +25,7 @@ import { WriteFileTool } from "./tools/write-file.js";
 import { EditFileTool } from "./tools/edit-file.js";
 import type { Message } from "./messages.js";
 import { LocalWorkspace } from "./workspace.js";
+import { createConfiguredClient } from "./providers/client.js";
 
 const SYSTEM_PROMPT = `You are a coding assistant working inside a local project.
 When the project structure or file path is unknown, use list_files first.
@@ -98,7 +95,7 @@ async function main(argv: readonly string[]): Promise<number> {
     return 1;
   }
 
-  const llm = createConfiguredClient(options);
+  const llm = await createConfiguredClient(options);
   if (typeof llm === "string") {
     process.stderr.write(`${llm}\n`);
     return 1;
@@ -261,58 +258,6 @@ async function readPipedPrompt(): Promise<string | undefined> {
     contents += chunk;
   }
   return contents.trim().length === 0 ? undefined : contents.trim();
-}
-
-/** Returns the configured client, or the message explaining what is missing. */
-function createConfiguredClient(options: CliOptions): LLMClient | string {
-  if (options.model === undefined) {
-    return "OPENAI_MODEL or --model is required for openai-compatible.";
-  }
-  if (options.provider === "openai-compatible" && options.baseURL === undefined) {
-    return "OPENAI_BASE_URL is required for openai-compatible.";
-  }
-
-  const apiKeyName =
-    options.provider === "deepseek" ? "DEEPSEEK_API_KEY" : "OPENAI_API_KEY";
-  const apiKey = process.env[apiKeyName];
-  if (apiKey === undefined || apiKey.length === 0) {
-    return `${apiKeyName} is not set.`;
-  }
-
-  return new RetryingLLMClient(
-    createClient(options.provider, apiKey, options.model, options.baseURL),
-    {
-      onRetry: ({ attempt, delayMs, reason }) => {
-        process.stderr.write(
-          `Provider call failed (${reason}); retry ${attempt} in ${delayMs}ms.\n`,
-        );
-      },
-    },
-  );
-}
-
-function createClient(
-  provider: Provider,
-  apiKey: string,
-  model: string,
-  baseURL?: string,
-): LLMClient {
-  switch (provider) {
-    case "openai":
-      return new OpenAIClient({ apiKey, model });
-    case "deepseek":
-      return new DeepSeekChatClient({ apiKey, model });
-    case "openai-compatible":
-      if (baseURL === undefined) {
-        throw new TypeError("OpenAI-compatible Provider requires a base URL.");
-      }
-      return new OpenAICompatibleChatClient({
-        apiKey,
-        baseURL,
-        model,
-        continuationTag: "openai-compatible-chat",
-      });
-  }
 }
 
 main(process.argv.slice(2))
