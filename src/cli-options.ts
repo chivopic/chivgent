@@ -6,7 +6,13 @@ const packageMetadata = require("../package.json") as { readonly version?: unkno
 export const VERSION =
   typeof packageMetadata.version === "string" ? packageMetadata.version : "0.0.0";
 
-export type Provider = "openai" | "deepseek" | "openai-compatible";
+import {
+  defaultProviderRegistry,
+  ProviderRegistry,
+} from "./providers/registry.js";
+
+/** A Provider id known to the registry. */
+export type Provider = string;
 
 export const DEFAULT_MAX_TURNS = 8;
 /**
@@ -17,17 +23,11 @@ export const DEFAULT_MAX_TURNS = 8;
 export const DEFAULT_WRITE_MAX_TURNS = 16;
 const MAX_MAX_TURNS = 100;
 
-const DEFAULT_MODELS = {
-  openai: "gpt-5.6",
-  deepseek: "deepseek-v4-flash",
-} as const;
-
-export interface CliEnvironment {
-  readonly OPENAI_MODEL?: string;
-  readonly OPENAI_BASE_URL?: string;
-  readonly DEEPSEEK_MODEL?: string;
-  readonly CHIVGENT_HOME?: string;
-}
+/**
+ * Provider-specific variables are declared by each Provider definition rather
+ * than listed here, so adding a Provider does not touch this module.
+ */
+export type CliEnvironment = NodeJS.ProcessEnv;
 
 export interface CliOptions {
   readonly prompt?: string;
@@ -49,6 +49,8 @@ export interface CliOptions {
   readonly listSessions: boolean;
   /** Allow the agent to create and modify files in the workspace. */
   readonly allowWrites: boolean;
+  /** API key supplied for this run only, overriding every other source. */
+  readonly apiKey?: string;
   readonly help: boolean;
   readonly version: boolean;
 }
@@ -56,9 +58,11 @@ export interface CliOptions {
 export function parseCliArgs(
   argv: readonly string[],
   environment: CliEnvironment,
+  registry: ProviderRegistry = defaultProviderRegistry,
 ): CliOptions {
   let provider: Provider = "openai";
   let requestedModel: string | undefined;
+  let apiKey: string | undefined;
   let maxTurns = DEFAULT_MAX_TURNS;
   let stream = true;
   let quiet = false;
@@ -81,10 +85,13 @@ export function parseCliArgs(
       version = true;
     } else if (argument === "--provider") {
       const value = readOptionValue(argv, index, "--provider");
-      provider = parseProvider(value);
+      provider = parseProvider(value, registry);
       index += 1;
     } else if (argument === "--model") {
       requestedModel = readOptionValue(argv, index, "--model");
+      index += 1;
+    } else if (argument === "--api-key") {
+      apiKey = readOptionValue(argv, index, "--api-key");
       index += 1;
     } else if (argument === "--max-turns") {
       maxTurns = parseMaxTurns(readOptionValue(argv, index, "--max-turns"));
@@ -114,21 +121,20 @@ export function parseCliArgs(
     }
   }
 
-  const environmentModel =
-    provider === "deepseek"
-      ? environment.DEEPSEEK_MODEL
-      : environment.OPENAI_MODEL;
-  const defaultModel =
-    provider === "openai-compatible" ? undefined : DEFAULT_MODELS[provider];
-  const model = requestedModel || environmentModel || defaultModel;
+  const definition = registry.get(provider);
+  const model =
+    requestedModel ||
+    firstEnvironmentValue(environment, definition.modelEnvKeys) ||
+    definition.defaultModel;
+  const baseURL =
+    firstEnvironmentValue(environment, definition.baseUrlEnvKeys) ||
+    definition.defaultBaseURL;
 
   return {
     ...(promptParts.length === 0 ? {} : { prompt: promptParts.join(" ") }),
     provider,
     ...(model === undefined ? {} : { model }),
-    ...(provider === "openai-compatible" && environment.OPENAI_BASE_URL
-      ? { baseURL: environment.OPENAI_BASE_URL }
-      : {}),
+    ...(baseURL === undefined ? {} : { baseURL }),
     maxTurns:
       allowWrites && !maxTurnsExplicit ? DEFAULT_WRITE_MAX_TURNS : maxTurns,
     stream,
@@ -139,12 +145,15 @@ export function parseCliArgs(
     continueSession,
     listSessions,
     allowWrites,
+    ...(apiKey === undefined ? {} : { apiKey }),
     help,
     version,
   };
 }
 
-export function helpText(): string {
+export function helpText(
+  registry: ProviderRegistry = defaultProviderRegistry,
+): string {
   return `chivgent ${VERSION}
 
 Usage:
@@ -152,8 +161,9 @@ Usage:
   chivgent [options]                Start an interactive session
 
 Options:
-  --provider NAME  openai, deepseek, or openai-compatible (default: openai)
+  --provider NAME  ${registry.ids().join(", ")} (default: openai)
   --model MODEL    Provider model override
+  --api-key KEY    API key for this run; prefer an environment variable
   --max-turns N    Tool-calling turn limit (default: ${DEFAULT_MAX_TURNS}, ${DEFAULT_WRITE_MAX_TURNS} with --allow-writes)
   --no-stream      Wait for the full answer instead of streaming tokens
   -q, --quiet      Hide tool activity on stderr
@@ -166,14 +176,30 @@ Options:
   -h, --help       Show help
   -v, --version    Show version
 
+API keys are resolved in this order, first match wins:
+  --api-key  ->  environment variable  ->  <CHIVGENT_HOME>/auth.json
+
+Providers:
+${describeProviders(registry)}
 Environment:
-  OPENAI_API_KEY   Required for openai and openai-compatible
-  OPENAI_MODEL     OpenAI model (default: ${DEFAULT_MODELS.openai}); required for compatible
   OPENAI_BASE_URL  Required when --provider openai-compatible
-  DEEPSEEK_API_KEY Required when --provider deepseek
-  DEEPSEEK_MODEL   Optional DeepSeek model (default: ${DEFAULT_MODELS.deepseek})
-  CHIVGENT_HOME    Session directory (default: ~/.chivgent)
+  CHIVGENT_HOME    Session and auth directory (default: ~/.chivgent)
 `;
+}
+
+function describeProviders(registry: ProviderRegistry): string {
+  const ids = registry.ids();
+  const width = Math.max(...ids.map((id) => id.length)) + 2;
+  return ids
+    .map((id) => {
+      const definition = registry.get(id);
+      const model =
+        definition.defaultModel === undefined
+          ? "model required"
+          : `default ${definition.defaultModel}`;
+      return `  ${id.padEnd(width)}${definition.envKeys.join(", ")} (${model})`;
+    })
+    .join("\n");
 }
 
 function readOptionValue(
@@ -198,15 +224,24 @@ function parseMaxTurns(value: string): number {
   return parsed;
 }
 
-function parseProvider(value: string): Provider {
-  if (
-    value !== "openai" &&
-    value !== "deepseek" &&
-    value !== "openai-compatible"
-  ) {
+function parseProvider(value: string, registry: ProviderRegistry): Provider {
+  if (!registry.has(value)) {
     throw new TypeError(
-      `Unsupported provider: ${value}. Expected openai, deepseek, or openai-compatible.`,
+      `Unsupported provider: ${value}. Expected one of ${registry.ids().join(", ")}.`,
     );
   }
   return value;
+}
+
+function firstEnvironmentValue(
+  environment: CliEnvironment,
+  keys: readonly string[],
+): string | undefined {
+  for (const key of keys) {
+    const value = environment[key];
+    if (value !== undefined && value.length > 0) {
+      return value;
+    }
+  }
+  return undefined;
 }

@@ -135,15 +135,21 @@ describe("CLI options", () => {
     expect(parseCliArgs([], {})).not.toHaveProperty("prompt");
   });
 
-  it("documents both Providers", () => {
-    expect(helpText()).toContain("openai, deepseek, or openai-compatible");
-    expect(helpText()).toContain("openai-compatible");
+  it("documents the registered Providers and the resolution order", () => {
+    // The Provider line is generated from the registry, so a newly
+    // registered Provider appears in --help without touching this module.
+    expect(helpText()).toContain("openai, deepseek, openai-compatible");
     expect(helpText()).toContain("OPENAI_BASE_URL");
     expect(helpText()).toContain("DEEPSEEK_API_KEY");
+    expect(helpText()).toContain("OPENROUTER_API_KEY");
+    expect(helpText()).toContain("--api-key");
+    expect(helpText()).toContain(
+      "--api-key  ->  environment variable  ->  <CHIVGENT_HOME>/auth.json",
+    );
     expect(helpText()).toContain("--no-stream");
     expect(helpText()).toContain("--resume ID");
     expect(helpText()).toContain("CHIVGENT_HOME");
     expect(helpText()).toContain("--allow-writes");
-    expect(VERSION).toBe("0.7.1");
+    expect(VERSION).toBe("0.8.0");
   });
 });
