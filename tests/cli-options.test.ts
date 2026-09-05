@@ -131,6 +131,31 @@ describe("CLI options", () => {
     });
   });
 
+  it("enables compaction with a default window", () => {
+    expect(parseCliArgs([], {})).toMatchObject({
+      compaction: true,
+      contextWindow: 128_000,
+    });
+  });
+
+  it("accepts a context window override", () => {
+    expect(parseCliArgs(["--context-window", "8000"], {})).toMatchObject({
+      contextWindow: 8_000,
+    });
+  });
+
+  it("rejects an unusably small context window", () => {
+    expect(() => parseCliArgs(["--context-window", "10"], {})).toThrow(
+      /--context-window must be an integer/,
+    );
+  });
+
+  it("turns compaction off on request", () => {
+    expect(parseCliArgs(["--no-compaction"], {})).toMatchObject({
+      compaction: false,
+    });
+  });
+
   it("reads an interactive invocation as a missing prompt", () => {
     expect(parseCliArgs([], {})).not.toHaveProperty("prompt");
   });
@@ -150,6 +175,8 @@ describe("CLI options", () => {
     expect(helpText()).toContain("--resume ID");
     expect(helpText()).toContain("CHIVGENT_HOME");
     expect(helpText()).toContain("--allow-writes");
-    expect(VERSION).toBe("0.8.0");
+    expect(helpText()).toContain("--context-window");
+    expect(helpText()).toContain("--no-compaction");
+    expect(VERSION).toBe("0.9.0");
   });
 });

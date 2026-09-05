@@ -10,6 +10,7 @@ import {
   defaultProviderRegistry,
   ProviderRegistry,
 } from "./providers/registry.js";
+import { DEFAULT_CONTEXT_WINDOW } from "./context/context-manager.js";
 
 /** A Provider id known to the registry. */
 export type Provider = string;
@@ -21,6 +22,7 @@ export const DEFAULT_MAX_TURNS = 8;
  * raises the default unless --max-turns says otherwise.
  */
 export const DEFAULT_WRITE_MAX_TURNS = 16;
+const MIN_CONTEXT_WINDOW = 1_000;
 const MAX_MAX_TURNS = 100;
 
 /**
@@ -51,6 +53,10 @@ export interface CliOptions {
   readonly allowWrites: boolean;
   /** API key supplied for this run only, overriding every other source. */
   readonly apiKey?: string;
+  /** Token budget the context is kept inside. */
+  readonly contextWindow: number;
+  /** Summarise old history when the context approaches the window. */
+  readonly compaction: boolean;
   readonly help: boolean;
   readonly version: boolean;
 }
@@ -63,6 +69,8 @@ export function parseCliArgs(
   let provider: Provider = "openai";
   let requestedModel: string | undefined;
   let apiKey: string | undefined;
+  let contextWindow = DEFAULT_CONTEXT_WINDOW;
+  let compaction = true;
   let maxTurns = DEFAULT_MAX_TURNS;
   let stream = true;
   let quiet = false;
@@ -114,6 +122,13 @@ export function parseCliArgs(
       listSessions = true;
     } else if (argument === "--allow-writes") {
       allowWrites = true;
+    } else if (argument === "--context-window") {
+      contextWindow = parseContextWindow(
+        readOptionValue(argv, index, "--context-window"),
+      );
+      index += 1;
+    } else if (argument === "--no-compaction") {
+      compaction = false;
     } else if (argument?.startsWith("-")) {
       throw new TypeError(`Unknown option: ${argument}`);
     } else if (argument !== undefined) {
@@ -146,6 +161,8 @@ export function parseCliArgs(
     listSessions,
     allowWrites,
     ...(apiKey === undefined ? {} : { apiKey }),
+    contextWindow,
+    compaction,
     help,
     version,
   };
@@ -172,6 +189,8 @@ Options:
   --resume ID      Resume a specific session
   --sessions       List recorded sessions and exit
   --allow-writes   Let the agent create and change files (default: read-only)
+  --context-window N  Token budget for the context (default: ${DEFAULT_CONTEXT_WINDOW})
+  --no-compaction  Send the whole transcript instead of summarising old turns
   --no-session     Do not record this run
   -h, --help       Show help
   -v, --version    Show version
@@ -212,6 +231,16 @@ function readOptionValue(
     throw new TypeError(`${option} requires a value.`);
   }
   return value;
+}
+
+function parseContextWindow(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < MIN_CONTEXT_WINDOW) {
+    throw new TypeError(
+      `--context-window must be an integer of at least ${MIN_CONTEXT_WINDOW}.`,
+    );
+  }
+  return parsed;
 }
 
 function parseMaxTurns(value: string): number {

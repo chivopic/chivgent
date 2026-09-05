@@ -12,6 +12,10 @@ import type {
 } from "./messages.js";
 import type { Tool, ToolDefinition, ToolOutput } from "./tools/tool.js";
 import type { Workspace } from "./workspace.js";
+import type {
+  AppliedCompaction,
+  ContextManager,
+} from "./context/context-manager.js";
 
 export interface AgentOptions {
   readonly systemPrompt: string;
@@ -23,6 +27,10 @@ export interface AgentOptions {
   readonly onEvent?: AgentEventListener;
   /** Use the Provider's streaming API when it offers one. Defaults to true. */
   readonly streaming?: boolean;
+  /**
+   * Decides what the model sees each turn. Omit to send the whole transcript.
+   */
+  readonly contextManager?: ContextManager;
 }
 
 export interface AgentRunOptions {
@@ -53,6 +61,7 @@ interface RunState {
   readonly seenToolCallIds: Set<string>;
   turnCount: number;
   continuation?: LLMContinuation;
+  compaction?: AppliedCompaction;
 }
 
 export class AgentProtocolError extends Error {
@@ -71,6 +80,7 @@ export class Agent {
   private readonly workspace: Workspace;
   private readonly onEvent?: AgentEventListener;
   private readonly streaming: boolean;
+  private readonly contextManager?: ContextManager;
 
   constructor(options: AgentOptions) {
     if (!Number.isSafeInteger(options.maxTurns) || options.maxTurns <= 0) {
@@ -91,6 +101,9 @@ export class Agent {
       this.onEvent = options.onEvent;
     }
     this.streaming = options.streaming ?? true;
+    if (options.contextManager !== undefined) {
+      this.contextManager = options.contextManager;
+    }
   }
 
   get toolNames(): readonly string[] {
@@ -194,14 +207,46 @@ export class Agent {
     };
   }
 
+  /**
+   * Produces the messages for one request and records any compaction.
+   *
+   * A Provider holding a continuation replays its own history and ignores the
+   * messages sent with it, so a fresh compaction has to drop the continuation
+   * to take effect at all.
+   */
+  private async buildContext(
+    state: RunState,
+    signal: AbortSignal | undefined,
+  ): Promise<readonly Message[]> {
+    const snapshot = snapshotMessages(state.messages);
+    if (this.contextManager === undefined) {
+      return snapshot;
+    }
+
+    const context = await this.contextManager.build(snapshot, {
+      ...(state.compaction === undefined ? {} : { previous: state.compaction }),
+      ...(signal === undefined ? {} : { signal }),
+    });
+    if (context.compaction === undefined) {
+      delete state.compaction;
+    } else {
+      state.compaction = context.compaction;
+    }
+    if (context.compacted) {
+      delete state.continuation;
+    }
+    return context.messages;
+  }
+
   private async requestAssistantMessage(
     state: RunState,
     turn: number,
     signal: AbortSignal | undefined,
   ): ReturnType<LLMClient["complete"]> {
+    const messages = await this.buildContext(state, signal);
     const request = {
       systemPrompt: this.systemPrompt,
-      messages: snapshotMessages(state.messages),
+      messages,
       tools: this.toolDefinitions,
       ...(state.continuation === undefined
         ? {}
