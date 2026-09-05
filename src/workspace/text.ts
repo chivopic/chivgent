@@ -1,11 +1,27 @@
 import { lstat, readFile } from "node:fs/promises";
 import { MAX_PREVIEW_CHARACTERS, MAX_QUERY_CHARACTERS, WorkspaceError } from "./types.js";
 
-export async function readUtf8File(
+export const UTF8_BOM = "\uFEFF";
+
+export interface Utf8FileContents {
+  readonly contents: string;
+  /** True when the file began with a UTF-8 byte order mark. */
+  readonly hadBom: boolean;
+}
+
+/**
+ * Reads a file and reports whether it carried a byte order mark.
+ *
+ * `TextDecoder` swallows the BOM by default, which is what readers want but
+ * loses information a writer needs: decoding and writing back would silently
+ * drop the mark. Decoding with `ignoreBOM` keeps it visible so the caller can
+ * strip it deliberately and restore it afterwards.
+ */
+export async function readUtf8FileWithBom(
   absolutePath: string,
   displayPath: string,
   maxFileBytes: number,
-): Promise<string> {
+): Promise<Utf8FileContents> {
   const stats = await lstat(absolutePath);
   if (!stats.isFile()) {
     throw new WorkspaceError(
@@ -34,8 +50,12 @@ export async function readUtf8File(
     );
   }
 
+  let decoded: string;
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(contents);
+    decoded = new TextDecoder("utf-8", {
+      fatal: true,
+      ignoreBOM: true,
+    }).decode(contents);
   } catch (error) {
     throw new WorkspaceError(
       "invalid_utf8",
@@ -43,6 +63,22 @@ export async function readUtf8File(
       { cause: error },
     );
   }
+
+  const hadBom = decoded.startsWith(UTF8_BOM);
+  return { contents: hadBom ? decoded.slice(UTF8_BOM.length) : decoded, hadBom };
+}
+
+export async function readUtf8File(
+  absolutePath: string,
+  displayPath: string,
+  maxFileBytes: number,
+): Promise<string> {
+  const { contents } = await readUtf8FileWithBom(
+    absolutePath,
+    displayPath,
+    maxFileBytes,
+  );
+  return contents;
 }
 
 export function validateSearchQuery(query: string): void {

@@ -144,6 +144,6 @@ describe("CLI options", () => {
     expect(helpText()).toContain("--resume ID");
     expect(helpText()).toContain("CHIVGENT_HOME");
     expect(helpText()).toContain("--allow-writes");
-    expect(VERSION).toBe("0.7.0");
+    expect(VERSION).toBe("0.7.1");
   });
 });
