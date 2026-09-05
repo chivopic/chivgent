@@ -26,6 +26,8 @@ import { EditFileTool } from "./tools/edit-file.js";
 import type { Message } from "./messages.js";
 import { LocalWorkspace } from "./workspace.js";
 import { createConfiguredClient } from "./providers/client.js";
+import { ContextManager } from "./context/context-manager.js";
+import { Compactor } from "./context/compaction.js";
 
 const SYSTEM_PROMPT = `You are a coding assistant working inside a local project.
 When the project structure or file path is unknown, use list_files first.
@@ -112,6 +114,17 @@ async function main(argv: readonly string[]): Promise<number> {
     new SearchTextTool(),
     new ReadFileTool(),
   ];
+  const contextManager = new ContextManager({
+    contextWindow: options.contextWindow,
+    ...(options.compaction ? { compactor: new Compactor(llm) } : {}),
+    onCompaction: ({ droppedMessages, tokensBefore, tokensAfter }) => {
+      if (!options.quiet) {
+        process.stderr.write(
+          `Compacted ${droppedMessages} earlier messages (~${tokensBefore} -> ~${tokensAfter} tokens).\n`,
+        );
+      }
+    },
+  });
   const agentOptions: Omit<AgentOptions, "onEvent"> = {
     systemPrompt: options.allowWrites
       ? `${SYSTEM_PROMPT}\n${WRITE_SYSTEM_PROMPT}`
@@ -123,6 +136,7 @@ async function main(argv: readonly string[]): Promise<number> {
       : readOnlyTools,
     workspace: new LocalWorkspace(cwd, { allowWrites: options.allowWrites }),
     streaming: options.stream,
+    contextManager,
   };
   const session = new AgentSession({
     agent: agentOptions,

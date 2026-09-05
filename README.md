@@ -31,6 +31,7 @@ to study before adding production-harness complexity.
 - Custom OpenAI-compatible endpoints through environment-only configuration.
 - An interactive session with slash commands, or a single-shot question.
 - Sessions that persist as JSON lines and can be resumed in a later process.
+- A context manager that summarises old turns to stay inside the window.
 - A `--json` event stream for scripting and other front ends.
 - Streamed answers rendered from a typed runtime event stream.
 - Interruptible runs: Ctrl+C ends the current run without losing the transcript.
@@ -136,6 +137,8 @@ Options:
   --api-key KEY    API key for this run; prefer an environment variable
   --sessions       List recorded sessions and exit
   --allow-writes   Let the agent create and change files (default: read-only)
+  --context-window N  Token budget for the context (default: 128000)
+  --no-compaction  Send the whole transcript instead of summarising old turns
   --no-session     Do not record this run
   -h, --help       Show help
   -v, --version    Show version
@@ -223,6 +226,42 @@ AssistantMessage <- normalized result
 This prevents the Agent, tools, and CLI from depending on one vendor's message
 format.
 
+### Context management
+
+A session records everything that happened. The context manager decides what
+is worth sending for one request. Keeping those apart is what lets a long
+session stay inside a fixed context window.
+
+```text
+Full transcript ──────────────→ Session store (what happened)
+       │
+       ↓
+ContextManager
+       │  token estimate vs. contextWindow - reserveTokens
+       ↓
+summary + recent messages ────→ Provider (what the model sees)
+```
+
+When the estimate exceeds the budget, older messages are summarised into a
+single message and recent turns are kept verbatim. Three details matter:
+
+- **File lists are derived from tool calls, not from the summary.** A summary
+  can forget or invent a path. For a coding agent, "which files did I read and
+  change" is the part that most needs to survive intact, so it is collected
+  from the `read_file`, `write_file`, and `edit_file` calls themselves.
+- **Tool calls are never separated from their results.** A split point that
+  would orphan a tool result moves forward past the whole group.
+- **Compaction discards the Provider continuation.** A Provider that chains
+  history server-side replays its own copy and ignores the messages sent with
+  it, so keeping the continuation would send back the history just removed.
+
+Token counts are estimated from character length rather than with a real
+tokenizer, which would be model-specific and a large dependency for a number
+that only decides *when* to compact. The reserve budget absorbs the error.
+
+A single tool result larger than the whole budget cannot be compacted away;
+bound tool output instead. Compaction is disabled with `--no-compaction`.
+
 ### Runtime events
 
 The Agent Loop reports what it is doing through a typed event stream instead of
@@ -302,6 +341,10 @@ src/
   session.ts                     Conversation state and event fan-out
   session-store.ts               JSONL session log and resume support
   repl.ts                        Interactive prompt and slash commands
+  context/
+    context-manager.ts           Builds the messages for one request
+    compaction.ts                Summarises old history and tracks files
+    token-estimator.ts           Character-based token approximation
   workspace.ts                   Workspace configuration and the read-only default
   workspace/
     types.ts                     Limits, errors, and the Workspace contract
@@ -402,7 +445,7 @@ a sensitive project.
 - [x] Project discovery tools: `list_files`, `search_text`, and ranged `read_file`
 - [x] Streaming output and runtime events
 - [x] Persistent multi-turn sessions
-- [ ] Context-window management and compaction
+- [x] Context-window management and compaction
 - [x] Opt-in `write_file` and `edit_file` behind `--allow-writes`
 - [ ] Per-edit confirmation prompts and an undo log
 - [ ] Permission-gated shell tools
