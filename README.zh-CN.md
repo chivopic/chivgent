@@ -30,6 +30,7 @@
 - Session 以 JSON Lines 持久化，可以在之后的进程中恢复。
 - 提供 `--json` 事件流，便于脚本和其他前端消费。
 - 基于类型化运行时事件流的流式输出。
+- 上下文管理器：压缩较早的轮次以待在窗口内。
 - 可中断的运行：Ctrl+C 结束当前运行，且不会丢失已产生的 transcript。
 - Provider 调用具备单次超时和有上限的指数退避重试。
 - 通过 `list_files` 和字面量 `search_text` 确定性地发现项目内容。
@@ -132,6 +133,8 @@ chivgent [选项]                   进入交互式会话
   --api-key KEY    本次运行使用的 API Key；更推荐用环境变量
   --sessions       列出已记录的 Session 并退出
   --allow-writes   允许 Agent 创建和修改文件（默认只读）
+  --context-window N  上下文的 Token 预算（默认：128000）
+  --no-compaction  发送完整 transcript，不压缩较早的轮次
   --no-session     不记录本次运行
   -h, --help       显示帮助
   -v, --version    显示版本
@@ -213,6 +216,39 @@ AssistantMessage <- Normalized Result
 
 因此 Agent、工具和 CLI 不会依赖任何单一供应商的消息格式。
 
+### 上下文管理
+
+Session 记录发生过的一切；Context Manager 决定这一次请求值得发送什么。把两者
+分开，才能让长会话待在固定的上下文窗口内。
+
+```text
+完整 transcript ──────────────→ Session Store（发生了什么）
+       │
+       ↓
+ContextManager
+       │  token 估算 vs. contextWindow - reserveTokens
+       ↓
+摘要 + 最近消息 ──────────────→ Provider（模型看到什么）
+```
+
+当估算超出预算时，较早的消息会被压缩成一条摘要消息，最近若干轮原样保留。
+有三个细节值得注意：
+
+- **文件清单从工具调用推导，而不是从摘要里提取。** 摘要可能遗漏或者编造路径。
+  对 Coding Agent 来说，「我读过和改过哪些文件」是最需要完整存活的信息，因此
+  它直接从 `read_file`、`write_file`、`edit_file` 的调用参数收集。
+- **工具调用永远不会和它的结果被切开。** 会把 tool result 孤立的切点会向前
+  移动，越过整组消息。
+- **压缩会丢弃 Provider continuation。** 在服务端串联历史的 Provider 会重放
+  它自己那份历史、忽略请求里带的消息，保留 continuation 等于把刚压缩掉的历史
+  又送了回去。
+
+Token 数量按字符长度估算，而不是用真正的 tokenizer：后者与模型强相关，为一个
+只用来决定「何时压缩」的数字引入大依赖并不划算，估算误差由 reserve 预算吸收。
+
+单条超过整个预算的工具结果无法被压缩掉，这种情况应该去限制工具输出本身。
+用 `--no-compaction` 可以关闭压缩。
+
 ### 运行时事件
 
 Agent Loop 自己不打印任何内容，而是通过类型化的事件流对外汇报。一次运行会产生：
@@ -288,6 +324,10 @@ src/
   session.ts                     会话状态与事件分发
   session-store.ts               JSONL 会话日志与恢复
   repl.ts                        交互式输入与斜杠命令
+  context/
+    context-manager.ts           构造单次请求的消息
+    compaction.ts                压缩历史并跟踪文件
+    token-estimator.ts           基于字符的 Token 估算
   workspace.ts                   工作区配置与只读默认值
   workspace/
     types.ts                     上限、错误类型与 Workspace 契约
@@ -380,11 +420,11 @@ npm install -g ./chivgent-0.6.0.tgz
 - [x] 项目发现工具：`list_files`、`search_text` 和分段 `read_file`
 - [x] 流式输出和运行时事件
 - [x] 持久化多轮 Session
-- [ ] Context Window 管理和压缩
+- [x] Context Window 管理和压缩
 - [x] 通过 `--allow-writes` 选择性开启的 `write_file` 和 `edit_file`
 - [ ] 逐次修改确认与撤销日志
 - [ ] 需要权限确认的 Shell 工具
-- [ ] Provider Registry 和用户配置文件
+- [x] Provider Registry 与凭据解析链
 - [ ] TUI、Extensions、Telemetry 和 Evals
 
 ## 文档
