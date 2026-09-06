@@ -549,6 +549,7 @@ CI 任务或管道运行永远不会自作主张去执行一个 clone 里的代�
 - [Stage 7：上下文预算与压缩](docs/stage-7-context-management.md)
 - [Stage 8：Shell 工具与流式子进程](docs/stage-8-shell-tool.md)
 - [Stage 9：扩展系统与 Project Trust](docs/stage-9-extensions.md)
+- [Stage 10：远程会话](docs/stage-10-remote-sessions.md)
 - [发布流程](docs/releasing.md)
 
 ## 参与贡献

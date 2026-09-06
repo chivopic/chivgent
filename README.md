@@ -593,6 +593,7 @@ session-level switches; the real boundary is a container.
 - [Stage 7: Context budget and compaction](docs/stage-7-context-management.md)
 - [Stage 8: Shell tool and streaming subprocesses](docs/stage-8-shell-tool.md)
 - [Stage 9: Extensions and project trust](docs/stage-9-extensions.md)
+- [Stage 10: Remote sessions](docs/stage-10-remote-sessions.md)
 - [Release process](docs/releasing.md)
 
 ## Contributing
