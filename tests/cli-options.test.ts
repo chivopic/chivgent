@@ -178,7 +178,7 @@ describe("CLI options", () => {
     expect(helpText()).toContain("--context-window");
     expect(helpText()).toContain("--no-compaction");
     expect(helpText()).toContain("--allow-shell");
-    expect(VERSION).toBe("0.10.0");
+    expect(VERSION).toBe("0.11.0");
   });
 });
 
@@ -203,5 +203,29 @@ describe("--allow-shell", () => {
     const options = parseCliArgs(["--allow-shell", "--max-turns", "4", "q"], {});
 
     expect(options.maxTurns).toBe(4);
+  });
+});
+
+describe("extension options", () => {
+  it("loads extensions by default", () => {
+    expect(parseCliArgs(["q"], {}).extensions).toBe(true);
+  });
+
+  it("turns extensions off", () => {
+    expect(parseCliArgs(["--no-extensions", "q"], {}).extensions).toBe(false);
+  });
+
+  it("parses the listing and forget flags", () => {
+    expect(parseCliArgs(["--extensions"], {}).listExtensions).toBe(true);
+    expect(parseCliArgs(["--forget-trust"], {}).forgetTrust).toBe(true);
+  });
+
+  it("documents extensions and what trusting one means", () => {
+    const text = helpText();
+
+    expect(text).toContain("--no-extensions");
+    expect(text).toContain("--forget-trust");
+    expect(text).toContain(".chivgent/extensions");
+    expect(text).toContain("not\n                   limited by the workspace");
   });
 });

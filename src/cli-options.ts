@@ -56,6 +56,12 @@ export interface CliOptions {
    * can do everything the write tools can and is not bound by the workspace.
    */
   readonly allowShell: boolean;
+  /** Load extensions from the user and (once trusted) the project directory. */
+  readonly extensions: boolean;
+  /** List loaded extensions and what they registered, then exit. */
+  readonly listExtensions: boolean;
+  /** Forget the trust decision covering this workspace and exit. */
+  readonly forgetTrust: boolean;
   /** API key supplied for this run only, overriding every other source. */
   readonly apiKey?: string;
   /** Token budget the context is kept inside. */
@@ -86,6 +92,9 @@ export function parseCliArgs(
   let listSessions = false;
   let allowWrites = false;
   let allowShell = false;
+  let extensions = true;
+  let listExtensions = false;
+  let forgetTrust = false;
   let maxTurnsExplicit = false;
   let help = false;
   let version = false;
@@ -130,6 +139,12 @@ export function parseCliArgs(
       allowWrites = true;
     } else if (argument === "--allow-shell") {
       allowShell = true;
+    } else if (argument === "--no-extensions") {
+      extensions = false;
+    } else if (argument === "--extensions") {
+      listExtensions = true;
+    } else if (argument === "--forget-trust") {
+      forgetTrust = true;
     } else if (argument === "--context-window") {
       contextWindow = parseContextWindow(
         readOptionValue(argv, index, "--context-window"),
@@ -171,6 +186,9 @@ export function parseCliArgs(
     listSessions,
     allowWrites,
     allowShell,
+    extensions,
+    listExtensions,
+    forgetTrust,
     ...(apiKey === undefined ? {} : { apiKey }),
     contextWindow,
     compaction,
@@ -202,6 +220,9 @@ Options:
   --allow-writes   Let the agent create and change files (default: read-only)
   --allow-shell    Let the agent run shell commands. This implies write access:
                    a shell is not bound by the workspace. Unix only.
+  --no-extensions  Do not load any extension, and do not ask about trust
+  --extensions     List loaded extensions and what they register, then exit
+  --forget-trust   Forget the trust decision covering this workspace, then exit
   --context-window N  Token budget for the context (default: ${DEFAULT_CONTEXT_WINDOW})
   --no-compaction  Send the whole transcript instead of summarising old turns
   --no-session     Do not record this run
@@ -213,9 +234,16 @@ API keys are resolved in this order, first match wins:
 
 Providers:
 ${describeProviders(registry)}
+Extensions:
+  <CHIVGENT_HOME>/extensions/*.js   Always loaded
+  <workspace>/.chivgent/extensions/*.js
+                   Loaded only after you trust the project. An extension runs
+                   as code inside chivgent, with your permissions, and is not
+                   limited by the workspace.
+
 Environment:
   OPENAI_BASE_URL  Required when --provider openai-compatible
-  CHIVGENT_HOME    Session and auth directory (default: ~/.chivgent)
+  CHIVGENT_HOME    Session, auth, trust and extension directory (default: ~/.chivgent)
 `;
 }
 

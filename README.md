@@ -40,6 +40,9 @@ to study before adding production-harness complexity.
 - Ranged `read_file` output with continuation hints and bounded tool results.
 - Read-only by default; `--allow-writes` adds `write_file` and `edit_file`.
 - An opt-in `bash` tool behind `--allow-shell`, with streamed output.
+- Extensions that add tools, slash commands, event handlers and prompt text.
+- Project extensions gated by a per-directory trust decision, taken before any
+  module is imported and refused outright when there is no terminal to ask.
 - Commands run in their own process group, so cancelling kills the whole tree.
 - Command output is truncated from the tail; the full text goes to a temp file.
 - Exact-match `edit_file` that refuses missing or ambiguous edits.
@@ -144,6 +147,9 @@ Options:
   --allow-writes   Let the agent create and change files (default: read-only)
   --allow-shell    Let the agent run shell commands. This implies write access:
                    a shell is not bound by the workspace. Unix only.
+  --no-extensions  Do not load any extension, and do not ask about trust
+  --extensions     List loaded extensions and what they register, then exit
+  --forget-trust   Forget the trust decision covering this workspace, then exit
   --context-window N  Token budget for the context (default: 128000)
   --no-compaction  Send the whole transcript instead of summarising old turns
   --no-session     Do not record this run
@@ -379,6 +385,13 @@ src/
     write-file.ts                Whole-file create and replace
     edit-file.ts                 Exact unique-match edit
     bash.ts                      Shell command execution
+  extensions/
+    trust.ts                     Per-directory trust store
+    decide-trust.ts              The prompt, and the refusal when nobody can answer
+    discover.ts                  Where extensions live and which files count
+    api.ts                       What an extension may register
+    registry.ts                  Collects registrations, rejects conflicts
+    loader.ts                    Imports modules and contains their failures
   shell/
     types.ts                     Execution contract and shell error types
     config.ts                    Shell resolution and the Windows guard
@@ -416,6 +429,67 @@ npm install -g ./chivgent-0.6.0.tgz
 Tests use scripted or mocked LLM clients. A real API smoke test is deliberately
 manual so the default test suite never consumes credits.
 
+## Extensions
+
+An extension is an ES module that default-exports a function. It is called once
+at startup with an API that can add a tool, add a slash command, subscribe to
+runtime events, and append to the system prompt.
+
+```js
+// .chivgent/extensions/word-count.js
+export default function (api) {
+  api.registerTool({
+    name: "word_count",
+    description: "Count the words in a workspace file.",
+    inputSchema: {
+      type: "object",
+      properties: { path: { type: "string" } },
+      required: ["path"],
+      additionalProperties: false,
+    },
+    async execute(args, context) {
+      const file = await context.workspace.readTextFile(args.path);
+      return {
+        content: `${file.content.split(/\s+/).filter(Boolean).length} words`,
+        isError: false,
+      };
+    },
+  });
+
+  api.contributeSystemPrompt("Use word_count instead of reading a file to count words.");
+}
+```
+
+Extensions are loaded from two places:
+
+| Location | Loaded |
+| --- | --- |
+| `<CHIVGENT_HOME>/extensions/` | Always: it is your own machine's configuration |
+| `<workspace>/.chivgent/extensions/` | Only after you trust the project |
+
+Both accept `name.js` and `name/index.js`; nesting stops there. Plain JavaScript
+only — compiling TypeScript yourself is cheaper than making chivgent carry a
+TypeScript loader. A name already taken by a built-in tool or command is refused,
+so an extension cannot shadow `read_file` or `/clear`, and a broken extension is
+reported and skipped rather than taking chivgent down with it.
+
+`chivgent --extensions` lists what loaded and what each one registered.
+
+### Project trust
+
+The first time you run chivgent in a project that ships extensions, it describes
+what they are and asks once. The answer is stored in `<CHIVGENT_HOME>/trust.json`
+against the resolved directory path, and matched by nearest ancestor, so trusting
+`~/work` covers every repository under it. `--forget-trust` removes the decision
+covering the current workspace.
+
+**Trusting a project means letting its authors run code as you.** An extension
+executes inside the chivgent process: it is not bound by the workspace, it does
+not need `--allow-shell` to run a command, and it can read your environment
+including the API key. That is why the question is asked before anything is
+imported, and why the answer is no whenever there is nobody to ask — a CI job or
+a piped run never loads a checkout's extensions on its own.
+
 ## Security model
 
 - API keys come from `--api-key`, an environment variable, or an optional
@@ -444,6 +518,15 @@ manual so the default test suite never consumes credits.
   work.
 - Session logs record command output as well as file excerpts once
   `--allow-shell` is on.
+- Project extensions are loaded only after an explicit, recorded trust decision,
+  and never without a terminal to ask at. An extension runs in-process with your
+  permissions and is bound by none of the workspace limits above, so trusting a
+  project is the same order of authority as `--allow-shell`, reached by cloning
+  a repository rather than by typing a flag.
+- User extensions under `<CHIVGENT_HOME>/extensions/` are always loaded; that
+  directory is your own configuration.
+- Extensions cannot take the name of a built-in tool or command.
+- `trust.json`, like the session log and the auth file, is written owner-only.
 - Writes resolve the deepest existing ancestor and reject a symlink at any
   segment, so a planted link cannot redirect a write out of the workspace.
 - Writes are staged in a sibling temp file and renamed into place, so an
@@ -489,7 +572,7 @@ project.
 - [x] Opt-in `write_file` and `edit_file` behind `--allow-writes`
 - [x] Provider registry and credential resolution chain
 - [x] `bash` tool with streaming output, behind `--allow-shell`
-- [ ] Extensions and project trust
+- [x] Extensions and project trust
 - [ ] TUI, remote sessions, telemetry, and evals
 
 Per-command confirmation prompts and command allowlists are deliberately not
@@ -509,6 +592,7 @@ session-level switches; the real boundary is a container.
 - [Stage 6: Provider registry and credential chain](docs/stage-6-provider-registry.md)
 - [Stage 7: Context budget and compaction](docs/stage-7-context-management.md)
 - [Stage 8: Shell tool and streaming subprocesses](docs/stage-8-shell-tool.md)
+- [Stage 9: Extensions and project trust](docs/stage-9-extensions.md)
 - [Release process](docs/releasing.md)
 
 ## Contributing

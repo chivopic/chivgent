@@ -1,16 +1,37 @@
 import { createInterface } from "node:readline";
 import type { AgentSession } from "./session.js";
 import type { OutputStream } from "./render.js";
+import type { RegisteredCommand } from "./extensions/api.js";
 
 export const REPL_PROMPT = "› ";
 
-export type SlashCommandOutcome = "handled" | "exit" | "not-a-command";
+export type SlashCommandOutcome =
+  | "handled"
+  | "exit"
+  | "not-a-command"
+  /** An extension command matched; the REPL runs it, since it may be async. */
+  | {
+      readonly kind: "extension";
+      readonly command: RegisteredCommand;
+      readonly argument: string;
+    };
 
 export interface SlashCommandContext {
   readonly session: AgentSession;
   readonly write: (text: string) => void;
   readonly sessionFile?: string;
+  /** Commands contributed by extensions, keyed by name without the slash. */
+  readonly extensionCommands?: readonly RegisteredCommand[];
 }
+
+export const BUILT_IN_COMMANDS = [
+  "help",
+  "session",
+  "tools",
+  "clear",
+  "exit",
+  "quit",
+] as const;
 
 const HELP = `Commands:
   /help      Show this help
@@ -21,6 +42,20 @@ const HELP = `Commands:
 
 Anything else is sent to the model. Ctrl+C stops the answer in progress.
 `;
+
+function helpText(context: SlashCommandContext): string {
+  const extras = context.extensionCommands ?? [];
+  if (extras.length === 0) {
+    return HELP;
+  }
+  const width = Math.max(...extras.map((command) => command.name.length)) + 3;
+  const lines = extras.map(
+    (command) => `  /${command.name.padEnd(width)}${command.description}`,
+  );
+  // Extension commands are listed apart from the built-ins so it is always
+  // clear which of them came from code this project supplied.
+  return `${HELP}\nFrom extensions:\n${lines.join("\n")}\n`;
+}
 
 /**
  * Interprets one line of REPL input. Returns `not-a-command` when the line is
@@ -38,7 +73,7 @@ export function handleSlashCommand(
   switch (trimmed.split(/\s+/, 1)[0]) {
     case "/help":
     case "/?":
-      context.write(HELP);
+      context.write(helpText(context));
       return "handled";
 
     case "/session":
@@ -60,9 +95,17 @@ export function handleSlashCommand(
     case "/quit":
       return "exit";
 
-    default:
+    default: {
+      const name = (trimmed.split(/\s+/, 1)[0] ?? "").slice(1);
+      const command = (context.extensionCommands ?? []).find(
+        (candidate) => candidate.name === name,
+      );
+      if (command !== undefined) {
+        return { kind: "extension", command, argument: trimmed.slice(name.length + 1).trim() };
+      }
       context.write(`Unknown command: ${trimmed}. Try /help.\n`);
       return "handled";
+    }
   }
 }
 
@@ -86,6 +129,7 @@ export interface ReplOptions {
   readonly stderr: OutputStream;
   readonly banner?: string;
   readonly sessionFile?: string;
+  readonly extensionCommands?: readonly RegisteredCommand[];
 }
 
 /**
@@ -131,9 +175,28 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       ...(options.sessionFile === undefined
         ? {}
         : { sessionFile: options.sessionFile }),
+      ...(options.extensionCommands === undefined
+        ? {}
+        : { extensionCommands: options.extensionCommands }),
     });
     if (outcome === "exit") {
       break;
+    }
+    if (typeof outcome === "object") {
+      // An extension command runs here rather than inside the parser so it may
+      // be async, and so a throwing command cannot take the REPL down.
+      try {
+        await outcome.command.run({
+          session: options.session,
+          write,
+          argument: outcome.argument,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        write(`/${outcome.command.name} failed: ${message}\n`);
+      }
+      readline.prompt();
+      continue;
     }
     if (outcome === "handled") {
       readline.prompt();

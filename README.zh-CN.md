@@ -37,6 +37,9 @@
 - 支持带续读提示的分段 `read_file`，所有工具结果都有容量上限。
 - 默认只读；`--allow-writes` 才会启用 `write_file` 和 `edit_file`。
 - 通过 `--allow-shell` 选择性开启的 `bash` 工具，输出边跑边显示。
+- 扩展系统：可以添加工具、斜杠命令、事件订阅和 system prompt 片段。
+- 项目扩展受按目录记录的信任决定门控；判定发生在任何模块被 import 之前，
+  没有终端可问时一律拒绝。
 - 命令运行在独立进程组中，取消一次运行会杀掉整棵进程树。
 - 命令输出从尾部截断，完整内容写入临时文件供按需读取。
 - 精确匹配的 `edit_file`，命中缺失或不唯一时拒绝执行。
@@ -140,6 +143,9 @@ chivgent [选项]                   进入交互式会话
   --allow-writes   允许 Agent 创建和修改文件（默认只读）
   --allow-shell    允许 Agent 执行 Shell 命令。它蕴含写权限：Shell 不受工作区
                    边界约束。仅支持 Unix。
+  --no-extensions  不加载任何扩展，也不询问信任
+  --extensions     列出已加载的扩展及其注册内容后退出
+  --forget-trust   忘记覆盖当前工作区的信任决定后退出
   --context-window N  上下文的 Token 预算（默认：128000）
   --no-compaction  发送完整 transcript，不压缩较早的轮次
   --no-session     不记录本次运行
@@ -362,6 +368,13 @@ src/
     write-file.ts                整文件创建与替换
     edit-file.ts                 精确唯一匹配编辑
     bash.ts                      Shell 命令执行
+  extensions/
+    trust.ts                     按目录记录的信任存储
+    decide-trust.ts              询问流程，以及无人可问时的拒绝
+    discover.ts                  扩展的位置与文件识别规则
+    api.ts                       扩展可以注册什么
+    registry.ts                  收集注册项并拒绝冲突
+    loader.ts                    import 模块并隔离其失败
   shell/
     types.ts                     执行契约与 Shell 错误类型
     config.ts                    Shell 解析与 Windows 拦截
@@ -399,6 +412,61 @@ npm install -g ./chivgent-0.6.0.tgz
 测试使用脚本化或 Mock LLM Client。真实 API Smoke Test 需要手工执行，因此默认
 测试不会消耗 API 额度。
 
+## 扩展系统
+
+一个扩展就是默认导出一个函数的 ES 模块。启动时它会被调用一次，拿到的 API 可以注册
+工具、注册斜杠命令、订阅运行时事件、追加 system prompt。
+
+```js
+// .chivgent/extensions/word-count.js
+export default function (api) {
+  api.registerTool({
+    name: "word_count",
+    description: "统计工作区某个文件的词数。",
+    inputSchema: {
+      type: "object",
+      properties: { path: { type: "string" } },
+      required: ["path"],
+      additionalProperties: false,
+    },
+    async execute(args, context) {
+      const file = await context.workspace.readTextFile(args.path);
+      return {
+        content: `${file.content.split(/\s+/).filter(Boolean).length} words`,
+        isError: false,
+      };
+    },
+  });
+
+  api.contributeSystemPrompt("需要数词数时用 word_count，不要整篇读文件。");
+}
+```
+
+扩展从两个位置加载：
+
+| 位置 | 何时加载 |
+| --- | --- |
+| `<CHIVGENT_HOME>/extensions/` | 始终加载——那是你自己机器上的配置 |
+| `<工作区>/.chivgent/extensions/` | 只有在你信任该项目之后 |
+
+两处都接受 `name.js` 和 `name/index.js`，不再往下递归。**只支持纯 JavaScript**：
+用 TypeScript 写的话自己编译成 `.js` 即可，为此让 chivgent 背上一个 TS 运行时加载器
+不划算。与内置工具或命令重名的注册会被拒绝，所以扩展无法顶替 `read_file` 或
+`/clear`；某个扩展坏掉只会被报告并跳过，不会把 chivgent 一起带走。
+
+`chivgent --extensions` 可以列出加载了哪些扩展、各自注册了什么。
+
+### Project Trust
+
+第一次在带扩展的项目里运行 chivgent 时，它会说明这些扩展是什么并询问一次。答案记在
+`<CHIVGENT_HOME>/trust.json` 里，键是解析后的目录路径，**按最近祖先匹配**——信任
+`~/work` 就覆盖它下面所有仓库。`--forget-trust` 可以删掉覆盖当前工作区的那条决定。
+
+**信任一个项目，等于允许这个仓库的作者以你的身份执行代码。** 扩展在 chivgent 进程内
+运行：不受工作区边界约束，不需要 `--allow-shell` 就能执行命令，也能读到你环境变量里的
+API Key。这正是询问必须发生在 import 之前的原因，也是"没人可问时一律拒绝"的原因——
+CI 任务或管道运行永远不会自作主张去执行一个 clone 里的代码。
+
 ## 安全模型
 
 - API Key 依次从 `--api-key`、环境变量、可选的 `auth.json` 解析，绝不能提交到仓库。
@@ -417,6 +485,13 @@ npm install -g ./chivgent-0.6.0.tgz
 - 被截断的命令输出会写入临时文件供模型按需读取。该文件仅所有者可读，但运行结束后
   **不会自动删除**，其中可能包含命令打印的任何内容。处理敏感数据后请清理临时目录。
 - 开启 `--allow-shell` 后，会话日志除文件片段外还会记录命令输出。
+- 项目扩展只有在存在明确的、已记录的信任决定之后才会加载，且没有终端可问时绝不加载。
+  扩展以你的权限在进程内运行，上面那些工作区限制对它一概不适用——因此"信任一个项目"
+  与 `--allow-shell` 是同一量级的授权，区别只在于前者由 clone 一个仓库触发，
+  后者要你亲手敲一个参数。
+- `<CHIVGENT_HOME>/extensions/` 下的用户级扩展始终加载，那是你自己的配置。
+- 扩展无法占用内置工具或内置命令的名字。
+- `trust.json` 与会话日志、认证文件一样，以仅所有者可读的权限写入。
 - 写入会解析到最深层已存在的祖先目录，路径上任何一段是符号链接都会被拒绝，
   因此预先植入的链接无法把写入重定向到工作区之外。
 - 写入先落到同目录的临时文件再 rename 就位，中断的写入不会截断已有文件。
@@ -455,7 +530,7 @@ npm install -g ./chivgent-0.6.0.tgz
 - [x] 通过 `--allow-writes` 选择性开启的 `write_file` 和 `edit_file`
 - [x] Provider Registry 与凭据解析链
 - [x] 通过 `--allow-shell` 开启的 `bash` 工具，带流式输出
-- [ ] 扩展系统与 Project Trust
+- [x] 扩展系统与 Project Trust
 - [ ] TUI、远程会话、Telemetry 和 Evals
 
 逐条命令确认和命令白名单是**主动放弃**的方向。有了 Shell 工具之后，`bash` 能做的
@@ -473,6 +548,7 @@ npm install -g ./chivgent-0.6.0.tgz
 - [Stage 6：Provider Registry 与凭证解析链](docs/stage-6-provider-registry.md)
 - [Stage 7：上下文预算与压缩](docs/stage-7-context-management.md)
 - [Stage 8：Shell 工具与流式子进程](docs/stage-8-shell-tool.md)
+- [Stage 9：扩展系统与 Project Trust](docs/stage-9-extensions.md)
 - [发布流程](docs/releasing.md)
 
 ## 参与贡献

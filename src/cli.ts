@@ -27,6 +27,13 @@ import { BashTool } from "./tools/bash.js";
 import { killTrackedChildren } from "./shell/process.js";
 import { resolveShellConfig } from "./shell/config.js";
 import { ShellUnavailableError } from "./shell/types.js";
+import { decideTrust } from "./extensions/decide-trust.js";
+import { discoverExtensions } from "./extensions/discover.js";
+import { loadExtensions } from "./extensions/loader.js";
+import { TrustStore } from "./extensions/trust.js";
+import type { ExtensionRegistry } from "./extensions/registry.js";
+import type { RegisteredCommand } from "./extensions/api.js";
+import { BUILT_IN_COMMANDS } from "./repl.js";
 import type { Message } from "./messages.js";
 import { LocalWorkspace } from "./workspace.js";
 import { createConfiguredClient } from "./providers/client.js";
@@ -81,7 +88,10 @@ function installShellCleanup(): void {
   }
 }
 
-function buildSystemPrompt(options: CliOptions): string {
+function buildSystemPrompt(
+  options: CliOptions,
+  contributions: readonly string[] = [],
+): string {
   const sections = [SYSTEM_PROMPT];
   if (options.allowWrites) {
     sections.push(WRITE_SYSTEM_PROMPT);
@@ -89,7 +99,64 @@ function buildSystemPrompt(options: CliOptions): string {
   if (options.allowShell) {
     sections.push(SHELL_SYSTEM_PROMPT);
   }
+  sections.push(...contributions);
   return sections.join("\n");
+}
+
+const BUILT_IN_TOOL_NAMES = [
+  "list_files",
+  "search_text",
+  "read_file",
+  "write_file",
+  "edit_file",
+  "bash",
+] as const;
+
+/**
+ * Resolves trust and loads whatever extensions are allowed.
+ *
+ * Trust is decided before a single module is imported, because importing is
+ * already execution.
+ */
+async function setupExtensions(
+  options: CliOptions,
+  cwd: string,
+): Promise<ExtensionRegistry | undefined> {
+  if (!options.extensions) {
+    return undefined;
+  }
+
+  const store = new TrustStore();
+  let trusted = false;
+  try {
+    const outcome = await decideTrust({
+      cwd,
+      store,
+      stderr: process.stderr,
+      ...(process.stdin.isTTY === true ? { input: process.stdin } : {}),
+      listExtensions: async () =>
+        (await discoverExtensions({ cwd, includeProject: true })).
+          filter((extension) => extension.origin === "project").
+          map((extension) => extension.path),
+    });
+    trusted = outcome.trusted;
+  } catch (error: unknown) {
+    // A broken trust file must not stop chivgent; it means "not trusted".
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${message} Project extensions are not loaded.\n`);
+  }
+
+  const discovered = await discoverExtensions({ cwd, includeProject: trusted });
+  if (discovered.length === 0) {
+    return undefined;
+  }
+
+  const { registry } = await loadExtensions(discovered, {
+    reservedToolNames: [...BUILT_IN_TOOL_NAMES],
+    reservedCommandNames: [...BUILT_IN_COMMANDS],
+    onWarning: (message) => process.stderr.write(`extension: ${message}\n`),
+  });
+  return registry;
 }
 
 /**
@@ -131,6 +198,16 @@ async function main(argv: readonly string[]): Promise<number> {
 
   if (options.listSessions) {
     return listSessions(store ?? new FileSessionStore(), cwd);
+  }
+
+  if (options.forgetTrust) {
+    return forgetTrust(cwd);
+  }
+
+  const registry = await setupExtensions(options, cwd);
+
+  if (options.listExtensions) {
+    return describeExtensions(registry);
   }
 
   const prompt = options.prompt ?? (await readPipedPrompt());
@@ -182,13 +259,17 @@ async function main(argv: readonly string[]): Promise<number> {
     },
   });
   const agentOptions: Omit<AgentOptions, "onEvent"> = {
-    systemPrompt: buildSystemPrompt(options),
+    systemPrompt: buildSystemPrompt(
+      options,
+      registry?.systemPromptContributions ?? [],
+    ),
     maxTurns: options.maxTurns,
     llm,
     tools: [
       ...readOnlyTools,
       ...(options.allowWrites ? [new WriteFileTool(), new EditFileTool()] : []),
       ...(options.allowShell ? [new BashTool({ cwd })] : []),
+      ...(registry?.registeredTools ?? []).map((entry) => entry.tool),
     ],
     workspace: new LocalWorkspace(cwd, { allowWrites: options.allowWrites }),
     streaming: options.stream,
@@ -220,6 +301,10 @@ async function main(argv: readonly string[]): Promise<number> {
         ),
   );
 
+  if (registry !== undefined) {
+    session.subscribe(registry.eventListener);
+  }
+
   if (interactive) {
     return runRepl({
       session,
@@ -228,6 +313,9 @@ async function main(argv: readonly string[]): Promise<number> {
       stderr: process.stderr,
       banner: banner(options, session.id, restored.resumed),
       ...(store === undefined ? {} : { sessionFile: store.location(session.id) }),
+      ...(registry === undefined
+        ? {}
+        : { extensionCommands: registry.registeredCommands }),
     });
   }
 
@@ -261,6 +349,47 @@ async function runOnce(
   } finally {
     process.off("SIGINT", interrupt);
   }
+}
+
+async function forgetTrust(cwd: string): Promise<number> {
+  try {
+    const forgotten = await new TrustStore().forget(cwd);
+    process.stdout.write(
+      forgotten === undefined
+        ? `No trust decision covers ${cwd}.\n`
+        : `Forgot the trust decision for ${forgotten}.\n`,
+    );
+    return 0;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${message}\n`);
+    return 1;
+  }
+}
+
+function describeExtensions(registry: ExtensionRegistry | undefined): number {
+  const tools = registry?.registeredTools ?? [];
+  const commands: readonly RegisteredCommand[] = registry?.registeredCommands ?? [];
+  const prompts = registry?.systemPromptContributions ?? [];
+
+  if (tools.length === 0 && commands.length === 0 && prompts.length === 0) {
+    process.stdout.write("No extensions are loaded.\n");
+    return 0;
+  }
+
+  const lines: string[] = [];
+  for (const entry of tools) {
+    lines.push(`tool     ${entry.tool.name}  (${entry.source})`);
+  }
+  for (const command of commands) {
+    lines.push(`command  /${command.name}  (${command.source})`);
+  }
+  for (const contribution of prompts) {
+    const firstLine = contribution.split("\n", 1)[0] ?? "";
+    lines.push(`prompt   ${firstLine}`);
+  }
+  process.stdout.write(`${lines.join("\n")}\n`);
+  return 0;
 }
 
 /** Returns the restored session, or the message explaining why it failed. */
