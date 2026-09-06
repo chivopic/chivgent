@@ -434,6 +434,9 @@ npm install -g ./chivgent-0.6.0.tgz
 - [Stage 2：Project Discovery 实现设计](docs/stage-2-project-discovery.md)
 - [Stage 3：Runtime Events 与流式输出设计](docs/stage-3-runtime-events.md)
 - [Stage 4：Session 与交互模式设计](docs/stage-4-sessions.md)
+- [Stage 5：写入工具与 Workspace 拆分](docs/stage-5-write-tools.md)
+- [Stage 6：Provider Registry 与凭证解析链](docs/stage-6-provider-registry.md)
+- [Stage 7：上下文预算与压缩](docs/stage-7-context-management.md)
 - [发布流程](docs/releasing.md)
 
 ## 参与贡献

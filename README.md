@@ -459,6 +459,9 @@ a sensitive project.
 - [Stage 2: Project Discovery implementation design](docs/stage-2-project-discovery.md)
 - [Stage 3: Runtime Events and Streaming design](docs/stage-3-runtime-events.md)
 - [Stage 4: Sessions and interactive mode design](docs/stage-4-sessions.md)
+- [Stage 5: Write tools and the workspace split](docs/stage-5-write-tools.md)
+- [Stage 6: Provider registry and credential chain](docs/stage-6-provider-registry.md)
+- [Stage 7: Context budget and compaction](docs/stage-7-context-management.md)
 - [Release process](docs/releasing.md)
 
 ## Contributing
