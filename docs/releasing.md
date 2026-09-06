@@ -92,10 +92,45 @@ Reference: https://docs.npmjs.com/trusted-publishers/
 
 3. Commit the version bump through the normal PR flow and merge it to `main`.
 
-4. In GitHub Actions, run **Publish npm package** from `main`.
+4. In GitHub Actions, run **Publish npm package** from `main`. Do this as soon as
+   the merge lands. A version that is merged but never published is invisible:
+   `0.8.0` was skipped exactly this way, and because npm versions cannot be added
+   after the fact it is permanently missing from the registry. If a release is
+   deliberately not published, say so in the merge commit or in an issue, so the
+   gap is a decision rather than an accident.
 
-5. Verify the version on npm. The workflow creates the matching `vX.Y.Z` tag and
-   GitHub release automatically, with notes generated from the commits since the
-   previous tag.
+5. Confirm the publish from the workflow log, not from npm. The `Publish` step
+   prints `+ chivgent@X.Y.Z` on success; that line is the authoritative signal.
+   npm itself prints "Your package is being processed and may take a few minutes
+   to become available" immediately before it.
+
+6. Wait about two minutes before installing the new version to verify it.
+
+   This wait matters. Running `npm install chivgent@X.Y.Z` before the tarball has
+   reached the CDN edge does not just fail: the edge caches that 404 for five
+   minutes (`cache-control: public, max-age=300`), so every later install through
+   the same edge keeps failing long after the package is available. It looks like
+   a broken release but it is a self-inflicted negative cache. If it happens, wait
+   for the cache to expire rather than re-publishing anything; `curl -I` on the
+   tarball URL shows the remaining `age`.
+
+7. The workflow creates the matching `vX.Y.Z` tag and GitHub release
+   automatically, with notes generated from the commits since the previous tag.
 
 A package version cannot be overwritten on npm. If publishing fails after a version has already been released, bump to a new version rather than trying to reuse it.
+
+## Verifying provenance
+
+Releases published through the workflow carry npm provenance, signed via GitHub
+Actions OIDC and recorded in the sigstore transparency log. To check a published
+version:
+
+```bash
+npm audit signatures
+```
+
+This needs network access to sigstore's TUF CDN (`tuf-repo-cdn.sigstore.dev`).
+On a restricted network the command fails to download rather than reporting a bad
+signature; that is an environment limitation, not a problem with the package. The
+publish log's `Provenance statement published to transparency log` line links to
+the same record.
