@@ -36,6 +36,9 @@
 - 通过 `list_files` 和字面量 `search_text` 确定性地发现项目内容。
 - 支持带续读提示的分段 `read_file`，所有工具结果都有容量上限。
 - 默认只读；`--allow-writes` 才会启用 `write_file` 和 `edit_file`。
+- 通过 `--allow-shell` 选择性开启的 `bash` 工具，输出边跑边显示。
+- 命令运行在独立进程组中，取消一次运行会杀掉整棵进程树。
+- 命令输出从尾部截断，完整内容写入临时文件供按需读取。
 - 精确匹配的 `edit_file`，命中缺失或不唯一时拒绝执行。
 - 编辑会保留文件原有的 BOM 和 CRLF 换行符。
 - 原子写入：写入中途崩溃不会损坏原文件。
@@ -122,9 +125,11 @@ chivgent [选项] "问题"            回答一次后退出
 chivgent [选项]                   进入交互式会话
 
 选项：
-  --provider NAME  openai、deepseek 或 openai-compatible（默认：openai）
+  --provider NAME  openai、deepseek、openai-compatible、openrouter、groq、xai、
+                   moonshot（默认：openai）
   --model MODEL    覆盖 Provider 模型
-  --max-turns N    工具调用轮次上限（默认：8，加 --allow-writes 时为 16）
+  --max-turns N    工具调用轮次上限（默认：8，加 --allow-writes 或 --allow-shell
+                   时为 16）
   --no-stream      关闭流式输出，等待完整答案
   -q, --quiet      不在 stderr 打印工具活动
   --json           以 JSON Lines 输出整次运行，而不是渲染文本
@@ -133,6 +138,8 @@ chivgent [选项]                   进入交互式会话
   --api-key KEY    本次运行使用的 API Key；更推荐用环境变量
   --sessions       列出已记录的 Session 并退出
   --allow-writes   允许 Agent 创建和修改文件（默认只读）
+  --allow-shell    允许 Agent 执行 Shell 命令。它蕴含写权限：Shell 不受工作区
+                   边界约束。仅支持 Unix。
   --context-window N  上下文的 Token 预算（默认：128000）
   --no-compaction  发送完整 transcript，不压缩较早的轮次
   --no-session     不记录本次运行
@@ -203,6 +210,7 @@ chivgent --provider openai-compatible --model vendor-model "解释 package.json"
                  |
                  +-> Tool Registry -> list_files / search_text / read_file -> Workspace
                                       write_file / edit_file（--allow-writes）
+                 |                    bash（--allow-shell）-> ShellOperations
 ```
 
 Agent Runtime 拥有自己的消息模型。Provider 特有的数据结构只在 `LLMClient` 边界
@@ -353,6 +361,15 @@ src/
     read-file.ts                 分段文本读取工具
     write-file.ts                整文件创建与替换
     edit-file.ts                 精确唯一匹配编辑
+    bash.ts                      Shell 命令执行
+  shell/
+    types.ts                     执行契约与 Shell 错误类型
+    config.ts                    Shell 解析与 Windows 拦截
+    local.ts                     本地 spawn 后端
+    process.ts                   进程组终止与退出处理
+    output.ts                    有界的流式输出累积器
+    truncate.ts                  命令输出的尾部截断
+    sanitize.ts                  控制字符过滤
 tests/                           Provider、Agent Loop 和 Workspace 测试
 docs/                            架构与学习文档
 ```
@@ -390,6 +407,16 @@ npm install -g ./chivgent-0.6.0.tgz
 - 自定义 `OPENAI_BASE_URL` 会收到配置的 API Key 和提示词，只能使用可信端点。
 - 不传 `--allow-writes` 时工作区工具全部只读，`write_file` 和 `edit_file` 根本
   不会被注册。
+- `bash` 工具需要 `--allow-shell`，它与 `--allow-writes` 相互独立，永远不会被后者
+  顺带打开。授予它意味着授予大得多的权限：Shell 能改动或删除运行 chivgent 的用户
+  能碰的任何东西，无论是否在工作区内，下面这些工作区限制对它一律不适用。
+- 命令运行在独立进程组中并按组杀死，取消一次运行不会留下孤儿后代进程。
+- 命令会继承 chivgent 的环境变量，其中包含它正在使用的 API Key。开了
+  `--allow-shell` 的模型可以读到这个 Key 以及环境里的其他内容。请只带上这次任务
+  真正需要的环境变量。
+- 被截断的命令输出会写入临时文件供模型按需读取。该文件仅所有者可读，但运行结束后
+  **不会自动删除**，其中可能包含命令打印的任何内容。处理敏感数据后请清理临时目录。
+- 开启 `--allow-shell` 后，会话日志除文件片段外还会记录命令输出。
 - 写入会解析到最深层已存在的祖先目录，路径上任何一段是符号链接都会被拒绝，
   因此预先植入的链接无法把写入重定向到工作区之外。
 - 写入先落到同目录的临时文件再 rename 就位，中断的写入不会截断已有文件。
@@ -406,9 +433,13 @@ npm install -g ./chivgent-0.6.0.tgz
   在敏感项目中请使用 `--no-session`，并像对待项目本身一样对待该目录。
 - Session id 在拼接成文件路径前会先做校验。
 
-这是一个用于学习的 MVP，并不是经过加固的 Sandbox。`--allow-writes` 不会对每次
-修改逐一确认，因此请在已提交的代码上使用；在允许它访问敏感项目之前，请先审查
-代码和威胁模型。
+这是一个用于学习的 MVP，并不是经过加固的 Sandbox。它**没有权限系统**：能力开关
+都是会话级的粗粒度开关，`--allow-writes` 和 `--allow-shell` 都不会对每次操作逐一
+确认。这是有意为之：有了 Shell 之后，命令白名单能被一行 `sh -c` 绕开，而逐次弹确认
+只会训练用户无脑确认，所以 chivgent 选择把边界说清楚，而不是假装能拦住什么。
+
+请在已提交的代码上使用这些开关。如果需要真正的边界，请把整个进程放进容器，并只给
+容器这次任务真正需要的东西。在允许它访问敏感项目之前，请先审查代码和威胁模型。
 
 ## 路线图
 
@@ -422,10 +453,14 @@ npm install -g ./chivgent-0.6.0.tgz
 - [x] 持久化多轮 Session
 - [x] Context Window 管理和压缩
 - [x] 通过 `--allow-writes` 选择性开启的 `write_file` 和 `edit_file`
-- [ ] 逐次修改确认与撤销日志
-- [ ] 需要权限确认的 Shell 工具
 - [x] Provider Registry 与凭据解析链
-- [ ] TUI、Extensions、Telemetry 和 Evals
+- [x] 通过 `--allow-shell` 开启的 `bash` 工具，带流式输出
+- [ ] 扩展系统与 Project Trust
+- [ ] TUI、远程会话、Telemetry 和 Evals
+
+逐条命令确认和命令白名单是**主动放弃**的方向。有了 Shell 工具之后，`bash` 能做的
+事是 `write_file` 的超集，任何白名单都能被一行 `sh -c` 绕开，而逐条弹确认只会训练
+用户无脑确认。能力开关一律是会话级的粗粒度开关，真正的边界是容器。
 
 ## 文档
 
@@ -434,6 +469,10 @@ npm install -g ./chivgent-0.6.0.tgz
 - [Stage 2：Project Discovery 实现设计](docs/stage-2-project-discovery.md)
 - [Stage 3：Runtime Events 与流式输出设计](docs/stage-3-runtime-events.md)
 - [Stage 4：Session 与交互模式设计](docs/stage-4-sessions.md)
+- [Stage 5：写入工具与 Workspace 拆分](docs/stage-5-write-tools.md)
+- [Stage 6：Provider Registry 与凭证解析链](docs/stage-6-provider-registry.md)
+- [Stage 7：上下文预算与压缩](docs/stage-7-context-management.md)
+- [Stage 8：Shell 工具与流式子进程](docs/stage-8-shell-tool.md)
 - [发布流程](docs/releasing.md)
 
 ## 参与贡献

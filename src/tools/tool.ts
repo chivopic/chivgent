@@ -13,6 +13,11 @@ export interface ToolContext {
    * spawn processes or walk large trees should honour it.
    */
   readonly signal?: AbortSignal;
+  /**
+   * Reports progress from a long-running tool. The content is a snapshot of
+   * the output so far, not a delta. Ignoring it is always valid.
+   */
+  readonly onUpdate?: (content: string) => void;
 }
 
 export interface ToolOutput {

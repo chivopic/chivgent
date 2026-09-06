@@ -18,8 +18,8 @@ export type Provider = string;
 export const DEFAULT_MAX_TURNS = 8;
 /**
  * Editing costs turns that reading does not: the model reads, edits, then
- * re-reads to confirm. Eight turns runs out mid-change, so enabling writes
- * raises the default unless --max-turns says otherwise.
+ * re-reads to confirm. Eight turns runs out mid-change, so enabling writes or
+ * a shell raises the default unless --max-turns says otherwise.
  */
 export const DEFAULT_WRITE_MAX_TURNS = 16;
 const MIN_CONTEXT_WINDOW = 1_000;
@@ -51,6 +51,11 @@ export interface CliOptions {
   readonly listSessions: boolean;
   /** Allow the agent to create and modify files in the workspace. */
   readonly allowWrites: boolean;
+  /**
+   * Allow the agent to run shell commands. This implies write access: a shell
+   * can do everything the write tools can and is not bound by the workspace.
+   */
+  readonly allowShell: boolean;
   /** API key supplied for this run only, overriding every other source. */
   readonly apiKey?: string;
   /** Token budget the context is kept inside. */
@@ -80,6 +85,7 @@ export function parseCliArgs(
   let continueSession = false;
   let listSessions = false;
   let allowWrites = false;
+  let allowShell = false;
   let maxTurnsExplicit = false;
   let help = false;
   let version = false;
@@ -122,6 +128,8 @@ export function parseCliArgs(
       listSessions = true;
     } else if (argument === "--allow-writes") {
       allowWrites = true;
+    } else if (argument === "--allow-shell") {
+      allowShell = true;
     } else if (argument === "--context-window") {
       contextWindow = parseContextWindow(
         readOptionValue(argv, index, "--context-window"),
@@ -151,7 +159,9 @@ export function parseCliArgs(
     ...(model === undefined ? {} : { model }),
     ...(baseURL === undefined ? {} : { baseURL }),
     maxTurns:
-      allowWrites && !maxTurnsExplicit ? DEFAULT_WRITE_MAX_TURNS : maxTurns,
+      (allowWrites || allowShell) && !maxTurnsExplicit
+        ? DEFAULT_WRITE_MAX_TURNS
+        : maxTurns,
     stream,
     quiet,
     json,
@@ -160,6 +170,7 @@ export function parseCliArgs(
     continueSession,
     listSessions,
     allowWrites,
+    allowShell,
     ...(apiKey === undefined ? {} : { apiKey }),
     contextWindow,
     compaction,
@@ -181,7 +192,7 @@ Options:
   --provider NAME  ${registry.ids().join(", ")} (default: openai)
   --model MODEL    Provider model override
   --api-key KEY    API key for this run; prefer an environment variable
-  --max-turns N    Tool-calling turn limit (default: ${DEFAULT_MAX_TURNS}, ${DEFAULT_WRITE_MAX_TURNS} with --allow-writes)
+  --max-turns N    Tool-calling turn limit (default: ${DEFAULT_MAX_TURNS}, ${DEFAULT_WRITE_MAX_TURNS} with --allow-writes or --allow-shell)
   --no-stream      Wait for the full answer instead of streaming tokens
   -q, --quiet      Hide tool activity on stderr
   --json           Write the run as JSON lines instead of rendered text
@@ -189,6 +200,8 @@ Options:
   --resume ID      Resume a specific session
   --sessions       List recorded sessions and exit
   --allow-writes   Let the agent create and change files (default: read-only)
+  --allow-shell    Let the agent run shell commands. This implies write access:
+                   a shell is not bound by the workspace. Unix only.
   --context-window N  Token budget for the context (default: ${DEFAULT_CONTEXT_WINDOW})
   --no-compaction  Send the whole transcript instead of summarising old turns
   --no-session     Do not record this run

@@ -119,7 +119,8 @@ export class AgentSession {
     if (
       this.store === undefined ||
       !this.headerWritten ||
-      event.type === "message_update"
+      event.type === "message_update" ||
+      event.type === "tool_execution_update"
     ) {
       return;
     }
