@@ -34,6 +34,15 @@ import { TrustStore } from "./extensions/trust.js";
 import type { ExtensionRegistry } from "./extensions/registry.js";
 import type { RegisteredCommand } from "./extensions/api.js";
 import { BUILT_IN_COMMANDS } from "./repl.js";
+import { SessionServer, SocketInUseError } from "./remote/server.js";
+import { RemoteSession } from "./remote/client.js";
+import {
+  listServers,
+  resolveSocketTarget,
+  socketPathFor,
+  SocketPathTooLongError,
+} from "./remote/socket-path.js";
+import { runRemoteRepl } from "./remote/repl.js";
 import type { Message } from "./messages.js";
 import { LocalWorkspace } from "./workspace.js";
 import { createConfiguredClient } from "./providers/client.js";
@@ -204,15 +213,28 @@ async function main(argv: readonly string[]): Promise<number> {
     return forgetTrust(cwd);
   }
 
+  if (options.listServers) {
+    return showServers();
+  }
+
+  if (options.connect !== undefined) {
+    return connectToServer(options, options.connect);
+  }
+
   const registry = await setupExtensions(options, cwd);
 
   if (options.listExtensions) {
     return describeExtensions(registry);
   }
 
-  const prompt = options.prompt ?? (await readPipedPrompt());
+  // A server takes its prompts from clients, so it needs neither a prompt on
+  // the command line nor a terminal, and it must not consume stdin looking for
+  // one.
+  const prompt = options.serve
+    ? undefined
+    : (options.prompt ?? (await readPipedPrompt()));
   const interactive = prompt === undefined;
-  if (interactive && process.stdin.isTTY !== true) {
+  if (!options.serve && interactive && process.stdin.isTTY !== true) {
     process.stderr.write("Missing prompt. Run chivgent --help for usage.\n");
     return 1;
   }
@@ -305,11 +327,18 @@ async function main(argv: readonly string[]): Promise<number> {
     session.subscribe(registry.eventListener);
   }
 
+  if (options.serve) {
+    return serveSession(options, session);
+  }
+
   if (interactive) {
     return runRepl({
       session,
       input: process.stdin,
-      output: process.stdout,
+      // In JSON mode stdout carries the event stream and nothing else: readline
+      // writes its prompt and echo to the same stream it is given, which would
+      // otherwise prefix the first event with terminal escape codes.
+      output: options.json ? process.stderr : process.stdout,
       stderr: process.stderr,
       banner: banner(options, session.id, restored.resumed),
       ...(store === undefined ? {} : { sessionFile: store.location(session.id) }),
@@ -390,6 +419,165 @@ function describeExtensions(registry: ExtensionRegistry | undefined): number {
   }
   process.stdout.write(`${lines.join("\n")}\n`);
   return 0;
+}
+
+function capabilitiesOf(options: CliOptions): readonly string[] {
+  const granted: string[] = [];
+  if (options.allowWrites) {
+    granted.push("--allow-writes");
+  }
+  if (options.allowShell) {
+    granted.push("--allow-shell");
+  }
+  if (!options.extensions) {
+    granted.push("--no-extensions");
+  }
+  return granted;
+}
+
+/**
+ * Serves one session until interrupted.
+ *
+ * The capabilities are printed because whoever attaches later cannot see which
+ * flags were typed here, and attaching grants all of them.
+ */
+async function serveSession(
+  options: CliOptions,
+  session: AgentSession,
+): Promise<number> {
+  const server = new SessionServer({
+    session,
+    socketPath: socketPathFor(session.id),
+    capabilities: capabilitiesOf(options),
+    onWarning: (message) => process.stderr.write(`${message}\n`),
+  });
+
+  try {
+    await server.listen();
+  } catch (error: unknown) {
+    if (
+      error instanceof SocketInUseError ||
+      error instanceof SocketPathTooLongError
+    ) {
+      process.stderr.write(`${error.message}\n`);
+      return 1;
+    }
+    throw error;
+  }
+
+  const granted = capabilitiesOf(options);
+  process.stderr.write(
+    [
+      `chivgent ${VERSION} serving session ${session.id}`,
+      `socket:       ${server.socketPath}`,
+      `workspace:    ${session.cwd}`,
+      `capabilities: ${granted.length === 0 ? "read-only" : granted.join(" ")}`,
+      "",
+      `Attach with: chivgent --connect ${session.id}`,
+      "Anyone who can reach that socket has the capabilities above.",
+      "Ctrl+C to stop serving.",
+      "",
+    ].join("\n"),
+  );
+
+  await new Promise<void>((resolve) => {
+    const stop = (): void => {
+      process.off("SIGINT", stop);
+      process.off("SIGTERM", stop);
+      resolve();
+    };
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+  });
+
+  process.stderr.write("\nStopping.\n");
+  await server.close();
+  return 0;
+}
+
+async function showServers(): Promise<number> {
+  const servers = await listServers();
+  if (servers.length === 0) {
+    process.stdout.write("No chivgent servers are running.\n");
+    return 0;
+  }
+  for (const entry of servers) {
+    process.stdout.write(`${entry.id}  ${entry.path}\n`);
+  }
+  return 0;
+}
+
+async function connectToServer(
+  options: CliOptions,
+  target: string,
+): Promise<number> {
+  const socketPath = resolveSocketTarget(target);
+  const renderer = createEventRenderer(
+    { stdout: process.stdout, stderr: process.stderr },
+    {
+      stream: options.stream,
+      showToolActivity: !options.quiet,
+      showToolProgress: !options.quiet && process.stderr.isTTY === true,
+      color: process.stderr.isTTY === true,
+    },
+  );
+  const remote = new RemoteSession({
+    socketPath,
+    onEvent: options.json
+      ? createJsonEventWriter(process.stdout)
+      : renderer,
+  });
+
+  try {
+    await remote.connect();
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    process.stderr.write(`${message}\n`);
+    return 1;
+  }
+
+  const prompt = options.prompt ?? (await readPipedPrompt());
+  try {
+    if (prompt === undefined) {
+      return await runRemoteRepl({
+        remote,
+        input: process.stdin,
+        output: options.json ? process.stderr : process.stdout,
+        stderr: process.stderr,
+        socketPath,
+      });
+    }
+    return await runRemoteOnce(remote, prompt);
+  } finally {
+    remote.close();
+  }
+}
+
+async function runRemoteOnce(
+  remote: RemoteSession,
+  prompt: string,
+): Promise<number> {
+  const interrupt = (): void => remote.interrupt();
+  process.on("SIGINT", interrupt);
+  try {
+    const result = await remote.prompt(prompt);
+    switch (result.status) {
+      case "completed":
+        return 0;
+      case "aborted":
+        return EXIT_INTERRUPTED;
+      case "max_turns":
+        return 2;
+      default:
+        return 1;
+    }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    process.stderr.write(`${message}\n`);
+    return 1;
+  } finally {
+    process.off("SIGINT", interrupt);
+  }
 }
 
 /** Returns the restored session, or the message explaining why it failed. */

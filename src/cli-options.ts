@@ -62,6 +62,12 @@ export interface CliOptions {
   readonly listExtensions: boolean;
   /** Forget the trust decision covering this workspace and exit. */
   readonly forgetTrust: boolean;
+  /** Expose this session on a local socket and stay running. */
+  readonly serve: boolean;
+  /** Attach to a session served elsewhere; a session id or a socket path. */
+  readonly connect?: string;
+  /** List the servers that are still answering, then exit. */
+  readonly listServers: boolean;
   /** API key supplied for this run only, overriding every other source. */
   readonly apiKey?: string;
   /** Token budget the context is kept inside. */
@@ -93,6 +99,9 @@ export function parseCliArgs(
   let allowWrites = false;
   let allowShell = false;
   let extensions = true;
+  let serve = false;
+  let connect: string | undefined;
+  let listServers = false;
   let listExtensions = false;
   let forgetTrust = false;
   let maxTurnsExplicit = false;
@@ -139,6 +148,13 @@ export function parseCliArgs(
       allowWrites = true;
     } else if (argument === "--allow-shell") {
       allowShell = true;
+    } else if (argument === "--serve") {
+      serve = true;
+    } else if (argument === "--connect") {
+      connect = readOptionValue(argv, index, "--connect");
+      index += 1;
+    } else if (argument === "--servers") {
+      listServers = true;
     } else if (argument === "--no-extensions") {
       extensions = false;
     } else if (argument === "--extensions") {
@@ -187,6 +203,9 @@ export function parseCliArgs(
     allowWrites,
     allowShell,
     extensions,
+    serve,
+    ...(connect === undefined ? {} : { connect }),
+    listServers,
     listExtensions,
     forgetTrust,
     ...(apiKey === undefined ? {} : { apiKey }),
@@ -220,6 +239,9 @@ Options:
   --allow-writes   Let the agent create and change files (default: read-only)
   --allow-shell    Let the agent run shell commands. This implies write access:
                    a shell is not bound by the workspace. Unix only.
+  --serve          Expose this session on a local socket and keep running
+  --connect TARGET Attach to a served session, by id or socket path
+  --servers        List the servers still answering, then exit
   --no-extensions  Do not load any extension, and do not ask about trust
   --extensions     List loaded extensions and what they register, then exit
   --forget-trust   Forget the trust decision covering this workspace, then exit
@@ -240,6 +262,12 @@ Extensions:
                    Loaded only after you trust the project. An extension runs
                    as code inside chivgent, with your permissions, and is not
                    limited by the workspace.
+
+Remote sessions:
+  chivgent --serve             Hold a session and expose it locally
+  chivgent --connect ID        Attach from another terminal
+  Anyone who can reach the socket gets everything the server was started with.
+  Sockets live in <CHIVGENT_HOME>/sockets, an owner-only directory.
 
 Environment:
   OPENAI_BASE_URL  Required when --provider openai-compatible

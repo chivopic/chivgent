@@ -178,7 +178,7 @@ describe("CLI options", () => {
     expect(helpText()).toContain("--context-window");
     expect(helpText()).toContain("--no-compaction");
     expect(helpText()).toContain("--allow-shell");
-    expect(VERSION).toBe("0.11.0");
+    expect(VERSION).toBe("0.12.0");
   });
 });
 
@@ -227,5 +227,53 @@ describe("extension options", () => {
     expect(text).toContain("--forget-trust");
     expect(text).toContain(".chivgent/extensions");
     expect(text).toContain("not\n                   limited by the workspace");
+  });
+});
+
+describe("remote session options", () => {
+  it("is neither serving nor connecting by default", () => {
+    const options = parseCliArgs(["q"], {});
+
+    expect(options.serve).toBe(false);
+    expect(options.connect).toBeUndefined();
+    expect(options.listServers).toBe(false);
+  });
+
+  it("parses the three remote flags", () => {
+    expect(parseCliArgs(["--serve"], {}).serve).toBe(true);
+    expect(parseCliArgs(["--connect", "abc"], {}).connect).toBe("abc");
+    expect(parseCliArgs(["--servers"], {}).listServers).toBe(true);
+  });
+
+  it("keeps a prompt alongside --connect for a one-shot question", () => {
+    const options = parseCliArgs(["--connect", "abc", "what", "changed"], {});
+
+    expect(options.connect).toBe("abc");
+    expect(options.prompt).toBe("what changed");
+  });
+
+  it("requires a value for --connect", () => {
+    expect(() => parseCliArgs(["--connect"], {})).toThrow(/requires a value/);
+  });
+
+  it("says who gets the server's capabilities", () => {
+    const text = helpText();
+
+    expect(text).toContain("--serve");
+    expect(text).toContain("--connect");
+    expect(text).toContain("everything the server was started with");
+  });
+});
+
+describe("json mode and the interactive prompt", () => {
+  it("keeps --json a separate concern from streaming and sessions", () => {
+    // A regression guard for the wiring: in JSON mode stdout must carry only
+    // the event stream, so the REPL's readline output belongs on stderr. The
+    // option itself stays a plain boolean the CLI reads when choosing streams.
+    expect(parseCliArgs(["--json"], {}).json).toBe(true);
+    expect(parseCliArgs(["--json", "--connect", "abc"], {})).toMatchObject({
+      json: true,
+      connect: "abc",
+    });
   });
 });
