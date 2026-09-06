@@ -153,3 +153,38 @@ describe("event renderer", () => {
     expect(output.stdout).toBe("");
   });
 });
+
+describe("streaming mismatch", () => {
+  it("prints the final message when a streaming renderer got no deltas", () => {
+    // What a remote client sees when the server it attached to is not
+    // streaming: asking for streaming must not lose the answer.
+    const stdout = { text: "", write(chunk: string) { this.text += chunk; } };
+    const stderr = { text: "", write(chunk: string) { this.text += chunk; } };
+    const render = createEventRenderer({ stdout, stderr }, { stream: true });
+
+    render({ type: "message_start", turn: 1 });
+    render({
+      type: "message_end",
+      turn: 1,
+      message: { role: "assistant", content: "the answer", toolCalls: [] },
+    });
+
+    expect(stdout.text).toBe("the answer\n");
+  });
+
+  it("does not print it twice when deltas did arrive", () => {
+    const stdout = { text: "", write(chunk: string) { this.text += chunk; } };
+    const stderr = { text: "", write(chunk: string) { this.text += chunk; } };
+    const render = createEventRenderer({ stdout, stderr }, { stream: true });
+
+    render({ type: "message_start", turn: 1 });
+    render({ type: "message_update", turn: 1, delta: "the answer" });
+    render({
+      type: "message_end",
+      turn: 1,
+      message: { role: "assistant", content: "the answer", toolCalls: [] },
+    });
+
+    expect(stdout.text).toBe("the answer\n");
+  });
+});

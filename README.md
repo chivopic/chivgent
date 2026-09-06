@@ -40,6 +40,8 @@ to study before adding production-harness complexity.
 - Ranged `read_file` output with continuation hints and bounded tool results.
 - Read-only by default; `--allow-writes` adds `write_file` and `edit_file`.
 - An opt-in `bash` tool behind `--allow-shell`, with streamed output.
+- Remote sessions: one process holds a session, others attach over a local socket.
+- Several clients can watch one session; any of them can interrupt the run.
 - Extensions that add tools, slash commands, event handlers and prompt text.
 - Project extensions gated by a per-directory trust decision, taken before any
   module is imported and refused outright when there is no terminal to ask.
@@ -147,6 +149,9 @@ Options:
   --allow-writes   Let the agent create and change files (default: read-only)
   --allow-shell    Let the agent run shell commands. This implies write access:
                    a shell is not bound by the workspace. Unix only.
+  --serve          Expose this session on a local socket and keep running
+  --connect TARGET Attach to a served session, by id or socket path
+  --servers        List the servers still answering, then exit
   --no-extensions  Do not load any extension, and do not ask about trust
   --extensions     List loaded extensions and what they register, then exit
   --forget-trust   Forget the trust decision covering this workspace, then exit
@@ -385,6 +390,13 @@ src/
     write-file.ts                Whole-file create and replace
     edit-file.ts                 Exact unique-match edit
     bash.ts                      Shell command execution
+  remote/
+    protocol.ts                  Message shapes and version negotiation
+    framing.ts                   JSON Lines framing with a bounded buffer
+    server.ts                    Serves one session on a Unix socket
+    client.ts                    Attaches to a served session
+    repl.ts                      The interactive loop for an attached client
+    socket-path.ts               Socket paths, staleness, and discovery
   extensions/
     trust.ts                     Per-directory trust store
     decide-trust.ts              The prompt, and the refusal when nobody can answer
@@ -428,6 +440,43 @@ npm install -g ./chivgent-0.6.0.tgz
 
 Tests use scripted or mocked LLM clients. A real API smoke test is deliberately
 manual so the default test suite never consumes credits.
+
+## Remote sessions
+
+A session normally lives and dies with the terminal that started it. `--serve`
+keeps it in one process and lets others attach:
+
+```bash
+# One terminal
+chivgent --serve --allow-writes
+# chivgent 0.12.0 serving session 2026-09-06T...
+# socket:       ~/.chivgent/sockets/2026-09-06T....sock
+# capabilities: --allow-writes
+
+# Another terminal
+chivgent --servers                 # list what is running
+chivgent --connect <id>            # attach interactively
+chivgent --connect <id> "question" # ask once and leave
+```
+
+A client holds no state: it sends prompts and renders the event stream the
+server broadcasts. Several clients can attach at once — the extra ones watch the
+same run as it happens, and any of them can interrupt it, because the run
+belongs to the session rather than to whoever started it. A prompt sent while
+another is running is refused rather than queued, and a client that disconnects
+mid-run does not cancel it.
+
+Attaching does not replay history; the session log already holds that. The
+protocol is JSON Lines over a Unix socket, one object per line, the same shape
+`--json` writes.
+
+**Whoever can reach the socket has everything the server was started with.** If
+it was started with `--allow-shell`, anyone who can connect can make the model
+run commands, which is why the server prints its capabilities on startup: the
+person attaching cannot see the flags you typed. The boundary is filesystem
+permissions — sockets live in an owner-only directory under `CHIVGENT_HOME` —
+and there is no TCP listener. For another machine, forward the socket over SSH
+so that authentication is SSH's job.
 
 ## Extensions
 
@@ -527,6 +576,11 @@ a piped run never loads a checkout's extensions on its own.
   directory is your own configuration.
 - Extensions cannot take the name of a built-in tool or command.
 - `trust.json`, like the session log and the auth file, is written owner-only.
+- A served session is reachable by anyone who can open its socket, and they get
+  every capability the server was started with. Sockets live in an owner-only
+  directory; the directory is the real gate, because a socket file exists
+  briefly with default permissions before it can be restricted.
+- chivgent never listens on TCP. Use SSH forwarding to reach another machine.
 - Writes resolve the deepest existing ancestor and reject a symlink at any
   segment, so a planted link cannot redirect a write out of the workspace.
 - Writes are staged in a sibling temp file and renamed into place, so an
@@ -573,7 +627,8 @@ project.
 - [x] Provider registry and credential resolution chain
 - [x] `bash` tool with streaming output, behind `--allow-shell`
 - [x] Extensions and project trust
-- [ ] TUI, remote sessions, telemetry, and evals
+- [x] Remote sessions over a local socket
+- [ ] TUI, telemetry, and evals
 
 Per-command confirmation prompts and command allowlists are deliberately not
 planned. Once a shell tool exists, `bash` can do anything `write_file` can and
@@ -593,6 +648,7 @@ session-level switches; the real boundary is a container.
 - [Stage 7: Context budget and compaction](docs/stage-7-context-management.md)
 - [Stage 8: Shell tool and streaming subprocesses](docs/stage-8-shell-tool.md)
 - [Stage 9: Extensions and project trust](docs/stage-9-extensions.md)
+- [Stage 10: Remote sessions](docs/stage-10-remote-sessions.md)
 - [Release process](docs/releasing.md)
 
 ## Contributing

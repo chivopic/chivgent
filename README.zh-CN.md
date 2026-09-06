@@ -37,6 +37,8 @@
 - 支持带续读提示的分段 `read_file`，所有工具结果都有容量上限。
 - 默认只读；`--allow-writes` 才会启用 `write_file` 和 `edit_file`。
 - 通过 `--allow-shell` 选择性开启的 `bash` 工具，输出边跑边显示。
+- 远程会话：一个进程持有会话，其他进程通过本地 socket 接上来。
+- 多个客户端可以同时观察同一个会话，其中任何一个都能中断当前运行。
 - 扩展系统：可以添加工具、斜杠命令、事件订阅和 system prompt 片段。
 - 项目扩展受按目录记录的信任决定门控；判定发生在任何模块被 import 之前，
   没有终端可问时一律拒绝。
@@ -143,6 +145,9 @@ chivgent [选项]                   进入交互式会话
   --allow-writes   允许 Agent 创建和修改文件（默认只读）
   --allow-shell    允许 Agent 执行 Shell 命令。它蕴含写权限：Shell 不受工作区
                    边界约束。仅支持 Unix。
+  --serve          把当前会话暴露在本地 socket 上并常驻
+  --connect TARGET 接上一个已服务的会话，可用 id 或 socket 路径
+  --servers        列出仍在响应的服务端后退出
   --no-extensions  不加载任何扩展，也不询问信任
   --extensions     列出已加载的扩展及其注册内容后退出
   --forget-trust   忘记覆盖当前工作区的信任决定后退出
@@ -368,6 +373,13 @@ src/
     write-file.ts                整文件创建与替换
     edit-file.ts                 精确唯一匹配编辑
     bash.ts                      Shell 命令执行
+  remote/
+    protocol.ts                  消息形状与版本协商
+    framing.ts                   有界缓冲的 JSON Lines 分帧
+    server.ts                    在 Unix socket 上服务一个会话
+    client.ts                    接入一个已服务的会话
+    repl.ts                      接入端的交互循环
+    socket-path.ts               socket 路径、陈旧检测与发现
   extensions/
     trust.ts                     按目录记录的信任存储
     decide-trust.ts              询问流程，以及无人可问时的拒绝
@@ -411,6 +423,36 @@ npm install -g ./chivgent-0.6.0.tgz
 
 测试使用脚本化或 Mock LLM Client。真实 API Smoke Test 需要手工执行，因此默认
 测试不会消耗 API 额度。
+
+## 远程会话
+
+会话通常和启动它的那个终端同生共死。`--serve` 让它留在一个进程里，其他进程可以接上来：
+
+```bash
+# 终端 A
+chivgent --serve --allow-writes
+# chivgent 0.12.0 serving session 2026-09-06T...
+# socket:       ~/.chivgent/sockets/2026-09-06T....sock
+# capabilities: --allow-writes
+
+# 终端 B
+chivgent --servers                 # 列出正在运行的服务端
+chivgent --connect <id>            # 交互式接入
+chivgent --connect <id> "问题"      # 问一次就走
+```
+
+客户端不持有任何状态：它只负责发 prompt、渲染服务端广播的事件流。可以同时接入多个
+客户端——多出来的那些实时观察同一次运行，并且**任何一个都能中断它**，因为运行属于会话，
+不属于"谁发起的"。运行期间再来一个 prompt 会被拒绝而不是排队；客户端中途断开也不会
+取消正在跑的运行。
+
+接入时**不重放历史**——那是会话日志的职责。协议是 Unix socket 上的 JSON Lines，
+一行一个对象，和 `--json` 输出同一种形状。
+
+**能连上这个 socket 的人，拥有服务端启动时的全部能力。** 如果它是带 `--allow-shell`
+起来的，那么任何能连上的人都能让模型执行命令——这正是服务端启动时会打印本次能力的原因：
+接入的人看不到你敲了什么参数。边界是文件系统权限（socket 位于 `CHIVGENT_HOME` 下仅
+所有者可访问的目录），并且**不监听 TCP**。要跨机器访问请用 SSH 转发，让认证由 SSH 负责。
 
 ## 扩展系统
 
@@ -492,6 +534,10 @@ CI 任务或管道运行永远不会自作主张去执行一个 clone 里的代�
 - `<CHIVGENT_HOME>/extensions/` 下的用户级扩展始终加载，那是你自己的配置。
 - 扩展无法占用内置工具或内置命令的名字。
 - `trust.json` 与会话日志、认证文件一样，以仅所有者可读的权限写入。
+- 被服务的会话对任何能打开其 socket 的人可达，且他们获得服务端启动时的全部能力。
+  socket 位于仅所有者可访问的目录中；**真正起作用的是目录权限**，因为 socket 文件在
+  能被收紧权限之前会短暂地以默认权限存在。
+- chivgent 从不监听 TCP。跨机器访问请使用 SSH 转发。
 - 写入会解析到最深层已存在的祖先目录，路径上任何一段是符号链接都会被拒绝，
   因此预先植入的链接无法把写入重定向到工作区之外。
 - 写入先落到同目录的临时文件再 rename 就位，中断的写入不会截断已有文件。
@@ -531,7 +577,8 @@ CI 任务或管道运行永远不会自作主张去执行一个 clone 里的代�
 - [x] Provider Registry 与凭据解析链
 - [x] 通过 `--allow-shell` 开启的 `bash` 工具，带流式输出
 - [x] 扩展系统与 Project Trust
-- [ ] TUI、远程会话、Telemetry 和 Evals
+- [x] 基于本地 socket 的远程会话
+- [ ] TUI、Telemetry 和 Evals
 
 逐条命令确认和命令白名单是**主动放弃**的方向。有了 Shell 工具之后，`bash` 能做的
 事是 `write_file` 的超集，任何白名单都能被一行 `sh -c` 绕开，而逐条弹确认只会训练
@@ -549,6 +596,7 @@ CI 任务或管道运行永远不会自作主张去执行一个 clone 里的代�
 - [Stage 7：上下文预算与压缩](docs/stage-7-context-management.md)
 - [Stage 8：Shell 工具与流式子进程](docs/stage-8-shell-tool.md)
 - [Stage 9：扩展系统与 Project Trust](docs/stage-9-extensions.md)
+- [Stage 10：远程会话](docs/stage-10-remote-sessions.md)
 - [发布流程](docs/releasing.md)
 
 ## 参与贡献

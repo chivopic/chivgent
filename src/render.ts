@@ -46,6 +46,11 @@ export function createEventRenderer(
     color ? `${code}${value}${RESET}` : value;
   let lineOpen = false;
   let progressWidth = 0;
+  // Whether this turn actually produced deltas. Streaming is the sender's
+  // choice, not the renderer's: a remote client asks for streaming but is
+  // attached to a server that may not be streaming, and printing nothing in
+  // that case loses the answer entirely.
+  let sawDelta = false;
 
   // Overwrite the progress line with spaces before anything else is written,
   // or the leftovers of a longer line stay on screen.
@@ -65,15 +70,23 @@ export function createEventRenderer(
 
   return (event: AgentEvent): void => {
     switch (event.type) {
+      case "message_start":
+        sawDelta = false;
+        return;
+
       case "message_update":
         if (stream && event.delta.length > 0) {
+          sawDelta = true;
           streams.stdout.write(event.delta);
           lineOpen = !event.delta.endsWith("\n");
         }
         return;
 
       case "message_end":
-        if (!stream && event.message.content.length > 0) {
+        if (
+          (!stream || !sawDelta) &&
+          event.message.content.length > 0
+        ) {
           streams.stdout.write(`${event.message.content}\n`);
         }
         endLine();
