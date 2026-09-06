@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createJsonEventWriter } from "../src/render.js";
+import type { SlashCommandOutcome } from "../src/repl.js";
 import { handleSlashCommand } from "../src/repl.js";
 import { AgentSession } from "../src/session.js";
 import type { Tool } from "../src/tools/tool.js";
@@ -57,7 +58,7 @@ function createSession(): AgentSession {
 }
 
 function run(line: string): {
-  readonly outcome: string;
+  readonly outcome: SlashCommandOutcome;
   readonly output: string;
   readonly session: AgentSession;
 } {
@@ -149,5 +150,60 @@ describe("JSON event stream", () => {
       type: "agent_end",
       status: "completed",
     });
+  });
+});
+
+describe("extension commands", () => {
+  const command = {
+    name: "wc",
+    source: "/ext/wc.js",
+    description: "Count messages",
+    run: () => undefined,
+  };
+
+  function runWith(line: string) {
+    const session = createSession();
+    let output = "";
+    const outcome = handleSlashCommand(line, {
+      session,
+      write: (text) => (output += text),
+      extensionCommands: [command],
+    });
+    return { outcome, output };
+  }
+
+  it("matches a registered extension command and passes its argument", () => {
+    const { outcome } = runWith("/wc  some argument ");
+
+    expect(outcome).toMatchObject({ kind: "extension", argument: "some argument" });
+  });
+
+  it("still reports an unknown command", () => {
+    const { outcome, output } = runWith("/nope");
+
+    expect(outcome).toBe("handled");
+    expect(output).toContain("Unknown command");
+  });
+
+  it("lists extension commands separately in help", () => {
+    const { output } = runWith("/help");
+
+    expect(output).toContain("From extensions:");
+    expect(output).toContain("/wc");
+    expect(output).toContain("Count messages");
+  });
+
+  it("does not let an extension command take a built-in name", () => {
+    const session = createSession();
+    let output = "";
+    const outcome = handleSlashCommand("/clear", {
+      session,
+      write: (text) => (output += text),
+      extensionCommands: [{ ...command, name: "clear" }],
+    });
+
+    // The built-in ran; the parser never reached the extension table.
+    expect(outcome).toBe("handled");
+    expect(output).toContain("Transcript cleared.");
   });
 });
