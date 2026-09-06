@@ -473,6 +473,7 @@ npm install -g ./chivgent-0.6.0.tgz
 - [Stage 6：Provider Registry 与凭证解析链](docs/stage-6-provider-registry.md)
 - [Stage 7：上下文预算与压缩](docs/stage-7-context-management.md)
 - [Stage 8：Shell 工具与流式子进程](docs/stage-8-shell-tool.md)
+- [Stage 9：扩展系统与 Project Trust](docs/stage-9-extensions.md)
 - [发布流程](docs/releasing.md)
 
 ## 参与贡献
