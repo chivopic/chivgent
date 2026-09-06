@@ -123,6 +123,7 @@ export class BashTool implements Tool {
       } catch (error: unknown) {
         // An abort ends the whole run, so it propagates; everything else is a
         // tool error that still has to carry whatever the command printed.
+        // Either way the spill file is closed by the finally block below.
         if (isAbortError(error)) {
           throw error;
         }
@@ -152,6 +153,10 @@ export class BashTool implements Tool {
       return { content: text, isError: false };
     } finally {
       publish.cancel();
+      // An aborted command still has an open spill file and a decoder holding
+      // bytes; leaving them behind leaks a file descriptor per cancelled run.
+      output.finish();
+      await output.close();
     }
   }
 
@@ -164,7 +169,6 @@ export class BashTool implements Tool {
     publish.cancel();
     publish.flush();
     const snapshot = output.snapshot();
-    await output.close();
     return renderOutput(snapshot.content, snapshot.truncation, snapshot.fullOutputPath, emptyText);
   }
 }

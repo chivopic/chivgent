@@ -63,8 +63,11 @@ export class OutputAccumulator {
   }
 
   append(chunk: Buffer): void {
+    // A detached descendant can still write after the command was finalised.
+    // Throwing here would surface as an uncaught exception inside a stream
+    // handler, so late output is dropped instead.
     if (this.finished) {
-      throw new Error("Cannot append to a finished output accumulator.");
+      return;
     }
     this.appendText(this.decoder.decode(chunk, { stream: true }));
 
@@ -76,6 +79,7 @@ export class OutputAccumulator {
     }
   }
 
+  /** Idempotent: the tool finishes on the happy path and again in its cleanup. */
   finish(): void {
     if (this.finished) {
       return;
@@ -187,7 +191,9 @@ export class OutputAccumulator {
       this.tempDirectory,
       `${this.tempFilePrefix}-${id}.log`,
     );
-    this.tempFileStream = createWriteStream(this.tempFilePath);
+    // Command output can contain anything the command had access to, so the
+    // spill file is owner-only rather than world-readable.
+    this.tempFileStream = createWriteStream(this.tempFilePath, { mode: 0o600 });
     // A spill file is a convenience: losing it must not fail the command.
     this.tempFileStream.on("error", () => undefined);
     for (const chunk of this.bufferedChunks) {

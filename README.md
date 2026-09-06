@@ -434,6 +434,16 @@ manual so the default test suite never consumes credits.
   and none of the workspace limits below apply to it.
 - Commands are spawned in their own process group and killed as a group, so
   cancelling a run does not leave descendants behind.
+- Commands inherit chivgent's environment, which includes the API key it is
+  using. A model with `--allow-shell` can read that key and anything else the
+  environment holds. Run it with an environment that carries only what the task
+  needs.
+- Truncated command output is written to a temp file so the model can read the
+  rest. The file is owner-only, but it is not deleted when the run ends: it can
+  hold anything the command printed. Clear the temp directory after sensitive
+  work.
+- Session logs record command output as well as file excerpts once
+  `--allow-shell` is on.
 - Writes resolve the deepest existing ancestor and reject a symlink at any
   segment, so a planted link cannot redirect a write out of the workspace.
 - Writes are staged in a sibling temp file and renamed into place, so an

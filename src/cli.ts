@@ -60,6 +60,27 @@ When a command fails, read its output before changing anything.`;
 
 const EXIT_INTERRUPTED = 130;
 
+/**
+ * Detached commands outlive this process, so they are killed whenever it goes
+ * away: a Ctrl+C that reaches the run aborts the tool, but a SIGTERM, a crash,
+ * or a plain exit would otherwise leave a build running with nobody watching.
+ *
+ * Installed only when the shell is enabled. A run without it has no children to
+ * clean up, and claiming SIGTERM would change its exit code for no reason.
+ */
+function installShellCleanup(): void {
+  const cleanup = (): void => {
+    killTrackedChildren();
+  };
+  process.on("exit", cleanup);
+  for (const signal of ["SIGTERM", "SIGHUP"] as const) {
+    process.on(signal, () => {
+      cleanup();
+      process.exit(EXIT_INTERRUPTED);
+    });
+  }
+}
+
 function buildSystemPrompt(options: CliOptions): string {
   const sections = [SYSTEM_PROMPT];
   if (options.allowWrites) {
@@ -141,6 +162,7 @@ async function main(argv: readonly string[]): Promise<number> {
       }
       throw error;
     }
+    installShellCleanup();
   }
 
   const readOnlyTools = [
@@ -311,26 +333,6 @@ async function readPipedPrompt(): Promise<string | undefined> {
   }
   return contents.trim().length === 0 ? undefined : contents.trim();
 }
-
-/**
- * Detached commands outlive this process, so they are killed whenever it goes
- * away: a Ctrl+C that reaches the run aborts the tool, but a SIGTERM, a crash,
- * or a plain exit would otherwise leave a build running with nobody watching.
- */
-function installShellCleanup(): void {
-  const cleanup = (): void => {
-    killTrackedChildren();
-  };
-  process.on("exit", cleanup);
-  for (const signal of ["SIGTERM", "SIGHUP"] as const) {
-    process.on(signal, () => {
-      cleanup();
-      process.exit(EXIT_INTERRUPTED);
-    });
-  }
-}
-
-installShellCleanup();
 
 main(process.argv.slice(2))
   .then((exitCode) => {

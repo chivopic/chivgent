@@ -1,3 +1,4 @@
+import { readdirSync, statSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -249,5 +250,58 @@ describe("BashTool", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content).toContain("does not exist");
+  });
+  it("closes the spill file when the run is aborted", async () => {
+    const cwd = await temporaryDirectory();
+    const openDescriptors = (): number => {
+      try {
+        return readdirSync("/proc/self/fd").length;
+      } catch {
+        return -1;
+      }
+    };
+    // Linux only: elsewhere there is nothing to count and the check is skipped.
+    if (openDescriptors() < 0) {
+      return;
+    }
+
+    const before = openDescriptors();
+    for (let round = 0; round < 5; round += 1) {
+      const controller = new AbortController();
+      const execution = new BashTool({
+        cwd,
+        maxLines: 2,
+        maxBytes: 100,
+        tempDirectory: cwd,
+      }).execute(
+        { command: "for i in $(seq 1 200); do echo line $i; done; sleep 30" },
+        { workspace: unusedWorkspace, signal: controller.signal },
+      );
+      await delay(150);
+      controller.abort();
+      await expect(execution).rejects.toMatchObject({ name: "AbortError" });
+    }
+
+    // Every aborted run spilled to a file; none of them may still hold it open.
+    expect(openDescriptors()).toBeLessThanOrEqual(before + 2);
+  });
+
+  it("keeps the spill file readable only by its owner", async () => {
+    const cwd = await temporaryDirectory();
+
+    const result = await new BashTool({
+      cwd,
+      maxLines: 2,
+      maxBytes: 10_000,
+      tempDirectory: cwd,
+    }).execute(
+      { command: "for i in $(seq 1 20); do echo secret $i; done" },
+      { workspace: unusedWorkspace },
+    );
+
+    const match = /Full output: (\S+?)\]/.exec(result.content);
+    expect(match).not.toBeNull();
+    const mode = statSync((match as RegExpExecArray)[1] as string).mode & 0o777;
+    expect(mode & 0o077).toBe(0);
   });
 });
