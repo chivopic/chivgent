@@ -1,0 +1,16 @@
+{
+  "name": "rename-symbol",
+  "prompt": "Rename the function sayHi to greet everywhere in this project, including its callers. Do not change anything else.",
+  "capabilities": ["writes"],
+  "attempts": 5,
+  "maxTurns": 12,
+  "graders": [
+    { "type": "file-contains", "path": "src/greet.ts", "text": "export function greet(" },
+    { "type": "file-excludes", "path": "src/greet.ts", "text": "sayHi" },
+    { "type": "file-contains", "path": "src/main.ts", "text": "greet(" },
+    { "type": "file-excludes", "path": "src/main.ts", "text": "sayHi" },
+    { "type": "file-contains", "path": "src/greet.ts", "text": "toUpperCase()" },
+    { "type": "used-tool", "name": "edit_file" },
+    { "type": "not-used-tool", "name": "write_file" }
+  ]
+}

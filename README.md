@@ -40,6 +40,7 @@ to study before adding production-harness complexity.
 - Ranged `read_file` output with continuation hints and bounded tool results.
 - Read-only by default; `--allow-writes` adds `write_file` and `edit_file`.
 - An opt-in `bash` tool behind `--allow-shell`, with streamed output.
+- An eval suite that measures whether the agent completes tasks, not just runs.
 - Remote sessions: one process holds a session, others attach over a local socket.
 - Several clients can watch one session; any of them can interrupt the run.
 - Extensions that add tools, slash commands, event handlers and prompt text.
@@ -390,6 +391,15 @@ src/
     write-file.ts                Whole-file create and replace
     edit-file.ts                 Exact unique-match edit
     bash.ts                      Shell command execution
+  prompts.ts                     The instructions the agent runs under
+  evals/
+    task.ts                      Task definitions and their validation
+    fixture.ts                   A fresh workspace copy per attempt
+    graders.ts                   Deterministic graders
+    runner.ts                    Runs a task N times and aggregates
+    report.ts                    Table and JSON output
+    parse-args.ts                Eval CLI arguments
+    cli.ts                       npm run eval
   remote/
     protocol.ts                  Message shapes and version negotiation
     framing.ts                   JSON Lines framing with a bounded buffer
@@ -413,6 +423,7 @@ src/
     truncate.ts                  Tail truncation for command output
     sanitize.ts                  Control-character filtering
 tests/                           Provider, loop, and workspace tests
+evals/                           Eval tasks and their fixtures
 docs/                            Architecture and learning notes
 ```
 
@@ -440,6 +451,61 @@ npm install -g ./chivgent-0.6.0.tgz
 
 Tests use scripted or mocked LLM clients. A real API smoke test is deliberately
 manual so the default test suite never consumes credits.
+
+## Evals
+
+The 300-odd unit tests check that the code runs the way it was written. They say
+nothing about whether this is a good agent. `npm run eval` answers that:
+
+```bash
+npm run eval                              # every task in evals/
+npm run eval -- --task rename-symbol --attempts 10
+npm run eval -- --allow-writes --allow-shell --json report.json
+```
+
+```text
+task                  pass  turns  tools                       p50
+find-auth-logic       4/5   2.0    list_files,search_text,...  6.1s
+rename-symbol         3/5   5.4    read_file,edit_file         9.8s
+
+overall  7/10 (70%)
+
+rename-symbol attempt 2,5: not-used-tool name="write_file" — called write_file 1 time(s)
+```
+
+**An eval is not a test.** A model is nondeterministic, so one run of a task is a
+coin flip: passing and failing are properties of the model-and-harness
+combination, not of that run. The unit is therefore a pass rate over N attempts,
+and evals never gate CI — a merge gate that costs money and goes red six times in
+ten trains everyone to ignore CI. `npm test` stays free, offline and
+deterministic.
+
+A task is a directory under `evals/`: a `task.json` and a `fixture/` tree copied
+into a fresh temporary workspace for every attempt.
+
+```jsonc
+{
+  "prompt": "Rename the function sayHi to greet everywhere, including callers.",
+  "capabilities": ["writes"],
+  "attempts": 5,
+  "graders": [
+    { "type": "file-contains", "path": "src/greet.ts", "text": "export function greet(" },
+    { "type": "file-excludes", "path": "src/greet.ts", "text": "sayHi" },
+    { "type": "used-tool", "name": "edit_file" },
+    { "type": "not-used-tool", "name": "write_file" }
+  ]
+}
+```
+
+Graders are deterministic — file contents, tool calls, answer patterns, turn
+counts. There is no LLM judge: a judge is itself a nondeterministic instrument,
+and measuring a nondeterministic subject with one compounds the error until "the
+agent got worse" cannot be told apart from "the judge felt different today".
+
+Those last two graders are the point. Rewriting the whole file also produces the
+right contents, and an eval that scores results alone would give it full marks.
+For a coding agent, tool misuse is the more common and the more interesting
+failure, so tasks assert on how the work was done.
 
 ## Remote sessions
 
@@ -628,7 +694,8 @@ project.
 - [x] `bash` tool with streaming output, behind `--allow-shell`
 - [x] Extensions and project trust
 - [x] Remote sessions over a local socket
-- [ ] TUI, telemetry, and evals
+- [x] An eval suite with deterministic graders and pass rates
+- [ ] TUI and telemetry
 
 Per-command confirmation prompts and command allowlists are deliberately not
 planned. Once a shell tool exists, `bash` can do anything `write_file` can and
