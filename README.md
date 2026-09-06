@@ -649,6 +649,7 @@ session-level switches; the real boundary is a container.
 - [Stage 8: Shell tool and streaming subprocesses](docs/stage-8-shell-tool.md)
 - [Stage 9: Extensions and project trust](docs/stage-9-extensions.md)
 - [Stage 10: Remote sessions](docs/stage-10-remote-sessions.md)
+- [Stage 11: Evals](docs/stage-11-evals.md)
 - [Release process](docs/releasing.md)
 
 ## Contributing
