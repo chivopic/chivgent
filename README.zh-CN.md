@@ -422,10 +422,14 @@ npm install -g ./chivgent-0.6.0.tgz
 - [x] 持久化多轮 Session
 - [x] Context Window 管理和压缩
 - [x] 通过 `--allow-writes` 选择性开启的 `write_file` 和 `edit_file`
-- [ ] 逐次修改确认与撤销日志
-- [ ] 需要权限确认的 Shell 工具
 - [x] Provider Registry 与凭据解析链
-- [ ] TUI、Extensions、Telemetry 和 Evals
+- [ ] 通过 `--allow-shell` 开启的 `bash` 工具，带流式输出
+- [ ] 扩展系统与 Project Trust
+- [ ] TUI、远程会话、Telemetry 和 Evals
+
+逐条命令确认和命令白名单是**主动放弃**的方向。有了 Shell 工具之后，`bash` 能做的
+事是 `write_file` 的超集，任何白名单都能被一行 `sh -c` 绕开，而逐条弹确认只会训练
+用户无脑确认。能力开关一律是会话级的粗粒度开关，真正的边界是容器。
 
 ## 文档
 
@@ -437,6 +441,7 @@ npm install -g ./chivgent-0.6.0.tgz
 - [Stage 5：写入工具与 Workspace 拆分](docs/stage-5-write-tools.md)
 - [Stage 6：Provider Registry 与凭证解析链](docs/stage-6-provider-registry.md)
 - [Stage 7：上下文预算与压缩](docs/stage-7-context-management.md)
+- [Stage 8：Shell 工具与流式子进程](docs/stage-8-shell-tool.md)
 - [发布流程](docs/releasing.md)
 
 ## 参与贡献

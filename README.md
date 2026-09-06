@@ -447,10 +447,16 @@ a sensitive project.
 - [x] Persistent multi-turn sessions
 - [x] Context-window management and compaction
 - [x] Opt-in `write_file` and `edit_file` behind `--allow-writes`
-- [ ] Per-edit confirmation prompts and an undo log
-- [ ] Permission-gated shell tools
 - [x] Provider registry and credential resolution chain
-- [ ] TUI, extensions, telemetry, and evals
+- [ ] `bash` tool with streaming output, behind `--allow-shell`
+- [ ] Extensions and project trust
+- [ ] TUI, remote sessions, telemetry, and evals
+
+Per-command confirmation prompts and command allowlists are deliberately not
+planned. Once a shell tool exists, `bash` can do anything `write_file` can and
+more, so an allowlist is bypassed by a single `sh -c` and a per-command prompt
+only trains people to approve without reading. Capabilities are coarse,
+session-level switches; the real boundary is a container.
 
 ## Documentation
 
@@ -462,6 +468,7 @@ a sensitive project.
 - [Stage 5: Write tools and the workspace split](docs/stage-5-write-tools.md)
 - [Stage 6: Provider registry and credential chain](docs/stage-6-provider-registry.md)
 - [Stage 7: Context budget and compaction](docs/stage-7-context-management.md)
+- [Stage 8: Shell tool and streaming subprocesses](docs/stage-8-shell-tool.md)
 - [Release process](docs/releasing.md)
 
 ## Contributing
