@@ -177,6 +177,31 @@ describe("CLI options", () => {
     expect(helpText()).toContain("--allow-writes");
     expect(helpText()).toContain("--context-window");
     expect(helpText()).toContain("--no-compaction");
-    expect(VERSION).toBe("0.9.0");
+    expect(helpText()).toContain("--allow-shell");
+    expect(VERSION).toBe("0.10.0");
+  });
+});
+
+describe("--allow-shell", () => {
+  it("is off by default", () => {
+    expect(parseCliArgs(["question"], {}).allowShell).toBe(false);
+  });
+
+  it("turns the shell on and raises the turn limit", () => {
+    const options = parseCliArgs(["--allow-shell", "question"], {});
+
+    expect(options.allowShell).toBe(true);
+    expect(options.maxTurns).toBe(DEFAULT_WRITE_MAX_TURNS);
+  });
+
+  it("stays separate from --allow-writes", () => {
+    expect(parseCliArgs(["--allow-writes", "q"], {}).allowShell).toBe(false);
+    expect(parseCliArgs(["--allow-shell", "q"], {}).allowWrites).toBe(false);
+  });
+
+  it("does not override an explicit turn limit", () => {
+    const options = parseCliArgs(["--allow-shell", "--max-turns", "4", "q"], {});
+
+    expect(options.maxTurns).toBe(4);
   });
 });

@@ -23,6 +23,10 @@ import { ReadFileTool } from "./tools/read-file.js";
 import { SearchTextTool } from "./tools/search-text.js";
 import { WriteFileTool } from "./tools/write-file.js";
 import { EditFileTool } from "./tools/edit-file.js";
+import { BashTool } from "./tools/bash.js";
+import { killTrackedChildren } from "./shell/process.js";
+import { resolveShellConfig } from "./shell/config.js";
+import { ShellUnavailableError } from "./shell/types.js";
 import type { Message } from "./messages.js";
 import { LocalWorkspace } from "./workspace.js";
 import { createConfiguredClient } from "./providers/client.js";
@@ -47,7 +51,25 @@ Make the smallest change that satisfies the request, and do not reformat or "tid
 If edit_file reports that old_text is missing or ambiguous, read the file again rather than guessing.
 State plainly which files you changed.`;
 
+const SHELL_SYSTEM_PROMPT = `You can also run shell commands with bash.
+Prefer list_files, search_text and read_file over ls, grep and cat: they are bounded and their output is easier to work with.
+Use bash for what only a shell can do: running tests, builds, linters, package managers and git.
+Commands get no stdin, so never run anything interactive, and never start background or long-lived processes.
+Pass a timeout for commands that could hang.
+When a command fails, read its output before changing anything.`;
+
 const EXIT_INTERRUPTED = 130;
+
+function buildSystemPrompt(options: CliOptions): string {
+  const sections = [SYSTEM_PROMPT];
+  if (options.allowWrites) {
+    sections.push(WRITE_SYSTEM_PROMPT);
+  }
+  if (options.allowShell) {
+    sections.push(SHELL_SYSTEM_PROMPT);
+  }
+  return sections.join("\n");
+}
 
 /**
  * A closed pipe (`chivgent … | head`) is a normal way to stop reading, not a
@@ -109,6 +131,18 @@ async function main(argv: readonly string[]): Promise<number> {
     return 1;
   }
 
+  if (options.allowShell) {
+    try {
+      resolveShellConfig();
+    } catch (error: unknown) {
+      if (error instanceof ShellUnavailableError) {
+        process.stderr.write(`${error.message}\n`);
+        return 1;
+      }
+      throw error;
+    }
+  }
+
   const readOnlyTools = [
     new ListFilesTool(),
     new SearchTextTool(),
@@ -126,14 +160,14 @@ async function main(argv: readonly string[]): Promise<number> {
     },
   });
   const agentOptions: Omit<AgentOptions, "onEvent"> = {
-    systemPrompt: options.allowWrites
-      ? `${SYSTEM_PROMPT}\n${WRITE_SYSTEM_PROMPT}`
-      : SYSTEM_PROMPT,
+    systemPrompt: buildSystemPrompt(options),
     maxTurns: options.maxTurns,
     llm,
-    tools: options.allowWrites
-      ? [...readOnlyTools, new WriteFileTool(), new EditFileTool()]
-      : readOnlyTools,
+    tools: [
+      ...readOnlyTools,
+      ...(options.allowWrites ? [new WriteFileTool(), new EditFileTool()] : []),
+      ...(options.allowShell ? [new BashTool({ cwd })] : []),
+    ],
     workspace: new LocalWorkspace(cwd, { allowWrites: options.allowWrites }),
     streaming: options.stream,
     contextManager,
@@ -155,6 +189,10 @@ async function main(argv: readonly string[]): Promise<number> {
           {
             stream: options.stream,
             showToolActivity: !options.quiet,
+            // A progress line rewrites itself with a carriage return, which is
+            // only meaningful on a terminal; piped stderr keeps one line per event.
+            showToolProgress:
+              !options.quiet && process.stderr.isTTY === true,
             color: process.stderr.isTTY === true,
           },
         ),
@@ -273,6 +311,26 @@ async function readPipedPrompt(): Promise<string | undefined> {
   }
   return contents.trim().length === 0 ? undefined : contents.trim();
 }
+
+/**
+ * Detached commands outlive this process, so they are killed whenever it goes
+ * away: a Ctrl+C that reaches the run aborts the tool, but a SIGTERM, a crash,
+ * or a plain exit would otherwise leave a build running with nobody watching.
+ */
+function installShellCleanup(): void {
+  const cleanup = (): void => {
+    killTrackedChildren();
+  };
+  process.on("exit", cleanup);
+  for (const signal of ["SIGTERM", "SIGHUP"] as const) {
+    process.on(signal, () => {
+      cleanup();
+      process.exit(EXIT_INTERRUPTED);
+    });
+  }
+}
+
+installShellCleanup();
 
 main(process.argv.slice(2))
   .then((exitCode) => {

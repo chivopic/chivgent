@@ -301,3 +301,53 @@ describe("Agent cancellation", () => {
     ]);
   });
 });
+
+describe("tool progress events", () => {
+  it("forwards a tool's progress snapshots as events", async () => {
+    const events: AgentEvent[] = [];
+    const agent = new Agent({
+      systemPrompt: "system",
+      maxTurns: 3,
+      llm: new FakeLLMClient([
+        assistant("", [{ id: "call-1", name: "slow", arguments: {} }]),
+        assistant("done"),
+      ]),
+      tools: [
+        {
+          name: "slow",
+          description: "Reports progress while it works",
+          inputSchema: { type: "object" },
+          async execute(_value, context) {
+            context.onUpdate?.("first");
+            context.onUpdate?.("first\nsecond");
+            return { content: "first\nsecond", isError: false };
+          },
+        },
+      ],
+      workspace,
+      onEvent: (event) => events.push(event),
+    });
+
+    await agent.run("go");
+
+    const updates = events.filter(
+      (event) => event.type === "tool_execution_update",
+    );
+    expect(updates).toHaveLength(2);
+    expect(updates[0]).toMatchObject({
+      toolCallId: "call-1",
+      toolName: "slow",
+      content: "first",
+      turn: 1,
+    });
+
+    // Progress must arrive between the start and the end of the same call.
+    const types = events.map((event) => event.type);
+    expect(types.indexOf("tool_execution_start")).toBeLessThan(
+      types.indexOf("tool_execution_update"),
+    );
+    expect(types.lastIndexOf("tool_execution_update")).toBeLessThan(
+      types.indexOf("tool_execution_end"),
+    );
+  });
+});

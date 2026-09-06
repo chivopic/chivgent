@@ -39,6 +39,9 @@ to study before adding production-harness complexity.
 - Deterministic project discovery through `list_files` and literal `search_text`.
 - Ranged `read_file` output with continuation hints and bounded tool results.
 - Read-only by default; `--allow-writes` adds `write_file` and `edit_file`.
+- An opt-in `bash` tool behind `--allow-shell`, with streamed output.
+- Commands run in their own process group, so cancelling kills the whole tree.
+- Command output is truncated from the tail; the full text goes to a temp file.
 - Exact-match `edit_file` that refuses missing or ambiguous edits.
 - Edits preserve the file's own byte order mark and CRLF line endings.
 - Atomic writes: a crash mid-write leaves the original file intact.
@@ -126,9 +129,11 @@ chivgent [options] "question"     Answer one question and exit
 chivgent [options]                Start an interactive session
 
 Options:
-  --provider NAME  openai, deepseek, or openai-compatible (default: openai)
+  --provider NAME  openai, deepseek, openai-compatible, openrouter, groq, xai,
+                   moonshot (default: openai)
   --model MODEL    Provider model override
-  --max-turns N    Tool-calling turn limit (default: 8, 16 with --allow-writes)
+  --max-turns N    Tool-calling turn limit (default: 8, 16 with --allow-writes
+                   or --allow-shell)
   --no-stream      Wait for the full answer instead of streaming tokens
   -q, --quiet      Hide tool activity on stderr
   --json           Write the run as JSON lines instead of rendered text
@@ -137,6 +142,8 @@ Options:
   --api-key KEY    API key for this run; prefer an environment variable
   --sessions       List recorded sessions and exit
   --allow-writes   Let the agent create and change files (default: read-only)
+  --allow-shell    Let the agent run shell commands. This implies write access:
+                   a shell is not bound by the workspace. Unix only.
   --context-window N  Token budget for the context (default: 128000)
   --no-compaction  Send the whole transcript instead of summarising old turns
   --no-session     Do not record this run
@@ -211,7 +218,8 @@ User -> CLI -> Agent -> LLMClient |
                  |                +-> OpenAI-compatible Chat -> DeepSeek / custom
                  |
                  +-> Tool Registry -> list_files / search_text / read_file -> Workspace
-                                      write_file / edit_file (--allow-writes)
+                 |                    write_file / edit_file (--allow-writes)
+                 |                    bash (--allow-shell) -> ShellOperations
 ```
 
 The Agent runtime owns its own messages. Provider-specific schemas are converted
@@ -370,6 +378,15 @@ src/
     read-file.ts                 Ranged text-file reader
     write-file.ts                Whole-file create and replace
     edit-file.ts                 Exact unique-match edit
+    bash.ts                      Shell command execution
+  shell/
+    types.ts                     Execution contract and shell error types
+    config.ts                    Shell resolution and the Windows guard
+    local.ts                     Local spawn backend
+    process.ts                   Process-group kill and exit handling
+    output.ts                    Bounded streaming output accumulator
+    truncate.ts                  Tail truncation for command output
+    sanitize.ts                  Control-character filtering
 tests/                           Provider, loop, and workspace tests
 docs/                            Architecture and learning notes
 ```
@@ -411,6 +428,12 @@ manual so the default test suite never consumes credits.
   only endpoints you trust.
 - Workspace tools are read-only unless `--allow-writes` is passed; `write_file`
   and `edit_file` are not registered at all without it.
+- The `bash` tool needs `--allow-shell`, which is separate from `--allow-writes`
+  and never implied by it. Granting it grants far more: a shell can change or
+  delete anything the user running chivgent can, inside the workspace or not,
+  and none of the workspace limits below apply to it.
+- Commands are spawned in their own process group and killed as a group, so
+  cancelling a run does not leave descendants behind.
 - Writes resolve the deepest existing ancestor and reject a symlink at any
   segment, so a planted link cannot redirect a write out of the workspace.
 - Writes are staged in a sibling temp file and renamed into place, so an
@@ -430,10 +453,17 @@ manual so the default test suite never consumes credits.
   and treat the log directory like the project it describes.
 - Session ids are validated before they become file paths.
 
-This is an educational MVP, not a hardened sandbox. `--allow-writes` lets the
-model change files without a per-edit confirmation prompt, so use it on work
-you have committed, and review the code and threat model before pointing it at
-a sensitive project.
+This is an educational MVP, not a hardened sandbox. There is no permission
+system: capabilities are coarse, session-level switches, and neither
+`--allow-writes` nor `--allow-shell` asks for per-action confirmation. That is
+deliberate. Once a shell exists, a command allowlist is bypassed by a single
+`sh -c`, and a prompt on every action only trains people to approve without
+reading, so chivgent states the boundary instead of pretending to enforce one.
+
+Use these switches on work you have committed. If you need a real boundary,
+put the whole process in a container and give that container only what the task
+needs. Review the code and threat model before pointing chivgent at a sensitive
+project.
 
 ## Roadmap
 
@@ -448,7 +478,7 @@ a sensitive project.
 - [x] Context-window management and compaction
 - [x] Opt-in `write_file` and `edit_file` behind `--allow-writes`
 - [x] Provider registry and credential resolution chain
-- [ ] `bash` tool with streaming output, behind `--allow-shell`
+- [x] `bash` tool with streaming output, behind `--allow-shell`
 - [ ] Extensions and project trust
 - [ ] TUI, remote sessions, telemetry, and evals
 

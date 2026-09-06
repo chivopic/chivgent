@@ -307,6 +307,15 @@ export class Agent {
           await tool.execute(toolCall.arguments, {
             workspace: this.workspace,
             ...(signal === undefined ? {} : { signal }),
+            onUpdate: (content: string) => {
+              this.emit({
+                type: "tool_execution_update",
+                turn,
+                toolCallId: toolCall.id,
+                toolName: toolCall.name,
+                content,
+              });
+            },
           }),
         );
       } catch (error: unknown) {

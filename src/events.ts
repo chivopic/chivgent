@@ -29,6 +29,7 @@ export type AgentEvent =
   | MessageUpdateEvent
   | MessageEndEvent
   | ToolExecutionStartEvent
+  | ToolExecutionUpdateEvent
   | ToolExecutionEndEvent
   | TurnEndEvent
   | AgentEndEvent;
@@ -73,6 +74,23 @@ export interface ToolExecutionStartEvent {
   readonly toolCallId: string;
   readonly toolName: string;
   readonly arguments: unknown;
+}
+
+/**
+ * Progress from a tool that is still running.
+ *
+ * Unlike `message_update` this carries a snapshot, not a delta: the content is
+ * truncated to a bounded window, and a delta stream cannot be reassembled into
+ * a correct window once the front of it has been dropped. Snapshots are
+ * throttled by the tool that produces them, and like `message_update` they are
+ * never written to the session log.
+ */
+export interface ToolExecutionUpdateEvent {
+  readonly type: "tool_execution_update";
+  readonly turn: number;
+  readonly toolCallId: string;
+  readonly toolName: string;
+  readonly content: string;
 }
 
 export interface ToolExecutionEndEvent {
