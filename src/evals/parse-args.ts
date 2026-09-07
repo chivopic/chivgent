@@ -16,6 +16,14 @@ export interface EvalOptions {
   readonly help: boolean;
 }
 
+/**
+ * Options handed straight to the main CLI's parser.
+ *
+ * --api-key is here because the credential chain names it the highest-priority
+ * source: an ephemeral machine gets its key as a flag, not as stored state.
+ */
+const PROVIDER_OPTIONS = new Set(["--provider", "--model", "--api-key"]);
+
 export function parseEvalArgs(argv: readonly string[]): EvalOptions {
   const tasks: string[] = [];
   const capabilities: Capability[] = [];
@@ -57,7 +65,7 @@ export function parseEvalArgs(argv: readonly string[]): EvalOptions {
       capabilities.push("writes");
     } else if (argument === "--allow-shell") {
       capabilities.push("shell");
-    } else if (argument === "--provider" || argument === "--model") {
+    } else if (argument !== undefined && PROVIDER_OPTIONS.has(argument)) {
       // Passed through so the Provider registry resolves them exactly as the
       // real CLI does, including environment fallbacks.
       providerArgs.push(argument, value(index, argument));

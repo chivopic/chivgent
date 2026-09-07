@@ -498,7 +498,12 @@ nothing about whether this is a good agent. `npm run eval` answers that:
 npm run eval                              # every task in evals/
 npm run eval -- --task rename-symbol --attempts 10
 npm run eval -- --allow-writes --allow-shell --json report.json
+DEEPSEEK_API_KEY=sk-... npm run eval -- --provider deepseek
 ```
+
+`--api-key` works too, but prefer the environment variable here: npm echoes the
+fully expanded command before running it, so a key on the command line lands in
+the clear in any captured log.
 
 ```text
 task                  pass  turns  tokens  tools                       p50

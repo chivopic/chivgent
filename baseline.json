@@ -1,0 +1,413 @@
+{
+  "schemaVersion": 1,
+  "provider": "deepseek",
+  "model": "deepseek-v4-flash",
+  "version": "0.15.0",
+  "startedAt": "2026-09-07T08:06:10.043Z",
+  "tasks": [
+    {
+      "name": "find-auth-logic",
+      "passed": 3,
+      "total": 3,
+      "passRate": 1,
+      "meanTurns": 3.3333333333333335,
+      "totalTokens": 12845,
+      "medianDurationMs": 4329,
+      "attempts": [
+        {
+          "attempt": 1,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 3,
+          "durationMs": 4329,
+          "toolsUsed": [
+            "list_files",
+            "read_file"
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 3461,
+              "outputTokens": 374,
+              "totalTokens": 3835,
+              "cachedInputTokens": 3072,
+              "reasoningTokens": 95
+            },
+            "complete": true
+          },
+          "failures": []
+        },
+        {
+          "attempt": 2,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 3,
+          "durationMs": 3425,
+          "toolsUsed": [
+            "list_files",
+            "read_file"
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 3283,
+              "outputTokens": 263,
+              "totalTokens": 3546,
+              "cachedInputTokens": 3072,
+              "reasoningTokens": 71
+            },
+            "complete": true
+          },
+          "failures": []
+        },
+        {
+          "attempt": 3,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 4,
+          "durationMs": 5003,
+          "toolsUsed": [
+            "list_files",
+            "read_file",
+            "search_text"
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 5025,
+              "outputTokens": 439,
+              "totalTokens": 5464,
+              "cachedInputTokens": 4480,
+              "reasoningTokens": 94
+            },
+            "complete": true
+          },
+          "failures": []
+        }
+      ]
+    },
+    {
+      "name": "fix-failing-test",
+      "passed": 3,
+      "total": 3,
+      "passRate": 1,
+      "meanTurns": 5,
+      "totalTokens": 33166,
+      "medianDurationMs": 6336,
+      "attempts": [
+        {
+          "attempt": 1,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 5,
+          "durationMs": 6336,
+          "toolsUsed": [
+            "list_files",
+            "bash",
+            "read_file",
+            "edit_file"
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 10898,
+              "outputTokens": 570,
+              "totalTokens": 11468,
+              "cachedInputTokens": 10112,
+              "reasoningTokens": 80
+            },
+            "complete": true
+          },
+          "failures": []
+        },
+        {
+          "attempt": 2,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 5,
+          "durationMs": 5966,
+          "toolsUsed": [
+            "list_files",
+            "read_file",
+            "edit_file",
+            "bash"
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 10312,
+              "outputTokens": 636,
+              "totalTokens": 10948,
+              "cachedInputTokens": 9728,
+              "reasoningTokens": 88
+            },
+            "complete": true
+          },
+          "failures": []
+        },
+        {
+          "attempt": 3,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 5,
+          "durationMs": 6717,
+          "toolsUsed": [
+            "list_files",
+            "read_file",
+            "edit_file",
+            "bash"
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 10169,
+              "outputTokens": 581,
+              "totalTokens": 10750,
+              "cachedInputTokens": 9600,
+              "reasoningTokens": 36
+            },
+            "complete": true
+          },
+          "failures": []
+        }
+      ]
+    },
+    {
+      "name": "no-hallucinated-read",
+      "passed": 3,
+      "total": 3,
+      "passRate": 1,
+      "meanTurns": 3,
+      "totalTokens": 11909,
+      "medianDurationMs": 4930,
+      "attempts": [
+        {
+          "attempt": 1,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 3,
+          "durationMs": 4930,
+          "toolsUsed": [
+            "list_files",
+            "read_file"
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 3463,
+              "outputTokens": 514,
+              "totalTokens": 3977,
+              "cachedInputTokens": 3200,
+              "reasoningTokens": 80
+            },
+            "complete": true
+          },
+          "failures": []
+        },
+        {
+          "attempt": 2,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 3,
+          "durationMs": 5425,
+          "toolsUsed": [
+            "list_files",
+            "read_file"
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 3420,
+              "outputTokens": 495,
+              "totalTokens": 3915,
+              "cachedInputTokens": 3072,
+              "reasoningTokens": 80
+            },
+            "complete": true
+          },
+          "failures": []
+        },
+        {
+          "attempt": 3,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 3,
+          "durationMs": 4839,
+          "toolsUsed": [
+            "read_file",
+            "list_files"
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 3458,
+              "outputTokens": 559,
+              "totalTokens": 4017,
+              "cachedInputTokens": 3200,
+              "reasoningTokens": 138
+            },
+            "complete": true
+          },
+          "failures": []
+        }
+      ]
+    },
+    {
+      "name": "rename-symbol",
+      "passed": 3,
+      "total": 3,
+      "passRate": 1,
+      "meanTurns": 4,
+      "totalTokens": 22816,
+      "medianDurationMs": 5504,
+      "attempts": [
+        {
+          "attempt": 1,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 4,
+          "durationMs": 5181,
+          "toolsUsed": [
+            "search_text",
+            "read_file",
+            "edit_file"
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 6947,
+              "outputTokens": 583,
+              "totalTokens": 7530,
+              "cachedInputTokens": 6400,
+              "reasoningTokens": 22
+            },
+            "complete": true
+          },
+          "failures": []
+        },
+        {
+          "attempt": 2,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 4,
+          "durationMs": 5504,
+          "toolsUsed": [
+            "search_text",
+            "read_file",
+            "edit_file"
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 6947,
+              "outputTokens": 605,
+              "totalTokens": 7552,
+              "cachedInputTokens": 6400,
+              "reasoningTokens": 55
+            },
+            "complete": true
+          },
+          "failures": []
+        },
+        {
+          "attempt": 3,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 4,
+          "durationMs": 6037,
+          "toolsUsed": [
+            "search_text",
+            "list_files",
+            "read_file",
+            "edit_file"
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 7115,
+              "outputTokens": 619,
+              "totalTokens": 7734,
+              "cachedInputTokens": 6400,
+              "reasoningTokens": 40
+            },
+            "complete": true
+          },
+          "failures": []
+        }
+      ]
+    },
+    {
+      "name": "respect-line-endings",
+      "passed": 3,
+      "total": 3,
+      "passRate": 1,
+      "meanTurns": 4,
+      "totalTokens": 19554,
+      "medianDurationMs": 4621,
+      "attempts": [
+        {
+          "attempt": 1,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 4,
+          "durationMs": 4700,
+          "toolsUsed": [
+            "list_files",
+            "read_file",
+            "edit_file"
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 6175,
+              "outputTokens": 282,
+              "totalTokens": 6457,
+              "cachedInputTokens": 5888,
+              "reasoningTokens": 19
+            },
+            "complete": true
+          },
+          "failures": []
+        },
+        {
+          "attempt": 2,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 4,
+          "durationMs": 4560,
+          "toolsUsed": [
+            "list_files",
+            "search_text",
+            "read_file",
+            "edit_file"
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 6403,
+              "outputTokens": 325,
+              "totalTokens": 6728,
+              "cachedInputTokens": 5888,
+              "reasoningTokens": 7
+            },
+            "complete": true
+          },
+          "failures": []
+        },
+        {
+          "attempt": 3,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 4,
+          "durationMs": 4621,
+          "toolsUsed": [
+            "list_files",
+            "read_file",
+            "edit_file"
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 6118,
+              "outputTokens": 251,
+              "totalTokens": 6369,
+              "cachedInputTokens": 5760
+            },
+            "complete": true
+          },
+          "failures": []
+        }
+      ]
+    }
+  ],
+  "overall": {
+    "passed": 15,
+    "total": 15,
+    "totalTokens": 100290
+  }
+}

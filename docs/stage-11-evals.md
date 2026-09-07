@@ -151,10 +151,16 @@ npm run eval -- --task rename-symbol
 npm run eval -- --attempts 10     # 覆盖任务里的 attempts
 npm run eval -- --json report.json
 npm run eval -- --provider deepseek --model deepseek-v4-flash
+DEEPSEEK_API_KEY=sk-... npm run eval -- --provider deepseek
 ```
 
 需要凭证，走既有的凭证解析链。没有凭证时报出和 CLI 一致的那条消息，而不是跑出一堆
 0 分。
+
+实现修正：`--provider` / `--model` / `--api-key` 都原样转发给主 CLI 的 parser。
+`--api-key` 最初被漏掉了 —— 凭证链把它列为优先级最高的来源，缺凭证的报错也让用户
+"传 --api-key"，但 eval 入口会直接以 `Unknown option` 拒掉它。在一台临时机器上，
+key 正是以参数形式送进来的，那台机器上 eval 根本跑不起来。
 
 ## 9. 第一批任务
 

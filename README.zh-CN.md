@@ -477,7 +477,11 @@ npm install -g ./chivgent-0.6.0.tgz
 npm run eval                              # 跑 evals/ 下全部任务
 npm run eval -- --task rename-symbol --attempts 10
 npm run eval -- --allow-writes --allow-shell --json report.json
+DEEPSEEK_API_KEY=sk-... npm run eval -- --provider deepseek
 ```
+
+`--api-key` 也能用，但这里更推荐环境变量：npm 会在执行前把展开后的完整命令回显出来，
+写在命令行上的 key 会明文出现在任何被采集的日志里。
 
 ```text
 task                  pass  turns  tokens  tools                       p50

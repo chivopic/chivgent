@@ -27,6 +27,8 @@ Options:
   --json PATH        Also write a JSON report
   --provider NAME    Provider to evaluate
   --model MODEL      Model to evaluate
+  --api-key KEY      Credential to evaluate with (else the environment or
+                     the stored auth.json, as the main CLI resolves it)
   --allow-writes     Grant tasks that need to change files
   --allow-shell      Grant tasks that need a shell
   -h, --help         Show this help
