@@ -2,6 +2,7 @@ import type { Agent } from "../agent.js";
 import { Agent as AgentClass } from "../agent.js";
 import type { AgentEvent } from "../events.js";
 import type { LLMClient } from "../llm.js";
+import type { UsageTotal } from "../providers/usage.js";
 import type { Tool } from "../tools/tool.js";
 import { LocalWorkspace } from "../workspace.js";
 import { ListFilesTool } from "../tools/list-files.js";
@@ -21,6 +22,8 @@ export interface AttemptResult {
   readonly turnCount: number;
   readonly durationMs: number;
   readonly toolsUsed: readonly string[];
+  /** What the attempt cost, when the Provider reported it. */
+  readonly usage?: UsageTotal;
   /** One entry per failed grader, in task order. */
   readonly failures: readonly string[];
 }
@@ -105,12 +108,14 @@ async function runAttempt(
     let status: AttemptFacts["status"] = "error";
     let finalAnswer = "";
     let turnCount = 0;
+    let usage: UsageTotal | undefined;
     try {
       const result = await agent.run(task.prompt, {
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
       status = result.status;
       turnCount = result.turnCount;
+      usage = result.usage;
       finalAnswer =
         result.status === "completed" ? result.finalMessage.content : "";
     } catch (error: unknown) {
@@ -149,6 +154,7 @@ async function runAttempt(
       status,
       turnCount,
       durationMs: Date.now() - startedAt,
+      ...(usage === undefined ? {} : { usage }),
       toolsUsed: [
         ...new Set(
           events

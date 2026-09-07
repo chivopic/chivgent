@@ -1,4 +1,5 @@
 import type { Message } from "../messages.js";
+import type { Usage } from "../llm.js";
 import {
   Compactor,
   renderCompactionState,
@@ -56,6 +57,8 @@ export interface BuiltContext {
   readonly estimatedTokens: number;
   /** Carry this into the next build to reuse the summary. */
   readonly compaction?: AppliedCompaction;
+  /** What summarising cost, so the run's total can include it. */
+  readonly usage?: Usage;
 }
 
 /**
@@ -132,7 +135,7 @@ export class ContextManager {
 
     const head = effective.slice(0, cut);
     const tail = effective.slice(cut);
-    const state = await this.compactor.compact(head, options.signal);
+    const { state, usage } = await this.compactor.compact(head, options.signal);
     const compactedMessages = [summaryMessage(state), ...tail];
     const tokensAfter = this.estimator.estimateMessages(compactedMessages);
 
@@ -155,6 +158,7 @@ export class ContextManager {
       compacted: true,
       estimatedTokens: tokensAfter,
       compaction: { state, splitIndex },
+      ...(usage === undefined ? {} : { usage }),
     };
   }
 }

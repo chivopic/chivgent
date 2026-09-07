@@ -1,4 +1,5 @@
 import type { TaskResult } from "./runner.js";
+import { formatTokens } from "../providers/usage.js";
 
 export interface ReportMeta {
   readonly provider: string;
@@ -25,6 +26,26 @@ function mean(values: readonly number[]): number {
   return values.reduce((total, value) => total + value, 0) / values.length;
 }
 
+/** Blank rather than zero when the Provider reported nothing. */
+function medianTokens(result: TaskResult): string {
+  const totals = result.attempts
+    .map((attempt) => attempt.usage?.usage.totalTokens)
+    .filter((value): value is number => value !== undefined);
+  return totals.length === 0 ? "-" : formatTokens(median(totals));
+}
+
+function totalTokens(results: readonly TaskResult[]): number {
+  return results.reduce(
+    (sum, result) =>
+      sum +
+      result.attempts.reduce(
+        (inner, attempt) => inner + (attempt.usage?.usage.totalTokens ?? 0),
+        0,
+      ),
+    0,
+  );
+}
+
 function pad(value: string, width: number): string {
   return value.length >= width ? value : value + " ".repeat(width - value.length);
 }
@@ -44,6 +65,7 @@ export function formatTable(results: readonly TaskResult[]): string {
     task: result.task,
     pass: `${result.passed}/${result.total}`,
     turns: mean(result.attempts.map((attempt) => attempt.turnCount)).toFixed(1),
+    tokens: medianTokens(result),
     tools: [
       ...new Set(result.attempts.flatMap((attempt) => attempt.toolsUsed)),
     ].join(","),
@@ -54,23 +76,27 @@ export function formatTable(results: readonly TaskResult[]): string {
     task: Math.max(4, ...rows.map((row) => row.task.length)),
     pass: Math.max(4, ...rows.map((row) => row.pass.length)),
     turns: Math.max(5, ...rows.map((row) => row.turns.length)),
+    tokens: Math.max(6, ...rows.map((row) => row.tokens.length)),
     tools: Math.max(5, ...rows.map((row) => row.tools.length)),
   };
 
   const lines = [
-    `${pad("task", widths.task)}  ${pad("pass", widths.pass)}  ${pad("turns", widths.turns)}  ${pad("tools", widths.tools)}  p50`,
+    `${pad("task", widths.task)}  ${pad("pass", widths.pass)}  ${pad("turns", widths.turns)}  ${pad("tokens", widths.tokens)}  ${pad("tools", widths.tools)}  p50`,
   ];
   for (const row of rows) {
     lines.push(
-      `${pad(row.task, widths.task)}  ${pad(row.pass, widths.pass)}  ${pad(row.turns, widths.turns)}  ${pad(row.tools, widths.tools)}  ${row.time}`,
+      `${pad(row.task, widths.task)}  ${pad(row.pass, widths.pass)}  ${pad(row.turns, widths.turns)}  ${pad(row.tokens, widths.tokens)}  ${pad(row.tools, widths.tools)}  ${row.time}`,
     );
   }
 
   const passed = results.reduce((total, result) => total + result.passed, 0);
   const total = results.reduce((sum, result) => sum + result.total, 0);
   const percent = total === 0 ? 0 : Math.round((passed / total) * 100);
+  const spent = totalTokens(results);
   lines.push("");
-  lines.push(`overall  ${passed}/${total} (${percent}%)`);
+  lines.push(
+    `overall  ${passed}/${total} (${percent}%)${spent === 0 ? "" : `  ${formatTokens(spent)} tokens`}`,
+  );
   return `${lines.join("\n")}\n`;
 }
 
@@ -106,6 +132,10 @@ export function toJsonReport(
       total: result.total,
       passRate: result.total === 0 ? 0 : result.passed / result.total,
       meanTurns: mean(result.attempts.map((attempt) => attempt.turnCount)),
+      totalTokens: result.attempts.reduce(
+        (sum, attempt) => sum + (attempt.usage?.usage.totalTokens ?? 0),
+        0,
+      ),
       medianDurationMs: median(
         result.attempts.map((attempt) => attempt.durationMs),
       ),
@@ -116,12 +146,14 @@ export function toJsonReport(
         turnCount: attempt.turnCount,
         durationMs: attempt.durationMs,
         toolsUsed: attempt.toolsUsed,
+        ...(attempt.usage === undefined ? {} : { usage: attempt.usage }),
         failures: attempt.failures,
       })),
     })),
     overall: {
       passed: results.reduce((total, result) => total + result.passed, 0),
       total: results.reduce((sum, result) => sum + result.total, 0),
+      totalTokens: totalTokens(results),
     },
   };
 }

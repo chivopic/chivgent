@@ -40,6 +40,7 @@ to study before adding production-harness complexity.
 - Ranged `read_file` output with continuation hints and bounded tool results.
 - Read-only by default; `--allow-writes` adds `write_file` and `edit_file`.
 - An opt-in `bash` tool behind `--allow-shell`, with streamed output.
+- Token usage from the Provider, per turn, per run, per eval task.
 - An eval suite that measures whether the agent completes tasks, not just runs.
 - Remote sessions: one process holds a session, others attach over a local socket.
 - Several clients can watch one session; any of them can interrupt the run.
@@ -411,6 +412,7 @@ src/
     write.ts                     Atomic whole-file writes and exact edits
   providers/
     registry.ts                  Provider registry
+    usage.ts                     Reading and adding up Provider token counts
     deferred-client.ts           A client whose Provider can arrive later
     definitions.ts               Built-in Provider declarations
     client.ts                    Credential resolution into an LLM client
@@ -499,14 +501,19 @@ npm run eval -- --allow-writes --allow-shell --json report.json
 ```
 
 ```text
-task                  pass  turns  tools                       p50
-find-auth-logic       4/5   2.0    list_files,search_text,...  6.1s
-rename-symbol         3/5   5.4    read_file,edit_file         9.8s
+task                  pass  turns  tokens  tools                       p50
+find-auth-logic       4/5   2.0    3.4k    list_files,search_text,...  6.1s
+rename-symbol         3/5   5.4    12.1k   read_file,edit_file         9.8s
 
-overall  7/10 (70%)
+overall  7/10 (70%)  58.3k tokens
 
 rename-symbol attempt 2,5: not-used-tool name="write_file" — called write_file 1 time(s)
 ```
+
+The `tokens` column is what the Provider reported, so a change can be judged on
+both axes at once: a prompt that lifts the pass rate from 70% to 75% while
+tripling the tokens is usually a bad trade, and without the second number that
+looks like a pure win.
 
 **An eval is not a test.** A model is nondeterministic, so one run of a task is a
 coin flip: passing and failing are properties of the model-and-harness
@@ -541,6 +548,38 @@ Those last two graders are the point. Rewriting the whole file also produces the
 right contents, and an eval that scores results alone would give it full marks.
 For a coding agent, tool misuse is the more common and the more interesting
 failure, so tasks assert on how the work was done.
+
+## Token usage
+
+Providers report what each call cost, and chivgent now keeps it: per turn on
+`message_end`, per run on `agent_end` and the run result, per attempt in the
+eval report, and cumulatively in `/session`.
+
+```text
+› /session
+id:        2026-09-07T...
+workspace: /home/me/project
+prompts:   4
+messages:  18
+tokens:    38.2k total, 35.9k in, 2.3k out, 12.0k cached
+```
+
+**Tokens only, never money.** Converting to a currency needs a model-to-price
+table, and that table goes stale silently when a Provider changes its rates —
+producing a figure that looks precise and is wrong, which is worse than no
+figure because nobody questions a number with a decimal point in it. Token
+counts are what the Provider itself reported and do not expire.
+
+A total is marked incomplete when some call reported nothing, rather than
+counting it as zero: a missing figure stays visibly missing instead of quietly
+understating the total. Compaction's own summarising call is included, since it
+trades a call now against smaller inputs later and that trade cannot be judged
+with half of it hidden.
+
+Streamed Chat Completions only report usage when asked, so chivgent sends
+`stream_options: { include_usage: true }`. A self-hosted OpenAI-compatible
+endpoint that predates that field may reject the request; `--no-stream` is the
+fallback.
 
 ## Remote sessions
 
@@ -732,7 +771,8 @@ project.
 - [x] Extensions and project trust
 - [x] Remote sessions over a local socket
 - [x] An eval suite with deterministic graders and pass rates
-- [ ] TUI and telemetry
+- [x] Token usage from the Provider, aggregated per run and per eval
+- [ ] TUI
 
 Per-command confirmation prompts and command allowlists are deliberately not
 planned. Once a shell tool exists, `bash` can do anything `write_file` can and
@@ -754,6 +794,7 @@ session-level switches; the real boundary is a container.
 - [Stage 9: Extensions and project trust](docs/stage-9-extensions.md)
 - [Stage 10: Remote sessions](docs/stage-10-remote-sessions.md)
 - [Stage 11: Evals](docs/stage-11-evals.md)
+- [Stage 12: Token usage](docs/stage-12-usage.md)
 - [Release process](docs/releasing.md)
 
 ## Contributing

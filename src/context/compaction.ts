@@ -1,4 +1,4 @@
-import type { LLMClient } from "../llm.js";
+import type { LLMClient, Usage } from "../llm.js";
 import type { Message, ToolCall } from "../messages.js";
 
 export interface CompactionState {
@@ -51,26 +51,41 @@ export class Compactor {
     this.fileEffects = options.fileEffects ?? DEFAULT_FILE_EFFECTS;
   }
 
+  /**
+   * Summarising costs a Provider call of its own. It is returned alongside the
+   * state so the run's total includes it: compaction trades a call now for
+   * smaller inputs later, and that trade cannot be judged if half of it is
+   * invisible.
+   */
   async compact(
     messages: readonly Message[],
     signal?: AbortSignal,
-  ): Promise<CompactionState> {
+  ): Promise<{ readonly state: CompactionState; readonly usage?: Usage }> {
     const files = collectFiles(messages, this.fileEffects);
-    const prose = await this.summarise(messages, signal);
-    return { ...prose, ...files };
+    const { prose, usage } = await this.summarise(messages, signal);
+    return {
+      state: { ...prose, ...files },
+      ...(usage === undefined ? {} : { usage }),
+    };
   }
 
   private async summarise(
     messages: readonly Message[],
     signal?: AbortSignal,
-  ): Promise<Pick<CompactionState, "summary" | "decisions" | "pendingTasks">> {
+  ): Promise<{
+    readonly prose: Pick<CompactionState, "summary" | "decisions" | "pendingTasks">;
+    readonly usage?: Usage;
+  }> {
     const response = await this.llm.complete({
       systemPrompt: SUMMARY_INSTRUCTIONS,
       messages: [{ role: "user", content: renderTranscript(messages) }],
       tools: [],
       ...(signal === undefined ? {} : { signal }),
     });
-    return parseSummary(response.message.content);
+    return {
+      prose: parseSummary(response.message.content),
+      ...(response.usage === undefined ? {} : { usage: response.usage }),
+    };
   }
 }
 

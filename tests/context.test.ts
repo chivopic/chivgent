@@ -208,7 +208,7 @@ describe("Compactor", () => {
       toolResult("2", "edit_file", "edited"),
     ];
 
-    const state = await compactor.compact(messages);
+    const { state } = await compactor.compact(messages);
 
     expect(state.readFiles).toEqual(["src/read-only.ts"]);
     expect(state.modifiedFiles).toEqual(["src/changed.ts"]);
@@ -221,7 +221,7 @@ describe("Compactor", () => {
       assistantWithCall("write_file", "src/a.ts", "2"),
     ];
 
-    const state = await compactor.compact(messages);
+    const { state } = await compactor.compact(messages);
 
     expect(state.readFiles).toEqual([]);
     expect(state.modifiedFiles).toEqual(["src/a.ts"]);

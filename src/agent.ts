@@ -4,6 +4,7 @@ import {
   type AgentRunStatus,
 } from "./events.js";
 import { isAbortError, type LLMClient, type LLMContinuation } from "./llm.js";
+import { addUsage, type UsageTotal } from "./providers/usage.js";
 import type {
   AssistantMessage,
   Message,
@@ -49,17 +50,21 @@ export type AgentRunResult =
       readonly finalMessage: AssistantMessage;
       readonly messages: readonly Message[];
       readonly turnCount: number;
+      /** What the run cost, when the Provider reported it. */
+      readonly usage?: UsageTotal;
     }
   | {
       readonly status: "max_turns" | "aborted";
       readonly messages: readonly Message[];
       readonly turnCount: number;
+      readonly usage?: UsageTotal;
     };
 
 interface RunState {
   readonly messages: Message[];
   readonly seenToolCallIds: Set<string>;
   turnCount: number;
+  usage?: UsageTotal;
   continuation?: LLMContinuation;
   compaction?: AppliedCompaction;
 }
@@ -167,11 +172,17 @@ export class Agent {
       this.emit({ type: "message_start", turn });
 
       const response = await this.requestAssistantMessage(state, turn, signal);
+      state.usage = addUsage(state.usage, response.usage);
       const assistant = validateAndCloneAssistantMessage(response.message);
       this.assertUniqueToolCallIds(assistant.toolCalls, state.seenToolCallIds);
       state.messages.push(assistant);
       state.continuation = response.continuation;
-      this.emit({ type: "message_end", turn, message: assistant });
+      this.emit({
+        type: "message_end",
+        turn,
+        message: assistant,
+        ...(response.usage === undefined ? {} : { usage: response.usage }),
+      });
 
       if (assistant.toolCalls.length === 0) {
         this.emit({
@@ -185,6 +196,7 @@ export class Agent {
           finalMessage: assistant,
           messages: snapshotMessages(state.messages),
           turnCount: state.turnCount,
+          ...(state.usage === undefined ? {} : { usage: state.usage }),
         };
       }
 
@@ -204,6 +216,7 @@ export class Agent {
       status: "max_turns",
       messages: snapshotMessages(state.messages),
       turnCount: state.turnCount,
+      ...(state.usage === undefined ? {} : { usage: state.usage }),
     };
   }
 
@@ -234,6 +247,12 @@ export class Agent {
     }
     if (context.compacted) {
       delete state.continuation;
+    }
+    // Summarising is a Provider call this run paid for. Only add when there
+    // was one: passing undefined would mark the total incomplete on every
+    // turn that simply did not need compacting.
+    if (context.usage !== undefined) {
+      state.usage = addUsage(state.usage, context.usage);
     }
     return context.messages;
   }
@@ -361,6 +380,7 @@ export class Agent {
       status,
       turnCount: state.turnCount,
       messages: snapshotMessages(state.messages),
+      ...(state.usage === undefined ? {} : { usage: state.usage }),
       ...(error === undefined ? {} : { error }),
     });
   }
@@ -376,6 +396,7 @@ function abortedResult(state: RunState): AgentRunResult {
     status: "aborted",
     messages: snapshotMessages(state.messages),
     turnCount: state.turnCount,
+    ...(state.usage === undefined ? {} : { usage: state.usage }),
   };
 }
 
