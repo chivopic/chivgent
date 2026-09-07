@@ -221,12 +221,12 @@ const factories: Record<string, GraderFactory> = {
       // Turns cannot express this: a model may issue any number of calls in
       // one turn, so "did it read the whole project" is a call count, not a
       // turn count.
+      // Failed calls count. A budget that forgave them would let a model
+      // spend freely on guessed paths, which is the opposite of the intent.
       const used = toolCalls(events).filter((tool) => tool === name).length;
       return used <= (limit as number)
         ? pass
-        : fail(
-            `called ${name} ${used} times, over the budget of ${limit as number}; this task expects the answer to be found rather than read out of everything`,
-          );
+        : fail(`called ${name} ${used} times, over the budget of ${limit as number}`);
     };
   },
 

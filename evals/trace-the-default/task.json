@@ -21,6 +21,11 @@
       "type": "max-tool-calls",
       "name": "read_file",
       "count": 8
+    },
+    {
+      "type": "max-tool-calls",
+      "name": "search_text",
+      "count": 6
     }
   ]
 }

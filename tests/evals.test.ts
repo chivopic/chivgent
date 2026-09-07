@@ -423,12 +423,52 @@ describe("runner", () => {
     });
 
     expect(result.attempts[0]?.toolCalls).toEqual([
-      { name: "read_file", ok: false },
-      { name: "read_file", ok: true },
+      { name: "read_file", ok: false, target: "guessed.ts" },
+      { name: "read_file", ok: true, target: "real.ts" },
     ]);
     // The set the table uses cannot distinguish this from a clean run, which
     // is why the ordered list exists alongside it.
     expect(result.attempts[0]?.toolsUsed).toEqual(["read_file"]);
+  });
+
+  it("keeps the call's target but not the rest of its arguments", async () => {
+    // Two attempts that each read four files are identical without this, and
+    // on a 41-file fixture "which four" is the measurement. An edit's own
+    // before-and-after text stays out: it would bury the report in contents.
+    const root = await temporaryDirectory();
+    const directory = await writeTask(
+      root,
+      "targets",
+      {
+        name: "targets",
+        prompt: "change it",
+        capabilities: ["writes"],
+        attempts: 1,
+        graders: [{ type: "answer-matches", pattern: "done" }],
+      },
+      { "a.ts": "export const x = 1;\n" },
+    );
+    const task = await loadTask(directory);
+
+    const result = await runTask(task, {
+      systemPrompt: "system",
+      capabilities: ["writes"],
+      createClient: () =>
+        new FakeLLMClient([
+          assistant("", [
+            {
+              id: "1",
+              name: "edit_file",
+              arguments: { path: "a.ts", old_text: "1", new_text: "2" },
+            },
+          ]),
+          assistant("done"),
+        ]),
+    });
+
+    expect(result.attempts[0]?.toolCalls).toEqual([
+      { name: "edit_file", ok: true, target: "a.ts" },
+    ]);
   });
 
   it("records why each attempt failed", async () => {

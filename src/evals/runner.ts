@@ -9,10 +9,43 @@ import { createAttemptWorkspace } from "./fixture.js";
 import { createGrader, describeGrader, type AttemptFacts } from "./graders.js";
 import type { Capability, Task } from "./task.js";
 
-/** One tool result, in call order. Arguments are deliberately not kept. */
+/** One tool result, in call order. */
 export interface ToolCallRecord {
   readonly name: string;
   readonly ok: boolean;
+  /**
+   * What the call was aimed at: the `path` argument, or a truncated `command`.
+   *
+   * Full arguments are not kept — an edit carries both halves of the change
+   * and would bury the report in file contents. But a name and a success flag
+   * alone cannot tell a model that read the four files on an import chain from
+   * one that read four unrelated files, and on a task built out of 41 files
+   * that distinction is the entire measurement. Omitted when the tool takes
+   * neither.
+   */
+  readonly target?: string;
+}
+
+const MAX_TARGET_LENGTH = 80;
+
+/** The one argument worth keeping, short enough to sit in a report. */
+function callTarget(argumentsValue: unknown): string | undefined {
+  if (typeof argumentsValue !== "object" || argumentsValue === null) {
+    return undefined;
+  }
+  const record = argumentsValue as Record<string, unknown>;
+  const value =
+    typeof record.path === "string"
+      ? record.path
+      : typeof record.command === "string"
+        ? record.command
+        : undefined;
+  if (value === undefined) {
+    return undefined;
+  }
+  return value.length > MAX_TARGET_LENGTH
+    ? `${value.slice(0, MAX_TARGET_LENGTH)}…`
+    : value;
 }
 
 export interface AttemptResult {
@@ -144,12 +177,32 @@ async function runAttempt(
       }
     }
 
+    // The arguments live on the start event, the outcome on the end event;
+    // the call id is what joins them.
+    const targets = new Map<string, string>();
+    for (const event of events) {
+      if (event.type === "tool_execution_start") {
+        const target = callTarget(event.arguments);
+        if (target !== undefined) {
+          targets.set(event.toolCallId, target);
+        }
+      }
+    }
     const calls: readonly ToolCallRecord[] = events
       .filter((event) => event.type === "tool_execution_end")
-      .map((event) => ({
-        name: (event as { toolName: string }).toolName,
-        ok: (event as { isError: boolean }).isError === false,
-      }));
+      .map((event) => {
+        const end = event as {
+          toolName: string;
+          isError: boolean;
+          toolCallId: string;
+        };
+        const target = targets.get(end.toolCallId);
+        return {
+          name: end.toolName,
+          ok: end.isError === false,
+          ...(target === undefined ? {} : { target }),
+        };
+      });
 
     return {
       attempt,
