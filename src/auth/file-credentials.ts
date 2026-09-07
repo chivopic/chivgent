@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { ProviderDefinition } from "../providers/definitions.js";
@@ -99,6 +99,56 @@ export class FileCredentialSource implements CredentialSource {
       );
     }
   }
+}
+
+/**
+ * Stores one Provider's key in the auth file, keeping the others.
+ *
+ * The file is rewritten whole because it is small and hand-editable; merging
+ * first means `/login` for one Provider never discards another's key. It is
+ * written owner-only, like the session log and the trust store.
+ */
+export async function writeApiKey(
+  providerId: string,
+  apiKey: string,
+  filePath: string = defaultAuthFile(),
+): Promise<void> {
+  if (typeof providerId !== "string" || providerId.length === 0) {
+    throw new TypeError("providerId must be a non-empty string.");
+  }
+  if (typeof apiKey !== "string" || apiKey.trim().length === 0) {
+    throw new TypeError("The API key must not be empty.");
+  }
+
+  let existing: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = JSON.parse(await readFile(filePath, "utf8"));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new AuthFileError(
+        `The auth file at ${filePath} must contain a JSON object keyed by Provider id; refusing to overwrite it.`,
+      );
+    }
+    existing = parsed as Record<string, unknown>;
+  } catch (error: unknown) {
+    if (error instanceof AuthFileError) {
+      throw error;
+    }
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      // An unreadable or malformed file is not overwritten: whatever is in
+      // there may be the only copy of another Provider's key.
+      throw new AuthFileError(
+        `Could not read the existing auth file at ${filePath}; fix or remove it first.`,
+        { cause: error },
+      );
+    }
+  }
+
+  existing[providerId] = apiKey.trim();
+  await mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  await writeFile(filePath, `${JSON.stringify(existing, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
 }
 
 function readApiKey(value: unknown): string | undefined {

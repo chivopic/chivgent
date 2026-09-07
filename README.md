@@ -164,11 +164,45 @@ Options:
 ```
 
 In an interactive session, `/help` lists the slash commands: `/session`,
-`/tools`, `/clear`, and `/exit`. Ctrl+C stops the answer in progress without
+`/tools`, `/clear`, `/login`, and `/exit`. Ctrl+C stops the answer in progress without
 leaving the session; Ctrl+D leaves it.
 
 Exit codes: `0` answered, `1` configuration or Provider failure, `2` turn limit
 reached, `130` interrupted with Ctrl+C.
+
+### Signing in
+
+The quickest way in is to start chivgent and let it ask:
+
+```text
+$ chivgent
+chivgent 0.13.0 · openai · gpt-5.6
+session 2026-09-07T...
+
+No API key for openai yet.
+Run /login to store one, or leave and set an environment variable.
+Type /help for commands, Ctrl+D to leave.
+› /login
+Paste an API key for openai. It is not echoed.
+It will be stored in ~/.chivgent/auth.json, readable only by you.
+API key:
+Stored the key for openai.
+› 
+```
+
+An interactive session starts even without a key, so the fix is reachable from
+inside chivgent rather than being something to go and arrange first. `/login`
+stores the key for the Provider this session is using — start with
+`--provider deepseek` to store one for another — and puts it to use straight
+away, so the prompt you type next already works. Running `/login` again replaces
+a key that turned out to be wrong.
+
+The key is not echoed as you type, and `auth.json` is written owner-only. It is
+not verified against the Provider when stored; the first prompt after it is what
+proves it works.
+
+A non-interactive run still fails fast when no key is configured: a pipeline has
+nobody to ask.
 
 ### Provider configuration
 
@@ -351,7 +385,7 @@ src/
     credentials.ts               Credential contract and resolution order
     runtime-credentials.ts       --api-key override
     env-credentials.ts           Environment variable lookup
-    file-credentials.ts          Optional auth.json store
+    file-credentials.ts          The auth.json store, read and write
   agent.ts                       Agent loop and run state
   events.ts                      Runtime event model
   render.ts                      Terminal renderer for runtime events
@@ -377,6 +411,7 @@ src/
     write.ts                     Atomic whole-file writes and exact edits
   providers/
     registry.ts                  Provider registry
+    deferred-client.ts           A client whose Provider can arrive later
     definitions.ts               Built-in Provider declarations
     client.ts                    Credential resolution into an LLM client
     openai.ts                    OpenAI Responses adapter
@@ -611,6 +646,8 @@ a piped run never loads a checkout's extensions on its own.
   `auth.json`, in that order, and must never be committed.
 - `auth.json` stores keys in plain text. It is opt-in for that reason, and
   chivgent warns when its permissions let other users read it.
+- `/login` writes it owner-only and does not echo what you type, but the key is
+  still stored in plain text; it is a convenience, not a secret manager.
 - The auth file accepts literal keys only; it cannot expand environment
   variables or run shell commands.
 - A custom `OPENAI_BASE_URL` receives the configured API key and prompts; use

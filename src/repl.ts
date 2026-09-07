@@ -1,4 +1,4 @@
-import { createInterface } from "node:readline";
+import { createInterface, type Interface } from "node:readline";
 import type { AgentSession } from "./session.js";
 import type { OutputStream } from "./render.js";
 import type { RegisteredCommand } from "./extensions/api.js";
@@ -9,6 +9,8 @@ export type SlashCommandOutcome =
   | "handled"
   | "exit"
   | "not-a-command"
+  /** The REPL runs the sign-in flow, which needs to read from the terminal. */
+  | { readonly kind: "login" }
   /** An extension command matched; the REPL runs it, since it may be async. */
   | {
       readonly kind: "extension";
@@ -22,6 +24,17 @@ export interface SlashCommandContext {
   readonly sessionFile?: string;
   /** Commands contributed by extensions, keyed by name without the slash. */
   readonly extensionCommands?: readonly RegisteredCommand[];
+  /** Present when this session can store a key; absent for a signed-in remote. */
+  readonly signIn?: SignIn;
+}
+
+export interface SignIn {
+  readonly provider: string;
+  readonly authFile: string;
+  /** Live check: /login can make this true part-way through a session. */
+  ready(): boolean;
+  /** Saves the key and puts it to use, or returns why it could not. */
+  submit(apiKey: string): Promise<string | undefined>;
 }
 
 export const BUILT_IN_COMMANDS = [
@@ -31,6 +44,7 @@ export const BUILT_IN_COMMANDS = [
   "clear",
   "exit",
   "quit",
+  "login",
 ] as const;
 
 const HELP = `Commands:
@@ -38,6 +52,7 @@ const HELP = `Commands:
   /session   Show the current session id, workspace, and size
   /tools     List the tools available to the model
   /clear     Start a new transcript in the same session
+  /login     Store an API key for this Provider
   /exit      Leave chivgent (Ctrl+D also works)
 
 Anything else is sent to the model. Ctrl+C stops the answer in progress.
@@ -91,6 +106,15 @@ export function handleSlashCommand(
       context.write("Transcript cleared.\n");
       return "handled";
 
+    case "/login":
+      if (context.signIn === undefined) {
+        context.write(
+          "This session cannot store a key; it is attached to a server that already has one.\n",
+        );
+        return "handled";
+      }
+      return { kind: "login" };
+
     case "/exit":
     case "/quit":
       return "exit";
@@ -130,6 +154,72 @@ export interface ReplOptions {
   readonly banner?: string;
   readonly sessionFile?: string;
   readonly extensionCommands?: readonly RegisteredCommand[];
+  readonly signIn?: SignIn;
+}
+
+/**
+ * Hides what is typed for the duration of one answer.
+ *
+ * readline echoes every keystroke through `_writeToOutput`, so silencing that
+ * keeps an API key off the screen and out of the scrollback. The original
+ * writer is always restored, even if reading throws.
+ */
+async function withoutEcho<T>(
+  readline: Interface,
+  read: () => Promise<T>,
+): Promise<T> {
+  const internals = readline as unknown as {
+    _writeToOutput?: (text: string) => void;
+  };
+  const original = internals._writeToOutput?.bind(readline);
+  if (original === undefined) {
+    return read();
+  }
+  internals._writeToOutput = (): void => undefined;
+  try {
+    return await read();
+  } finally {
+    internals._writeToOutput = original;
+  }
+}
+
+async function runSignIn(
+  readline: Interface,
+  readNextLine: () => Promise<string | undefined>,
+  write: (text: string) => void,
+  signIn: SignIn,
+): Promise<void> {
+  write(
+    [
+      `Paste an API key for ${signIn.provider}. It is not echoed.`,
+      `It will be stored in ${signIn.authFile}, readable only by you.`,
+      "API key: ",
+    ].join("\n"),
+  );
+
+  // The key is read from the same line source the loop uses. readline's
+  // question() competes with the loop's own iterator for input, so the answer
+  // would be swallowed or never arrive.
+  const answer = await withoutEcho(readline, readNextLine);
+  write("\n");
+  if (answer === undefined) {
+    return;
+  }
+
+  const key = answer.trim();
+  if (key.length === 0) {
+    write("Nothing entered; no key was stored.\n");
+    return;
+  }
+
+  const failure = await signIn.submit(key);
+  if (failure !== undefined) {
+    write(`${failure}\n`);
+    return;
+  }
+  write(
+    `Stored the key for ${signIn.provider}. The key is not checked until your next prompt.\n`,
+  );
 }
 
 /**
@@ -163,7 +253,17 @@ export async function runRepl(options: ReplOptions): Promise<number> {
   }
   readline.prompt();
 
-  for await (const line of readline) {
+  const lines = readline[Symbol.asyncIterator]();
+  const readNextLine = async (): Promise<string | undefined> => {
+    const next = await lines.next();
+    return next.done === true ? undefined : next.value;
+  };
+
+  for (;;) {
+    const line = await readNextLine();
+    if (line === undefined) {
+      break;
+    }
     if (line.trim().length === 0) {
       readline.prompt();
       continue;
@@ -178,9 +278,17 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       ...(options.extensionCommands === undefined
         ? {}
         : { extensionCommands: options.extensionCommands }),
+      ...(options.signIn === undefined ? {} : { signIn: options.signIn }),
     });
     if (outcome === "exit") {
       break;
+    }
+    if (typeof outcome === "object" && outcome.kind === "login") {
+      if (options.signIn !== undefined) {
+        await runSignIn(readline, readNextLine, write, options.signIn);
+      }
+      readline.prompt();
+      continue;
     }
     if (typeof outcome === "object") {
       // An extension command runs here rather than inside the parser so it may
@@ -199,6 +307,14 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       continue;
     }
     if (outcome === "handled") {
+      readline.prompt();
+      continue;
+    }
+
+    if (options.signIn !== undefined && !options.signIn.ready()) {
+      // Saying this before the run starts is clearer than letting the Provider
+      // call fail and reporting it as an agent failure.
+      write("No API key yet. Run /login to add one.\n");
       readline.prompt();
       continue;
     }
