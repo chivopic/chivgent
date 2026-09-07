@@ -37,6 +37,9 @@ export class CredentialResolver {
   /** Explains what the user could set, for the "no credential" error. */
   describeExpectations(provider: ProviderDefinition): string {
     const variables = provider.envKeys.join(" or ");
-    return `No API key for ${provider.id}. Set ${variables}, pass --api-key, or add "${provider.id}" to the auth file.`;
+    return [
+      `No API key for ${provider.id}.`,
+      `Run chivgent with no arguments and use /login, set ${variables}, or pass --api-key.`,
+    ].join(" ");
   }
 }

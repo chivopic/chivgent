@@ -159,11 +159,41 @@ chivgent [选项]                   进入交互式会话
   -v, --version    显示版本
 ```
 
-交互式会话中 `/help` 会列出全部斜杠命令：`/session`、`/tools`、`/clear` 和
+交互式会话中 `/help` 会列出全部斜杠命令：`/session`、`/tools`、`/clear`、`/login` 和
 `/exit`。Ctrl+C 只中断当前回答，不会退出会话；Ctrl+D 才会离开。
 
 退出码：`0` 正常回答，`1` 配置或 Provider 失败，`2` 达到轮次上限，`130` 被
 Ctrl+C 中断。
+
+### 登录
+
+最省事的方式是直接启动 chivgent，让它来问：
+
+```text
+$ chivgent
+chivgent 0.13.0 · openai · gpt-5.6
+session 2026-09-07T...
+
+No API key for openai yet.
+Run /login to store one, or leave and set an environment variable.
+Type /help for commands, Ctrl+D to leave.
+› /login
+Paste an API key for openai. It is not echoed.
+It will be stored in ~/.chivgent/auth.json, readable only by you.
+API key:
+Stored the key for openai.
+› 
+```
+
+**没有 Key 时交互式会话照样能启动**，所以补 Key 这件事在 chivgent 里面就能完成，
+不必先出去安排好再进来。`/login` 会把 Key 存给**当前会话使用的那个 Provider**
+（要存给别的 Provider，启动时加 `--provider deepseek`），并且**立即生效**——
+你紧接着敲的那句话就已经能用了。Key 输错了就再跑一次 `/login` 覆盖掉。
+
+输入的 Key 不会回显，`auth.json` 以仅所有者可读的权限写入。存的时候**不会**去
+Provider 那里验证；你之后的第一次提问才是真正的检验。
+
+非交互式运行在没有 Key 时依然立刻失败——管道里没有人可问。
 
 ### Provider 配置
 
@@ -334,7 +364,7 @@ src/
     credentials.ts               凭据契约与解析顺序
     runtime-credentials.ts       --api-key 覆盖层
     env-credentials.ts           环境变量查找
-    file-credentials.ts          可选的 auth.json 存储
+    file-credentials.ts          auth.json 存储的读与写
   agent.ts                       Agent Loop 与运行状态
   events.ts                      运行时事件模型
   render.ts                      运行时事件的终端渲染
@@ -360,6 +390,7 @@ src/
     write.ts                     原子整文件写入与精确编辑
   providers/
     registry.ts                  Provider 注册表
+    deferred-client.ts           Provider 可以稍后到位的客户端
     definitions.ts               内置 Provider 声明
     client.ts                    凭据解析并构造 LLM Client
     openai.ts                    OpenAI Responses Adapter
@@ -575,6 +606,8 @@ CI 任务或管道运行永远不会自作主张去执行一个 clone 里的代�
 
 - API Key 依次从 `--api-key`、环境变量、可选的 `auth.json` 解析，绝不能提交到仓库。
 - `auth.json` 以明文保存 Key，因此它是可选的；当文件权限允许其他用户读取时会告警。
+- `/login` 会以仅所有者可读的权限写入，输入也不回显，但 Key 依然是明文存储的——
+  它是一个便利设施，不是密钥管理器。
 - 该文件只接受字面量 Key，无法展开环境变量或执行 Shell 命令。
 - 自定义 `OPENAI_BASE_URL` 会收到配置的 API Key 和提示词，只能使用可信端点。
 - 不传 `--allow-writes` 时工作区工具全部只读，`write_file` 和 `edit_file` 根本

@@ -46,6 +46,9 @@ import { runRemoteRepl } from "./remote/repl.js";
 import type { Message } from "./messages.js";
 import { LocalWorkspace } from "./workspace.js";
 import { createConfiguredClient } from "./providers/client.js";
+import { DeferredLLMClient } from "./providers/deferred-client.js";
+import { defaultAuthFile, writeApiKey } from "./auth/file-credentials.js";
+import type { SignIn } from "./repl.js";
 import {
   SHELL_SYSTEM_PROMPT,
   SYSTEM_PROMPT,
@@ -219,10 +222,21 @@ async function main(argv: readonly string[]): Promise<number> {
     return 1;
   }
 
-  const llm = await createConfiguredClient(options);
-  if (typeof llm === "string") {
-    process.stderr.write(`${llm}\n`);
+  const configured = await createConfiguredClient(options);
+  // A missing key used to end the run here, which left no way to fix it from
+  // inside chivgent. An interactive session starts anyway and /login fills it
+  // in; anything non-interactive still has nobody to ask, so it still stops.
+  const signedOutMessage =
+    typeof configured === "string" ? configured : undefined;
+  if (signedOutMessage !== undefined && (!interactive || options.serve)) {
+    process.stderr.write(`${signedOutMessage}\n`);
     return 1;
+  }
+  const llm = new DeferredLLMClient(
+    signedOutMessage ?? "No API key configured. Run /login to add one.",
+  );
+  if (typeof configured !== "string") {
+    llm.set(configured);
   }
 
   const restored = await restoreSession(options, store, cwd);
@@ -311,16 +325,38 @@ async function main(argv: readonly string[]): Promise<number> {
     return serveSession(options, session);
   }
 
+  const signIn: SignIn = {
+    provider: options.provider,
+    authFile: defaultAuthFile(process.env),
+    ready: () => llm.ready,
+    submit: async (apiKey) => {
+      const client = await createConfiguredClient({ ...options, apiKey });
+      if (typeof client === "string") {
+        return client;
+      }
+      try {
+        await writeApiKey(options.provider, apiKey);
+      } catch (error: unknown) {
+        return error instanceof Error ? error.message : String(error);
+      }
+      // Used immediately, so the key that was just stored works in this
+      // session rather than only the next one.
+      llm.set(client);
+      return undefined;
+    },
+  };
+
   if (interactive) {
     return runRepl({
       session,
+      signIn,
       input: process.stdin,
       // In JSON mode stdout carries the event stream and nothing else: readline
       // writes its prompt and echo to the same stream it is given, which would
       // otherwise prefix the first event with terminal escape codes.
       output: options.json ? process.stderr : process.stdout,
       stderr: process.stderr,
-      banner: banner(options, session.id, restored.resumed),
+      banner: banner(options, session.id, restored.resumed, signedOutMessage),
       ...(store === undefined ? {} : { sessionFile: store.location(session.id) }),
       ...(registry === undefined
         ? {}
@@ -608,14 +644,25 @@ function banner(
   options: CliOptions,
   sessionId: string,
   resumed: boolean,
+  signedOutMessage?: string,
 ): string {
   const model = options.model ?? "unknown model";
-  return [
+  const lines = [
     `chivgent ${VERSION} · ${options.provider} · ${model}`,
     `${resumed ? "resumed" : "session"} ${sessionId}`,
-    "Type /help for commands, Ctrl+D to leave.",
-    "",
-  ].join("\n");
+  ];
+  if (signedOutMessage !== undefined) {
+    // First thing on screen, because nothing else works until it is dealt
+    // with. The wording is the in-session one: the message the CLI prints when
+    // it has nobody to ask tells you to start chivgent, which you just did.
+    lines.push(
+      "",
+      `No API key for ${options.provider} yet.`,
+      "Run /login to store one, or leave and set an environment variable.",
+    );
+  }
+  lines.push("Type /help for commands, Ctrl+D to leave.", "");
+  return lines.join("\n");
 }
 
 /** Reads a prompt piped into stdin, so `cat question.txt | chivgent` works. */
