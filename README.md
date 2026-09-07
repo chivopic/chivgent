@@ -561,9 +561,14 @@ pass. Both are task-definition mistakes, and both are caught before the run
 spends anything. One such grader shipped for two releases before this check
 existed.
 
-Two graders exist because a set of tool names cannot answer the question they
+Three graders exist because a set of tool names cannot answer the question they
 answer. `tool-never-failed` catches a guessed path, which shows up as a failed
-read that a deduplicated name list hides. `file-unchanged` compares against the
+read that a deduplicated name list hides — it is sound only where a failed call
+means the model was wrong, so it fits `read_file` and not `bash`, which reports
+any non-zero exit as an error and is *supposed* to fail on a task that runs a
+failing test. `max-tool-calls` budgets calls rather than turns, because a model
+may issue any number of calls in one turn: "did it follow the imports or read
+the whole project" is a call count. `file-unchanged` compares against the
 fixture, so "don't touch what you weren't asked to touch" becomes a verdict
 rather than an intention — and it needs no second copy of the file in
 `task.json` to drift out of date. The JSON report carries `toolCalls`, every

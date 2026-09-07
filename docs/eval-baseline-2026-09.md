@@ -1,263 +1,449 @@
-# Eval baseline, September 2026 — DeepSeek
+# Eval baseline, September 2026 — DeepSeek (run 2, nine tasks)
 
-The suite ran. This document replaces the earlier one on this branch, which
-recorded a blocked attempt and produced no measurement.
+This document replaces the first baseline on this branch. That one recorded
+29/30 on five tasks and concluded the suite had no headroom. Stage 13 added
+four tasks built to create some. This is the measurement of whether it worked.
 
 - Date: 2026-09-07
-- Branch: `claude/progress-check-pqu8i6` at `625685b` (chivgent `0.15.0`)
-- Provider `deepseek`, model `deepseek-v4-flash` — the registry default,
-  `src/providers/definitions.ts:77`. The name resolves; no model-name error.
+- Branch: `claude/progress-check-pqu8i6` at `47ab98c` (chivgent `0.16.0`)
+- Provider `deepseek`, model `deepseek-v4-flash` (registry default)
 - Node `v22.22.2`, npm `10.9.7`
-- 5 tasks x 3 attempts, run twice (30 attempts total)
+- 9 tasks x 3 attempts = 27 attempts, one run
+- `npm test`: 401 passed, 25 files — as expected before the run
 
 ## Bottom line
 
-**29 of 30 attempts passed, and the single failure is a grader false negative,
-not a model error.** On substance the model completed all 30 attempts
-correctly.
+**26 of 27 attempts passed (96%). The pass rate is no longer 100%, and the one
+failure landed on a designed trap for its designed reason. But that is one
+failure, and three of the four tasks built to create headroom scored 3/3.**
 
-That is a worse outcome than it sounds. A suite that a mid-tier flash model
-saturates on the first real run is not measuring anything yet. **The headline
-number to carry forward is not "93%" or "100%" — it is "the suite has no
-headroom."** These five tasks can currently tell "works at all" from "broken";
-they cannot tell one working model from another. Read the numbers below as a
-smoke test that passed, not as a quality score.
+Stage 13's acceptance criterion was "通过率不再是 100%". Read literally, it is
+met. Read as it was meant — "failures concentrated where we designed them to
+be" — it is met by a single data point.
+
+The honest summary is that the ceiling moved from *unreachable* to *barely
+scratched*. `decoy-config` is the only new task that discriminates. The other
+three were solved cleanly, at low turn counts, on every attempt. Under the
+suite's own elimination rule (`docs/stage-13-eval-headroom.md` §5.5: a task
+that is N/N or 0/N is not measuring anything), `needle-in-many-files`,
+`trace-the-default` and `wrong-test` all go on the watch list after one run,
+not just `wrong-test`.
+
+That said, the stage produced one unambiguous win that is not visible in the
+pass rate: **the `toolCalls` trace answered the question the first baseline
+could not answer at all.** See §4.
 
 ## Results
 
-Run 2 is the run of record and the one `baseline.json` in this commit
-describes; it is the documented command, with the credential on `--api-key`.
-Run 1 is the same command 4.5 hours earlier and is kept here because its one
-failure is the most informative event in the whole exercise.
+```text
+task                  pass  turns  tokens  tools                                            p50
+decoy-config          2/3   5.0    11.3k   list_files,search_text,read_file,edit_file       10.7s
+find-auth-logic       3/3   3.0    5.0k    list_files,read_file,search_text                 3.3s
+fix-failing-test      3/3   5.3    10.9k   list_files,read_file,bash,edit_file              7.9s
+needle-in-many-files  3/3   3.0    3.6k    search_text,read_file                            3.6s
+no-hallucinated-read  3/3   3.7    5.3k    read_file,list_files,search_text                 5.6s
+rename-symbol         3/3   4.0    7.8k    search_text,list_files,read_file,edit_file       6.1s
+respect-line-endings  3/3   4.0    6.4k    list_files,read_file,edit_file,search_text       4.2s
+trace-the-default     3/3   3.3    4.5k    list_files,read_file,search_text                 5.6s
+wrong-test            3/3   6.3    18.8k   list_files,read_file,bash,edit_file,search_text  18.4s
 
-### Run 2 — `baseline.json` (2026-09-07T08:06:10Z)
+overall  26/27 (96%)  241.8k tokens
+```
+
+The `tokens` column is the **median** per attempt (`report.ts:30`), not a
+total. Suite total is 241,838 tokens — 217,629 input, 24,209 output. Runtime
+was a few minutes, dominated by `wrong-test`.
+
+Old five: 15/15. New four: 11/12.
+
+## 1. Is it still 100%?
+
+No — 96% (26/27). One failure, `decoy-config` attempt 3.
+
+But the shape of that number matters more than the number:
+
+| | tasks | attempts | pass rate |
+|---|---|---|---|
+| Old five | 5 | 15 | 15/15 (100%) |
+| New four | 4 | 12 | 11/12 (92%) |
+| **All nine** | **9** | **27** | **26/27 (96%)** |
+
+Three of the four new tasks are saturated. The suite gained one discriminating
+task, not four. **Stage 13 partially achieved its goal** — it did not fail
+outright, and it did not succeed as designed either. Calling 96% a good score
+would be reading the wrong thing: this suite is still much closer to a smoke
+test than to a ranking instrument.
+
+## 2. The four new tasks: did the traps fire, and for the designed reason?
+
+### `decoy-config` — 2/3. **Trap fired, for exactly the designed reason.**
+
+The one failure in the whole run.
 
 ```text
-task                  pass  turns  tokens  tools                                       p50
-find-auth-logic       3/3   3.3    3.8k    list_files,read_file,search_text            4.3s
-fix-failing-test      3/3   5.0    10.9k   list_files,bash,read_file,edit_file         6.3s
-no-hallucinated-read  3/3   3.0    4.0k    list_files,read_file                        4.9s
-rename-symbol         3/3   4.0    7.6k    search_text,read_file,edit_file,list_files  5.5s
-respect-line-endings  3/3   4.0    6.5k    list_files,read_file,edit_file,search_text  4.6s
-
-overall  15/15 (100%)  100.3k tokens
+decoy-config attempt 3: file-unchanged path="src/config/http.ts" —
+src/config/http.ts was modified at line 3; this task expects it untouched
 ```
 
-### Run 1 (2026-09-07T03:42:49Z)
+This is a genuine model failure, not a harness defect. The designed trap was
+"two near-identical HTTP config modules; only `src/settings/http.ts` is
+imported by `src/index.ts`; editing the dead `src/config/http.ts` produces no
+error". The failure is precisely that, caught by precisely the grader written
+for it.
+
+One nuance the trace adds, which the failure line alone does not show. The
+failing attempt made **two** `edit_file` calls, both successful:
 
 ```text
-task                  pass  turns  tokens  tools                                       p50
-find-auth-logic       3/3   3.0    4.1k    list_files,search_text,read_file            4.5s
-fix-failing-test      3/3   5.0    11.3k   list_files,read_file,edit_file,bash         7.0s
-no-hallucinated-read  2/3   3.0    4.1k    list_files,search_text,read_file            5.8s
-rename-symbol         3/3   4.3    8.0k    search_text,read_file,edit_file,list_files  6.4s
-respect-line-endings  3/3   4.0    6.6k    list_files,read_file,edit_file,search_text  4.2s
-
-overall  14/15 (93%)  102.7k tokens
+#3 FAIL turns=4: list_files > search_text > read_file > read_file > read_file > edit_file > edit_file
 ```
 
-Per task across both runs: `find-auth-logic` 6/6, `fix-failing-test` 6/6,
-`rename-symbol` 6/6, `respect-line-endings` 6/6, `no-hallucinated-read` 5/6.
-Overall 29/30 (97%).
+Every other `decoy-config` grader passed — `file-contains
+"timeoutSeconds: 60"` on `src/settings/http.ts` and `file-excludes
+"timeoutSeconds: 30"` are both absent from the failure list. So the model
+**made the correct edit and then also edited the decoy**. The failure mode is
+not "picked the wrong file"; it is "changed both rather than deciding which
+one was live". That is a different and arguably more interesting error than
+the one the task was written to catch, and `file-unchanged` catches it
+because it asserts on the file, not on the model's reasoning.
 
-## Where it failed, and why
-
-One failure in 30. `no-hallucinated-read`, run 1, attempt 1:
+The two passing attempts spent their extra turns confirming the import graph:
 
 ```text
-no-hallucinated-read attempt 1: answer-matches pattern="not exist|no such file|could not find|doesn't exist|does not exist|no .{0,20}file" — the answer did not match /not exist|no such file|could not find|doesn't exist|does not exist|no .{0,20}file/i: "There is no `src/database/migrations.ts` in this project — in fact, there is no `src/database/` directory at all.\n\nThe f"
+#1 PASS turns=6: list_files > search_text > read_file x3 > search_text > search_text > read_file > edit_file
+#2 PASS turns=5: list_files > search_text > read_file x3 > edit_file
 ```
 
-The model was right. `evals/no-hallucinated-read/fixture/` contains exactly one
-file, `src/index.ts`; there is no `src/database/`. The model refused the
-premise and said so. It also passed the companion grader,
-`answer-excludes "migration (runs|applies|executes)"` — it invented no
-behaviour for the file it could not find.
+The failing attempt used the **fewest** turns (4) and was the fastest (6.6s vs
+39.0s and 10.7s). Failure here correlates with less verification, not with
+worse reading. n=1, so that is an observation, not a finding.
 
-It failed because it wrote *"There is no X"* and the pattern only accepts
-*"does not exist" / "no such file" / "could not find" / "no ‹≤20 chars›file"*.
-The phrase `there is no` is absent from the alternation, and `no .{0,20}file`
-cannot bridge `` no `src/database/migrations.ts` `` (20 characters of path
-before any "file", and `.` does not cross the newline).
+### `needle-in-many-files` — 3/3. **Trap did not fire. Task is too easy.**
 
-So the task's own grader is what failed. Counted honestly, the model scored
-6/6 on the hallucination task and the suite scored 5/6.
-
-## Tool selection: what the traps actually caught
-
-**Nothing. All three traps came back empty, and one of them cannot fire at
-all.**
-
-**Rewriting whole files instead of `edit_file` — genuinely clean.**
-`write_file` was called 0 times in 30 attempts; `edit_file` was used in all 9
-write-capable attempts per run. This is a real result for `rename-symbol` and
-`fix-failing-test`, where `write_file` *is* registered and available
-(`runner.ts:100`, capabilities include `writes`) and the model chose the
-surgical tool anyway. `respect-line-endings` is the sharpest version — it
-requires the file to come out byte-identical including CRLF endings, and it
-passed 6/6.
-
-**Hallucinating unread file contents — never happened.** 6/6 correct refusals,
-as above.
-
-**Guessing paths instead of using `search_text` — cannot be answered from this
-data.** `search_text` appeared in 9/15 attempts (run 1) and 5/15 (run 2), and
-every attempt used at least one discovery tool. But `baseline.json` stores
-`toolsUsed` as a *deduplicated set of tool names* — no call order, no
-arguments, no error flags. A model that guessed `src/auth.ts`, got an error,
-then fell back to `list_files` records exactly the same `toolsUsed` as one that
-listed first. `find-auth-logic` also has no grader on `search_text` at all.
-The behaviour this suite was built to catch is the one it does not instrument.
-See defect D3.
-
-## Turns, latency, tokens
-
-Turn counts are tight and identical in shape across both runs: 3–5 turns,
-no attempt near its `maxTurns` ceiling (8/16/8/12/10). All 30 attempts ended
-`status: "completed"`; none hit the turn limit, aborted, or errored.
-
-Latency p50 per task 4.3–6.3s (run 2), full range 3.4–7.1s across both runs.
-`fix-failing-test` is the slowest, which tracks — it is the only task that
-shells out and the only one at 5 turns.
-
-**The token column is populated and the numbers hold up.** This is the first
-real-provider exercise of `src/providers/usage.ts`, so it was checked rather
-than assumed:
-
-- `complete` is `true` for all 30 attempts. No call reported nothing.
-- `inputTokens + outputTokens == totalTokens` for all 30. No arithmetic drift.
-- `cachedInputTokens <= inputTokens` for all 30.
-- Magnitudes are sane: input 3.3k–10.9k, output 249–740, scaling with turn
-  count. `fix-failing-test` carries the most context and shows the largest
-  input, as it should.
-- Cache-hit share of input is 89.5% (run 1) and 92.2% (run 2) — expected, since
-  every attempt replays the same system prompt against DeepSeek's prefix cache.
-- `reasoningTokens` is small but present (7–166), and correctly *absent* rather
-  than `0` on the two attempts where the provider reported none. That is the
-  "missing stays missing" behaviour `usage.ts` was written for, confirmed
-  against a live provider.
-
-Verified directly against the API, a `deepseek-v4-flash` `usage` object is:
-
-```json
-{
-  "prompt_tokens": 85, "completion_tokens": 22, "total_tokens": 107,
-  "prompt_tokens_details": { "cached_tokens": 0 },
-  "completion_tokens_details": { "reasoning_tokens": 20 },
-  "prompt_cache_hit_tokens": 0, "prompt_cache_miss_tokens": 85
-}
+```text
+#1 PASS turns=3: search_text > read_file
+#2 PASS turns=3: search_text > read_file
+#3 PASS turns=3: search_text > read_file
 ```
 
-Token capture works. See D6 for one stale assumption it rests on.
+Identical on all three attempts: `search_text` as the very first call, one
+confirming `read_file`, answer. Two tool calls. Zero failed reads. The
+`max-turns-under: 5` grader was never close — 3 turns every time, against a
+`maxTurns` of 10.
 
-## chivgent defects
+The premise was that 40 uninformatively-named files would force `search_text`
+and punish guessing. For this model the premise is simply true and the model
+simply does it — there is no decision to get wrong. **The task is a correct
+instrument that this model saturates.** It is the cheapest task in the suite
+(3.6k median tokens, 3.6s p50).
 
-Found while measuring, and deliberately not fixed *during* the run — patching
-mid-measurement would have invalidated the numbers above. None are model
-failures. D4 and D5 are fixed in the commit that lands this document, because
-neither touches the suite and one of them leaks a credential. D1–D3 change what
-the suite measures, so they are left for the follow-up that gives it headroom;
-fixing them here would make this baseline uncomparable with the next one.
+I would not delete it, for the reason in §4: it is the task that makes the
+path-guessing question answerable. But it should be counted as instrumentation,
+not as a discriminator, and the report should stop expecting it to fail.
 
-**D1 — `no-hallucinated-read`'s answer pattern is too narrow.**
-`evals/no-hallucinated-read/task.json`. It rejects "There is no X", the most
-natural phrasing of the correct answer, and produced the only failure in 30
-attempts. Adding `there is no|isn't any|is no such` would fix this instance,
-but the deeper issue is that a regex over free-form prose is a brittle way to
-grade a refusal. Highest-value fix here.
+### `trace-the-default` — 3/3. **Trap did not fire.**
 
-**D2 — `find-auth-logic`'s `not-used-tool: write_file` grader cannot fail.**
-`runner.ts:100` builds the tool list from `task.capabilities`, and that task
-declares `[]`, so `WriteFileTool` is never constructed. The grader asserts the
-model didn't call a tool it was never given. It reads like a passing check and
-is worth nothing. The equivalent graders on `rename-symbol` and
-`fix-failing-test` are real, because those tasks do grant `writes`.
+The designed trap was stopping at the first hop and reporting 5000 (the
+`DEFAULTS.timeoutMs` in `src/defaults.ts`) instead of 30000
+(`PRODUCTION_TIMEOUT_MS` in `src/env.ts`).
 
-**D3 — the JSON report cannot evidence tool-selection quality.** `toolsUsed`
-(`runner.ts:158`) is a deduplicated name set. Order, arguments, and per-call
-error status are all dropped, so the report cannot show a guessed path, a
-failed read followed by recovery, or a redundant re-read. Recording the ordered
-call list with an error flag would make the path-guessing question answerable;
-today it is not.
+```text
+#1 PASS turns=3: list_files > read_file > read_file > read_file > read_file
+#2 PASS turns=4: list_files > read_file x4 > search_text > search_text
+#3 PASS turns=3: list_files > read_file > read_file > read_file > read_file
+```
 
-**D4 — the documented command prints the API key.** `npm run eval -- --api-key
-sk-...` is what `README.md:501` and `docs/stage-11-evals.md:154` now recommend,
-and npm echoes the fully-expanded command to stdout before running it —
-verified, the key appears in the clear and lands in any captured log or CI
-output. The env-var form (`DEEPSEEK_API_KEY=... npm run eval -- ...`) does not
-leak. The docs should lead with the env var and note the flag's exposure.
-**Fixed in the commit that lands this report** — the README examples and
-`docs/stage-11-evals.md` now lead with the environment variable and say why.
+Four `read_file` calls against a four-file fixture, on every attempt. The model
+read **all** of `app.ts`, `client.ts`, `defaults.ts`, `env.ts` before answering.
+It never had the opportunity to stop at hop one because it did not traverse
+hop by hop — it read the whole project first. A four-file fixture is small
+enough that exhaustive reading is cheaper than tracing.
 
-**D5 — an empty `--api-key` is silently ignored.** `--api-key ""` does not
-error; it falls through to the environment and then `auth.json`. A typo or an
-unset shell variable therefore runs against *a different credential than the
-one named on the command line*, with no warning. This bit this exercise
-directly — see the caveat below. **Fixed in the commit that lands this
-report**: `--api-key ""` now fails with `--api-key requires a value.`
+**This is a fixture-scale problem, not a model result.** The multi-hop
+reasoning the task wants to test is only tested if reading everything is
+impractical. At four files it is trivial. To make this task bite, the
+`defaults`/`client`/`env` chain needs to sit inside a fixture large enough that
+reading all of it costs more than following the imports — the
+`needle-in-many-files` fixture size, with the trap chain hidden in it.
 
-**D6 — the DeepSeek cache fallback in `usage.ts` is dead for this model.** The
-comment at `src/providers/usage.ts:35` says "DeepSeek reports cache hits at the
-top level rather than in details", and the code reads
-`prompt_tokens_details.cached_tokens ?? prompt_cache_hit_tokens`. As the raw
-response above shows, `deepseek-v4-flash` populates **both**, so the
-first branch always wins and the top-level fallback never executes. Harmless
-and defensive, but the stated premise is no longer true and the fallback is
-untested in practice.
+### `wrong-test` — 3/3. **Trap did not fire.**
 
-**D7 — `createClient` is documented as per-attempt but is not.**
-`RunnerOptions.createClient` (`runner.ts:40`) is annotated "Built per attempt,
-so a test can hand out a fresh fake each time", while `evals/cli.ts:122` passes
-`() => llm` — one shared instance for every attempt of every task. Harmless
-today: the non-streaming client holds only readonly config and takes history
-per request, so attempts cannot leak into each other. It is a latent trap if
-the client ever gains per-conversation state.
+The designed trap was bending `slug.js` to satisfy the wrong assertion in
+`test.js`. `file-unchanged` on `slug.js` passed on all three attempts — the
+source was never touched.
+
+```text
+#1 PASS turns=6: list_files > read_file x3 > bash[ERR] > edit_file > bash
+#2 PASS turns=6: list_files > read_file x2 > bash[ERR] > read_file > edit_file > bash
+#3 PASS turns=7: list_files > read_file x3 > bash[ERR] > bash[ERR] > search_text > edit_file > bash
+```
+
+The pattern is consistent and correct: read, run the test and see it fail
+(`bash[ERR]`), edit the test, run again and see it pass (`bash` ok). The
+documented contract in `slug.js` was read before the fix in every attempt.
+
+§5.4 of the stage doc flagged the risk that this task would be too hard for
+every model. The opposite happened. It is the most expensive task in the suite
+(18.8k median tokens, 18.4s p50, up to 7 turns) and returns no signal.
+
+### Summary
+
+| task | score | trap fired? | designed reason? | verdict |
+|---|---|---|---|---|
+| `decoy-config` | 2/3 | **yes** | **yes** | model failure; keep |
+| `needle-in-many-files` | 3/3 | no | — | too easy; keep as instrument |
+| `trace-the-default` | 3/3 | no | — | **fixture too small**; task defect |
+| `wrong-test` | 3/3 | no | — | too easy for this model; watch |
+
+**No task failed for an unintended reason.** No bad regex, no fixture mistake,
+no over-strict grader fired in this run. That is a clean result for the Stage
+13 grader work and worth stating separately from the disappointing pass rate:
+every grader that reported did so correctly, and the ones that did not report
+were silent because the model was right, not because they were broken.
+
+The one entry above I classify as a **task defect rather than a model result**
+is `trace-the-default`. It did not mis-grade; it failed to construct the
+situation it claims to test. That is a design error in the fixture, and it
+would have been invisible without the `toolCalls` trace showing four reads over
+four files.
+
+## 3. Did any new task score 0/3?
+
+**No.** Every new task scored 3/3 or 2/3, and every one of the 27 attempts
+ended `status: "completed"` — no turn-limit hits, no aborts, no errors.
+
+`wrong-test` was the task flagged in advance as a possible 0/3
+(`stage-13-eval-headroom.md` §5.4). It came back 3/3 instead. Both outcomes
+are the same problem: it does not discriminate. The stage doc said its fate
+would be decided at this baseline. On this evidence it is not *broken* — the
+fixture is sound, the graders are real, the model does the right thing — it is
+just not hard. Keep it for one more model, then cut it if a second model also
+sweeps it.
+
+## 4. What `toolCalls` shows that `toolsUsed` could not
+
+This is where the stage delivered. The first baseline recorded the
+path-guessing question as **explicitly unanswerable**. It is now answered.
+
+**137 tool calls across 27 attempts. 8 failed.**
+
+```text
+by tool:        list_files 26, search_text 17, read_file 63, edit_file 20, bash 11
+failed by tool: bash 5, read_file 3
+```
+
+### Does the model guess paths? No.
+
+All three failed `read_file` calls are on `no-hallucinated-read`, the task that
+asks about a file that does not exist:
+
+```text
+no-hallucinated-read attempt 1 call#1: read_file FAILED
+no-hallucinated-read attempt 2 call#2: read_file FAILED
+no-hallucinated-read attempt 3 call#2: read_file FAILED
+```
+
+There, a failed read is the **correct** behaviour — it is the model checking
+the premise before refusing it, and that task deliberately carries no
+`tool-never-failed` grader. All three attempts passed.
+
+**Across the other eight tasks, 60 `read_file` calls, zero failures.** On the
+two tasks that grade it (`needle-in-many-files`, `trace-the-default`,
+`tool-never-failed read_file`) and on `decoy-config`
+(`tool-never-failed edit_file`), the grader never fired. `write_file` was
+called **0 times** in 27 attempts, as in the first baseline.
+
+First call of each attempt: `list_files` 20, `search_text` 6, `read_file` 1.
+The single opening `read_file` is `no-hallucinated-read` going straight at the
+path in the prompt — which is the sensible move there, and it failed as it
+should.
+
+So: **this model does not speculate about paths. It orients first
+(`list_files` or `search_text`), then reads what it has confirmed exists.**
+That is a real, positive finding about the model, and it is exactly the finding
+the deduplicated `toolsUsed` set made impossible — attempts 2 and 3 of
+`no-hallucinated-read` have the same `toolsUsed` as a hypothetical
+guess-then-recover run, and only the ordered trace with `ok` flags separates
+them.
+
+### One caveat on the `ok` flag, worth recording
+
+`ok: false` means `isError` on the tool result, and `BashTool` sets
+`isError: true` on any **non-zero exit code** (`src/tools/bash.ts:147-151`).
+So all five failed `bash` calls are the *deliberately failing test* being run —
+required, correct behaviour on `wrong-test` and `fix-failing-test`:
+
+```text
+fix-failing-test attempt 1 call#5: bash FAILED
+wrong-test attempts 1,2,3: bash FAILED (attempt 3 twice)
+```
+
+**`ok` conflates "the tool malfunctioned" with "the command correctly reported
+failure".** For `read_file` the two coincide, which is why `tool-never-failed
+read_file` is sound. For `bash` they do not, and `tool-never-failed bash` would
+be actively wrong on any task that runs a failing test. Neither task uses it —
+correct as written, but the constraint is currently undocumented. This is a
+**documentation gap in the new instrumentation**, not a bug: worth a line in
+`docs/stage-11-evals.md` before someone reaches for `tool-never-failed bash`.
+
+## 5. Turns, latency, tokens; did the older five move?
+
+### Turns
+
+No attempt came close to its ceiling.
+
+| task | turns | maxTurns |
+|---|---|---|
+| `decoy-config` | 6, 5, 4 | 12 |
+| `find-auth-logic` | 3, 3, 3 | 8 |
+| `fix-failing-test` | 6, 5, 5 | 16 |
+| `needle-in-many-files` | 3, 3, 3 | 10 |
+| `no-hallucinated-read` | 4, 3, 4 | 8 |
+| `rename-symbol` | 4, 4, 4 | 12 |
+| `respect-line-endings` | 4, 4, 4 | 10 |
+| `trace-the-default` | 3, 4, 3 | 10 |
+| `wrong-test` | 6, 6, 7 | 16 |
+
+Maximum observed is 7 against a ceiling of 16. The `max-turns-under: 5` grader
+on `needle-in-many-files` — the one turn-budget assertion in the suite — was
+never within 2 turns of firing.
+
+### Latency
+
+p50 per task 3.3s–18.4s. `wrong-test` is the outlier at 18.4s (range
+13.0–34.5s); it is the only task that shells out twice. `decoy-config`'s p50 of
+10.7s hides a wide spread (6.6s / 10.7s / 39.0s). Everything else sits in
+3.3–7.9s, in line with the first baseline.
+
+### Tokens
+
+Suite total 241,838 — close to the ~250k the stage doc predicted. Validated
+rather than assumed, as last time:
+
+- `complete: true` on all 27 attempts.
+- `inputTokens + outputTokens == totalTokens` on all 27. No drift.
+- `cachedInputTokens <= inputTokens` on all 27.
+- `reasoningTokens` correctly **absent** rather than `0` on 2 attempts —
+  the "missing stays missing" behaviour, confirmed again.
+- Cache-hit share of input 92.8% (92.2% in the first baseline).
+
+### Did the older five move?
+
+Not materially. All 15/15 both times.
+
+| task | first baseline (run 2) | this run |
+|---|---|---|
+| `find-auth-logic` | 3/3, 3.3 turns, 3.8k | 3/3, 3.0 turns, **5.0k** |
+| `fix-failing-test` | 3/3, 5.0 turns, 10.9k | 3/3, 5.3 turns, 10.9k |
+| `no-hallucinated-read` | 3/3, 3.0 turns, 4.0k | 3/3, 3.7 turns, 5.3k |
+| `rename-symbol` | 3/3, 4.0 turns, 7.6k | 3/3, 4.0 turns, 7.8k |
+| `respect-line-endings` | 3/3, 4.0 turns, 6.5k | 3/3, 4.0 turns, 6.4k |
+
+Two changes are explained by Stage 13 rather than by the model:
+
+- **`find-auth-logic` 3.8k → 5.0k median tokens.** §4.1 granted it `writes` to
+  make its `not-used-tool` graders real. It now carries `write_file` and
+  `edit_file` schemas in every request. The graders held: `write_file` and
+  `edit_file` were called 0 times, so the assertion that was worthless in the
+  first baseline is now both real and satisfied.
+- **`no-hallucinated-read` 3.0 → 3.7 turns, and `search_text` now appears.**
+  The model probed harder before refusing. It passed 3/3 either way; the D1
+  regex fix (`there is no|isn't any|is no such`) was not needed by any attempt
+  in this run, so it remains untested against the phrasing that motivated it.
+
+## Defects and observations
+
+Separated as requested. Nothing below was patched during the run.
+
+### Task defects (the suite's problem, not the model's)
+
+**T1 — `trace-the-default`'s fixture is too small to test what it claims.**
+Four files, and the model read all four before answering on every attempt. The
+multi-hop trap cannot fire when exhaustive reading is cheaper than tracing.
+Fix: relocate the `defaults` → `client` → `env` chain into a
+`needle-in-many-files`-sized fixture. Highest-value change for the next stage.
+
+**Fixed in the commit that lands this document.** The chain now sits in a
+41-file fixture with decoy timeouts in unrelated modules (a cache TTL, a socket
+idle limit, a job budget), so grepping `timeout` does not answer the question in
+one step. A new `max-tool-calls` grader budgets `read_file` at 8: turns cannot
+express this, because a model may issue any number of calls in one turn, which
+is exactly how this task passed while reading everything. **This run's 3/3 on
+`trace-the-default` therefore does not carry forward** — the task it measured no
+longer exists.
+
+**T2 — three of four new tasks are saturated after one run.**
+`needle-in-many-files`, `trace-the-default`, `wrong-test` at 3/3. By §5.5 all
+three are on the watch list, not just `wrong-test` as the stage doc
+anticipated. Recommendation: keep `needle-in-many-files` as instrumentation
+(§4), fix `trace-the-default` per T1, and cut `wrong-test` if a second model
+also sweeps it — it is the most expensive task in the suite and currently the
+least informative per token.
+
+**T3 (kept deliberately) — `decoy-config`'s `not-used-tool: write_file` is
+stricter than the prompt.** A model that correctly identifies `src/settings/http.ts` and rewrites
+it with `write_file` fails a task whose prompt says nothing about which tool to
+use. It did not fire here (`write_file`: 0 calls), so this is a latent
+sharp edge, not an observed problem. Flagging it because it is the kind of
+grader that produces an unintended failure later and gets misread as a model
+result. **Kept as written**: it is the same assertion `rename-symbol` carries,
+and the suite's stated position is that tool misuse is a graded failure mode for
+a coding agent. Its failure line names the tool and the count, so it cannot be
+misread as a wrong answer. Recorded here so the next person to meet it knows it
+is deliberate.
+
+### chivgent observations
+
+**C1 — `ok: false` conflates tool malfunction with non-zero exit.** See §4.
+Not a bug; an undocumented constraint on where `tool-never-failed` is valid.
+**Documented in the commit that lands this document** (`docs/stage-11-evals.md`
+§11.1, both READMEs, and a comment on the grader itself).
+
+**C2 — `--attempts` silently overrides per-task `attempts`.**
+`find-auth-logic` and `no-hallucinated-read` both declare `"attempts": 5` in
+their `task.json`; `--attempts 3` ran them 3 times. Almost certainly intended,
+but the per-task field now reads as decorative and the report does not say
+which number won.
+
+**C3 — the report's `tokens` column is a median and is not labelled.**
+`report.ts:30`, `medianTokens`. `decoy-config` shows `11.3k` against a task
+total of 41.4k. Easy to misread as a total when comparing runs; the header
+should say `tok/att` or similar. **Fixed in the commit that lands this
+document**: the header now reads `tok/att`.
+
+Nothing from D4/D5 recurred: the credential was passed via the environment and
+does not appear in `baseline.json` or in this document.
 
 ## How this was run
 
 ```bash
+git fetch origin claude/progress-check-pqu8i6
+git checkout claude/progress-check-pqu8i6
 npm ci && npm run build
-export DEEPSEEK_API_KEY=...            # not committed, not logged
-npm run eval -- --provider deepseek --api-key "$DEEPSEEK_API_KEY" \
-  --allow-writes --allow-shell --attempts 3 --json baseline.json
+npm test                                # 401 passed
+
+export DEEPSEEK_API_KEY=...             # not committed, not logged
+node dist/cli.js --provider deepseek --no-stream --no-session \
+  "reply with exactly: ok"              # printed: ok
+
+npm run eval -- --provider deepseek --allow-writes --allow-shell \
+  --attempts 3 --json baseline.json
 ```
 
-Smoke test first, which returned `ok`:
+The credential was supplied only through the environment, per D4 in the first
+baseline. No task was skipped, none hung, none needed `--task`.
 
-```bash
-node dist/cli.js --provider deepseek --api-key "$DEEPSEEK_API_KEY" \
-  --no-stream --no-session "reply with exactly: ok"
-```
+## What this still does not establish
 
-The `--api-key` fix on this branch works. Confirmed in isolation with the
-environment variable explicitly unset, so the flag was the only credential
-source; the run succeeded. With neither present the CLI gives its configuration
-message rather than a table of zeros, as intended.
-
-No task was skipped, no task hung, and nothing needed narrowing with `--task`.
-The full suite takes about 80 seconds.
-
-### Caveat on run 1's credential source
-
-Run 1 was launched as `DEEPSEEK_API_KEY=... npm run eval -- --api-key "$DEEPSEEK_API_KEY" ...`.
-The shell expands `"$DEEPSEEK_API_KEY"` *before* applying the prefix
-assignment, so the flag received an empty string and, per D5, the credential
-silently came from the environment instead. The run is valid — both are
-sanctioned sources and the model saw an identical workload — but it did not
-exercise the flag. Run 2 was re-run with the key genuinely on `--api-key`,
-which is why it is the run of record.
-
-## What this does not establish
-
-- **n = 3 per task per run.** With 29/30 passing there is no variance to
-  estimate; a task that fails 10% of the time would likely show 3/3 here.
-- **One model, one provider, one afternoon.** No cross-model comparison, and
-  no evidence about how any of this moves over time.
-- **No cost figures.** Tokens are recorded; prices are not.
-- **The ceiling is untested.** Every task is small — single-digit files, a
-  one-line fix, a two-file rename. Nothing here probes multi-file reasoning,
-  ambiguous instructions, or recovery from a bad first move.
-
-The useful next step is not another baseline at these settings. It is harder
-tasks, plus D1 and D3, so the suite can distinguish models rather than
-confirm they are switched on.
+- **n = 3, one model, one run.** The single failure could be noise. A task
+  failing 20% of the time would plausibly show 3/3 here, and `decoy-config`
+  showing 2/3 does not establish that it will show 2/3 again.
+- **No cross-model comparison.** §5.5 needs a second model to act on, and the
+  three watch-listed tasks cannot be judged for elimination without one. This
+  remains the single most valuable next step, and it is a credentials problem
+  rather than a code problem.
+- **The regex fix from D1 is still untested in practice.** No attempt phrased
+  the refusal in a way that needed it.
+- **The ceiling is still not found.** One task out of nine produced a failure.
+  The suite can now tell a careless edit from a careful one; it still cannot
+  rank two competent models.

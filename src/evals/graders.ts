@@ -194,6 +194,10 @@ const factories: Record<string, GraderFactory> = {
   },
 
   "tool-never-failed": (spec) => {
+    // Sound only where a failure means the model was wrong. `bash` sets
+    // isError on any non-zero exit, so on a task that runs a failing test —
+    // fix-failing-test, wrong-test — the correct behaviour is a failed call
+    // and this grader would punish it.
     const name = requireString(spec, "name");
     return async ({ events }) => {
       // A guessed path shows up here: reading a file that is not there is the
@@ -203,6 +207,25 @@ const factories: Record<string, GraderFactory> = {
         ? pass
         : fail(
             `${name} failed ${failures.length} time(s); this task expects it to be called only on paths the model established exist`,
+          );
+    };
+  },
+
+  "max-tool-calls": (spec) => {
+    const name = requireString(spec, "name");
+    const limit = spec.count;
+    if (!Number.isSafeInteger(limit) || (limit as number) < 1) {
+      throw new Error('max-tool-calls: "count" must be a positive integer.');
+    }
+    return async ({ events }) => {
+      // Turns cannot express this: a model may issue any number of calls in
+      // one turn, so "did it read the whole project" is a call count, not a
+      // turn count.
+      const used = toolCalls(events).filter((tool) => tool === name).length;
+      return used <= (limit as number)
+        ? pass
+        : fail(
+            `called ${name} ${used} times, over the budget of ${limit as number}; this task expects the answer to be found rather than read out of everything`,
           );
     };
   },

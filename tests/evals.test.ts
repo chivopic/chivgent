@@ -286,6 +286,33 @@ describe("graders", () => {
     ).rejects.toThrow(/not in the fixture/);
   });
 
+  it("budgets tool calls, which turns cannot express", async () => {
+    const grader = createGrader({ type: "max-tool-calls", name: "read_file", count: 2 });
+
+    expect(
+      await grader(facts({ events: [toolEnd("read_file"), toolEnd("read_file")] })),
+    ).toMatchObject({ passed: true });
+
+    const failure = await grader(
+      facts({
+        events: [toolEnd("read_file"), toolEnd("read_file"), toolEnd("read_file")],
+      }),
+    );
+    expect(failure.passed).toBe(false);
+    expect(failure.reason).toContain("called read_file 3 times");
+  });
+
+  it("counts a failed call against the budget too", async () => {
+    // Reading a file is spending the budget whether or not the file was there.
+    const failure = await createGrader({
+      type: "max-tool-calls",
+      name: "read_file",
+      count: 1,
+    })(facts({ events: [toolEnd("read_file", true), toolEnd("read_file")] }));
+
+    expect(failure.passed).toBe(false);
+  });
+
   it("refuses an unknown grader type and lists the known ones", () => {
     expect(() => createGrader({ type: "vibes" })).toThrow(/Unknown grader type/);
     expect(GRADER_TYPES).toContain("file-contains");
@@ -294,6 +321,9 @@ describe("graders", () => {
   it("refuses a grader missing its arguments", () => {
     expect(() => createGrader({ type: "file-contains", path: "a" })).toThrow(/text/);
     expect(() => createGrader({ type: "max-turns-under" })).toThrow(/turns/);
+    expect(() => createGrader({ type: "max-tool-calls", name: "read_file" })).toThrow(
+      /count/,
+    );
   });
 });
 
@@ -784,22 +814,54 @@ describe("the new tasks, driven by a scripted model", () => {
   it("trace-the-default catches the model that stopped at the first hop", async () => {
     const attempt = await run("trace-the-default", [], [
       assistant("", [
-        { id: "1", name: "read_file", arguments: { path: "src/client.ts" } },
+        { id: "1", name: "read_file", arguments: { path: "src/http/client.ts" } },
       ]),
-      assistant("It uses the default of 5000 ms, set in src/defaults.ts."),
+      assistant("It uses the default of 5000 ms, set in src/config/defaults.ts."),
     ]);
 
     expect(attempt?.passed).toBe(false);
     expect(attempt?.failures.join("\n")).toContain("30[,. ]?000");
   });
 
-  it("trace-the-default accepts the answer that followed the override", async () => {
+  it("trace-the-default catches the model that read the whole project", async () => {
+    // The first run of this task passed because the fixture was four files, so
+    // reading all of it was cheaper than following the imports. Turns cannot
+    // express the difference — a model may read many files in one turn.
+    const reads = Array.from({ length: 9 }, (_, index) =>
+      assistant("", [
+        {
+          id: `r${index}`,
+          name: "read_file",
+          arguments: { path: `src/services/${["accounts", "billing", "catalog", "comments", "devices", "exports", "feeds", "groups", "invites"][index]}.ts` },
+        },
+      ]),
+    );
+
+    const attempt = await run("trace-the-default", [], [
+      ...reads,
+      assistant(
+        "In production it uses 30000 ms, defined in src/config/environments.ts.",
+      ),
+    ]);
+
+    expect(attempt?.passed).toBe(false);
+    expect(attempt?.failures.join("\n")).toContain("called read_file 9 times");
+  });
+
+  it("trace-the-default accepts the answer that followed the imports", async () => {
     const attempt = await run("trace-the-default", [], [
       assistant("", [
-        { id: "1", name: "read_file", arguments: { path: "src/app.ts" } },
+        { id: "1", name: "read_file", arguments: { path: "src/bootstrap.ts" } },
+      ]),
+      assistant("", [
+        {
+          id: "2",
+          name: "read_file",
+          arguments: { path: "src/config/environments.ts" },
+        },
       ]),
       assistant(
-        "In production it uses 30000 ms, defined as PRODUCTION_TIMEOUT_MS in src/env.ts.",
+        "In production it uses 30000 ms, defined as PRODUCTION_TIMEOUT_MS in src/config/environments.ts.",
       ),
     ]);
 

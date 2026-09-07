@@ -1,10 +1,10 @@
-import { DEFAULTS } from "./defaults.js";
+import { DEFAULTS } from "../config/defaults.js";
 
 export interface ClientOptions {
   readonly timeoutMs?: number;
 }
 
-export function createClient(options: ClientOptions = {}) {
+export function createHttpClient(options: ClientOptions = {}) {
   const timeoutMs = options.timeoutMs ?? DEFAULTS.timeoutMs;
   return {
     timeoutMs,
