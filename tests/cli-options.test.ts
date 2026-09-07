@@ -178,7 +178,7 @@ describe("CLI options", () => {
     expect(helpText()).toContain("--context-window");
     expect(helpText()).toContain("--no-compaction");
     expect(helpText()).toContain("--allow-shell");
-    expect(VERSION).toBe("0.12.0");
+    expect(VERSION).toBe("0.13.0");
   });
 });
 

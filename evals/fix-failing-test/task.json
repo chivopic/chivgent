@@ -1,0 +1,13 @@
+{
+  "name": "fix-failing-test",
+  "prompt": "Run `node test.js`. It fails. Fix the source so the test passes, then run it again to confirm.",
+  "capabilities": ["writes", "shell"],
+  "attempts": 5,
+  "maxTurns": 16,
+  "graders": [
+    { "type": "file-contains", "path": "sum.js", "text": "index = 0" },
+    { "type": "used-tool", "name": "bash" },
+    { "type": "tool-succeeded", "name": "bash" },
+    { "type": "not-used-tool", "name": "write_file" }
+  ]
+}

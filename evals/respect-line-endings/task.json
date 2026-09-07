@@ -1,0 +1,12 @@
+{
+  "name": "respect-line-endings",
+  "prompt": "In values.ts change the value of b from 2 to 20. Leave every other line exactly as it is.",
+  "capabilities": ["writes"],
+  "attempts": 5,
+  "maxTurns": 10,
+  "graders": [
+    { "type": "file-contains", "path": "values.ts", "text": "export const b = 20;" },
+    { "type": "file-equals", "path": "values.ts", "text": "export const a = 1;\r\nexport const b = 20;\r\nexport const c = 3;\r\n" },
+    { "type": "used-tool", "name": "edit_file" }
+  ]
+}
