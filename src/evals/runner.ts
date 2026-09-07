@@ -3,17 +3,17 @@ import { Agent as AgentClass } from "../agent.js";
 import type { AgentEvent } from "../events.js";
 import type { LLMClient } from "../llm.js";
 import type { UsageTotal } from "../providers/usage.js";
-import type { Tool } from "../tools/tool.js";
 import { LocalWorkspace } from "../workspace.js";
-import { ListFilesTool } from "../tools/list-files.js";
-import { ReadFileTool } from "../tools/read-file.js";
-import { SearchTextTool } from "../tools/search-text.js";
-import { WriteFileTool } from "../tools/write-file.js";
-import { EditFileTool } from "../tools/edit-file.js";
-import { BashTool } from "../tools/bash.js";
+import { toolsFor } from "./tools.js";
 import { createAttemptWorkspace } from "./fixture.js";
 import { createGrader, describeGrader, type AttemptFacts } from "./graders.js";
 import type { Capability, Task } from "./task.js";
+
+/** One tool result, in call order. Arguments are deliberately not kept. */
+export interface ToolCallRecord {
+  readonly name: string;
+  readonly ok: boolean;
+}
 
 export interface AttemptResult {
   readonly attempt: number;
@@ -22,6 +22,14 @@ export interface AttemptResult {
   readonly turnCount: number;
   readonly durationMs: number;
   readonly toolsUsed: readonly string[];
+  /**
+   * Every call in order, with whether it succeeded.
+   *
+   * `toolsUsed` is a deduplicated set, so a model that guessed a path, got an
+   * error and recovered looks identical there to one that never guessed. This
+   * is what makes that question answerable from the report.
+   */
+  readonly toolCalls: readonly ToolCallRecord[];
   /** What the attempt cost, when the Provider reported it. */
   readonly usage?: UsageTotal;
   /** One entry per failed grader, in task order. */
@@ -36,7 +44,12 @@ export interface TaskResult {
 }
 
 export interface RunnerOptions {
-  /** Built per attempt, so a test can hand out a fresh fake each time. */
+  /**
+   * Called once per attempt, so a test can hand out a fresh fake each time.
+   * The CLI returns the same client every time on purpose: it holds only
+   * readonly config and takes the history per request, so attempts cannot
+   * leak into one another through it.
+   */
   readonly createClient: () => LLMClient;
   readonly systemPrompt: string;
   readonly capabilities: readonly Capability[];
@@ -54,24 +67,6 @@ export class MissingCapabilityError extends Error {
     );
     this.name = "MissingCapabilityError";
   }
-}
-
-function toolsFor(
-  capabilities: readonly Capability[],
-  cwd: string,
-): readonly Tool[] {
-  const tools: Tool[] = [
-    new ListFilesTool(),
-    new SearchTextTool(),
-    new ReadFileTool(),
-  ];
-  if (capabilities.includes("writes")) {
-    tools.push(new WriteFileTool(), new EditFileTool());
-  }
-  if (capabilities.includes("shell")) {
-    tools.push(new BashTool({ cwd }));
-  }
-  return tools;
 }
 
 function missingCapabilities(
@@ -127,6 +122,7 @@ async function runAttempt(
 
     const facts: AttemptFacts = {
       workspace: workspace.path,
+      fixtureDirectory: task.fixtureDirectory,
       finalAnswer,
       turnCount,
       status,
@@ -148,6 +144,13 @@ async function runAttempt(
       }
     }
 
+    const calls: readonly ToolCallRecord[] = events
+      .filter((event) => event.type === "tool_execution_end")
+      .map((event) => ({
+        name: (event as { toolName: string }).toolName,
+        ok: (event as { isError: boolean }).isError === false,
+      }));
+
     return {
       attempt,
       passed: failures.length === 0,
@@ -155,13 +158,8 @@ async function runAttempt(
       turnCount,
       durationMs: Date.now() - startedAt,
       ...(usage === undefined ? {} : { usage }),
-      toolsUsed: [
-        ...new Set(
-          events
-            .filter((event) => event.type === "tool_execution_end")
-            .map((event) => (event as { toolName: string }).toolName),
-        ),
-      ],
+      toolsUsed: [...new Set(calls.map((call) => call.name))],
+      toolCalls: calls,
       failures,
     };
   } finally {

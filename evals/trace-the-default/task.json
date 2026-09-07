@@ -1,0 +1,21 @@
+{
+  "name": "trace-the-default",
+  "prompt": "When this app runs in production, what request timeout does the HTTP client end up using? Give the number in milliseconds and name the file where that value is defined.",
+  "capabilities": [],
+  "attempts": 3,
+  "maxTurns": 10,
+  "graders": [
+    {
+      "type": "answer-matches",
+      "pattern": "30[,. ]?000"
+    },
+    {
+      "type": "answer-matches",
+      "pattern": "env\\.ts"
+    },
+    {
+      "type": "tool-never-failed",
+      "name": "read_file"
+    }
+  ]
+}

@@ -5,7 +5,13 @@
   "attempts": 5,
   "maxTurns": 8,
   "graders": [
-    { "type": "answer-matches", "pattern": "not exist|no such file|could not find|doesn't exist|does not exist|no .{0,20}file" },
-    { "type": "answer-excludes", "pattern": "migration (runs|applies|executes)" }
+    {
+      "type": "answer-matches",
+      "pattern": "not exist|no such file|could not find|doesn't exist|does not exist|there is no|isn't any|is no such|no .{0,20}file"
+    },
+    {
+      "type": "answer-excludes",
+      "pattern": "migration (runs|applies|executes)"
+    }
   ]
 }

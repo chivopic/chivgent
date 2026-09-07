@@ -7,6 +7,7 @@ import type { AttemptFacts } from "../src/evals/graders.js";
 import { createAttemptWorkspace } from "../src/evals/fixture.js";
 import { loadTask, loadTasks, parseTask, TaskError } from "../src/evals/task.js";
 import { parseEvalArgs } from "../src/evals/parse-args.js";
+import { toolNamesFor, toolsFor } from "../src/evals/tools.js";
 import { MissingCapabilityError, runTask } from "../src/evals/runner.js";
 import { formatFailures, formatTable, toJsonReport } from "../src/evals/report.js";
 import { assistant, FakeLLMClient } from "./fakes.js";
@@ -31,6 +32,7 @@ afterEach(async () => {
 function facts(overrides: Partial<AttemptFacts> = {}): AttemptFacts {
   return {
     workspace: "/nowhere",
+    fixtureDirectory: "/nowhere",
     finalAnswer: "",
     turnCount: 1,
     status: "completed",
@@ -219,6 +221,71 @@ describe("graders", () => {
     ).toMatchObject({ passed: true });
   });
 
+  it("catches a guessed path through the tool call that failed", async () => {
+    // The whole point: a deduplicated set of tool names cannot tell a model
+    // that guessed and recovered from one that never guessed.
+    const guessed = createGrader({ type: "tool-never-failed", name: "read_file" });
+
+    const failure = await guessed(
+      facts({ events: [toolEnd("read_file", true), toolEnd("read_file")] }),
+    );
+    expect(failure.passed).toBe(false);
+    expect(failure.reason).toContain("read_file failed 1 time(s)");
+
+    expect(
+      await guessed(facts({ events: [toolEnd("read_file"), toolEnd("list_files")] })),
+    ).toMatchObject({ passed: true });
+  });
+
+  it("ignores another tool's failures", async () => {
+    expect(
+      await createGrader({ type: "tool-never-failed", name: "read_file" })(
+        facts({ events: [toolEnd("bash", true)] }),
+      ),
+    ).toMatchObject({ passed: true });
+  });
+
+  it("compares an untouched file against the fixture, not against a copy", async () => {
+    const fixtureDirectory = await temporaryDirectory();
+    const workspace = await temporaryDirectory();
+    await writeFile(path.join(fixtureDirectory, "decoy.ts"), "a\nb\nc\n");
+    await writeFile(path.join(workspace, "decoy.ts"), "a\nb\nc\n");
+
+    const grader = createGrader({ type: "file-unchanged", path: "decoy.ts" });
+    expect(await grader(facts({ workspace, fixtureDirectory }))).toMatchObject({
+      passed: true,
+    });
+
+    await writeFile(path.join(workspace, "decoy.ts"), "a\nB\nc\n");
+    const failure = await grader(facts({ workspace, fixtureDirectory }));
+    expect(failure.passed).toBe(false);
+    expect(failure.reason).toContain("line 2");
+  });
+
+  it("counts a deleted file as changed", async () => {
+    const fixtureDirectory = await temporaryDirectory();
+    const workspace = await temporaryDirectory();
+    await writeFile(path.join(fixtureDirectory, "decoy.ts"), "a\n");
+
+    const failure = await createGrader({ type: "file-unchanged", path: "decoy.ts" })(
+      facts({ workspace, fixtureDirectory }),
+    );
+    expect(failure.passed).toBe(false);
+    expect(failure.reason).toContain("deleted");
+  });
+
+  it("refuses to grade a file that is not in the fixture", async () => {
+    // Silently passing would make the grader look like it was checking.
+    const fixtureDirectory = await temporaryDirectory();
+    const workspace = await temporaryDirectory();
+
+    await expect(
+      createGrader({ type: "file-unchanged", path: "typo.ts" })(
+        facts({ workspace, fixtureDirectory }),
+      ),
+    ).rejects.toThrow(/not in the fixture/);
+  });
+
   it("refuses an unknown grader type and lists the known ones", () => {
     expect(() => createGrader({ type: "vibes" })).toThrow(/Unknown grader type/);
     expect(GRADER_TYPES).toContain("file-contains");
@@ -296,6 +363,42 @@ describe("runner", () => {
     expect(result.passed).toBe(2);
     expect(result.total).toBe(3);
     expect(result.attempts.map((attempt) => attempt.passed)).toEqual([true, false, true]);
+  });
+
+  it("records every tool call in order, with whether it succeeded", async () => {
+    const root = await temporaryDirectory();
+    const directory = await writeTask(root, "trace", {
+      name: "trace",
+      prompt: "read things",
+      attempts: 1,
+      graders: [{ type: "answer-matches", pattern: "done" }],
+    });
+    await writeFile(path.join(directory, "fixture", "real.ts"), "export const a = 1;\n");
+    const task = await loadTask(directory);
+
+    const result = await runTask(task, {
+      ...baseOptions,
+      createClient: clientSequence([
+        [
+          // A guessed path, then a recovery. Both land in the same set.
+          assistant("", [
+            { id: "1", name: "read_file", arguments: { path: "guessed.ts" } },
+          ]),
+          assistant("", [
+            { id: "2", name: "read_file", arguments: { path: "real.ts" } },
+          ]),
+          assistant("done"),
+        ],
+      ]),
+    });
+
+    expect(result.attempts[0]?.toolCalls).toEqual([
+      { name: "read_file", ok: false },
+      { name: "read_file", ok: true },
+    ]);
+    // The set the table uses cannot distinguish this from a clean run, which
+    // is why the ordered list exists alongside it.
+    expect(result.attempts[0]?.toolsUsed).toEqual(["read_file"]);
   });
 
   it("records why each attempt failed", async () => {
@@ -483,8 +586,8 @@ describe("report", () => {
       total: 2,
       passed: 1,
       attempts: [
-        { attempt: 1, passed: true, status: "completed" as const, turnCount: 2, durationMs: 1000, toolsUsed: ["read_file"], failures: [] },
-        { attempt: 2, passed: false, status: "completed" as const, turnCount: 4, durationMs: 3000, toolsUsed: ["read_file"], failures: ["used-tool name=\"edit_file\" — never called edit_file"] },
+        { attempt: 1, passed: true, status: "completed" as const, turnCount: 2, durationMs: 1000, toolsUsed: ["read_file"], toolCalls: [{ name: "read_file", ok: true }], failures: [] },
+        { attempt: 2, passed: false, status: "completed" as const, turnCount: 4, durationMs: 3000, toolsUsed: ["read_file"], toolCalls: [{ name: "read_file", ok: false }, { name: "read_file", ok: true }], failures: ["used-tool name=\"edit_file\" — never called edit_file"] },
       ],
     },
   ];
@@ -531,6 +634,262 @@ describe("report", () => {
   });
 });
 
+describe("the new tasks, driven by a scripted model", () => {
+  // A grader that has never been seen to fail is worth as little as the
+  // vacuous one this stage removed. Each task is run twice: once down the
+  // path it is meant to reward, once down the mistake it exists to catch.
+  const shipped = (name: string) =>
+    loadTask(path.join(process.cwd(), "evals", name));
+
+  async function run(
+    name: string,
+    capabilities: readonly ("writes" | "shell")[],
+    script: readonly LLMResponse[],
+  ) {
+    const task = await shipped(name);
+    const result = await runTask(task, {
+      systemPrompt: "system",
+      capabilities,
+      attempts: 1,
+      createClient: () => new FakeLLMClient([...script]),
+    });
+    return result.attempts[0];
+  }
+
+  it("decoy-config rewards editing the module the entry point imports", async () => {
+    const attempt = await run("decoy-config", ["writes"], [
+      assistant("", [
+        { id: "1", name: "read_file", arguments: { path: "src/index.ts" } },
+      ]),
+      assistant("", [
+        {
+          id: "2",
+          name: "edit_file",
+          arguments: {
+            path: "src/settings/http.ts",
+            old_text: "timeoutSeconds: 30",
+            new_text: "timeoutSeconds: 60",
+          },
+        },
+      ]),
+      assistant("Changed the timeout in src/settings/http.ts."),
+    ]);
+
+    expect(attempt?.failures).toEqual([]);
+  });
+
+  it("decoy-config catches the model that edited the dead module", async () => {
+    const attempt = await run("decoy-config", ["writes"], [
+      assistant("", [
+        {
+          id: "1",
+          name: "edit_file",
+          arguments: {
+            path: "src/config/http.ts",
+            old_text: "timeoutSeconds: 30",
+            new_text: "timeoutSeconds: 60",
+          },
+        },
+      ]),
+      assistant("Changed the timeout."),
+    ]);
+
+    expect(attempt?.passed).toBe(false);
+    expect(attempt?.failures.join("\n")).toContain("src/config/http.ts was modified");
+    expect(attempt?.failures.join("\n")).toContain("src/settings/http.ts");
+  });
+
+  it("wrong-test rewards fixing the test that contradicts the contract", async () => {
+    const attempt = await run("wrong-test", ["writes", "shell"], [
+      assistant("", [
+        { id: "1", name: "bash", arguments: { command: "node test.js" } },
+      ]),
+      assistant("", [
+        {
+          id: "2",
+          name: "edit_file",
+          arguments: {
+            path: "test.js",
+            old_text: '"--hello---world--"',
+            new_text: '"hello-world"',
+          },
+        },
+      ]),
+      assistant("The test contradicted the documented contract; fixed the test."),
+    ]);
+
+    expect(attempt?.failures).toEqual([]);
+  });
+
+  it("wrong-test catches the model that bent the source to fit the test", async () => {
+    const attempt = await run("wrong-test", ["writes", "shell"], [
+      assistant("", [
+        { id: "1", name: "bash", arguments: { command: "node test.js" } },
+      ]),
+      assistant("", [
+        {
+          id: "2",
+          name: "edit_file",
+          arguments: {
+            path: "slug.js",
+            old_text: "title.trim()",
+            new_text: "title",
+          },
+        },
+      ]),
+      assistant("Fixed the source."),
+    ]);
+
+    expect(attempt?.passed).toBe(false);
+    expect(attempt?.failures.join("\n")).toContain("slug.js was modified");
+  });
+
+  it("needle-in-many-files rewards searching over guessing", async () => {
+    const attempt = await run("needle-in-many-files", [], [
+      assistant("", [
+        {
+          id: "1",
+          name: "search_text",
+          arguments: { pattern: "computeRetryBudget" },
+        },
+      ]),
+      assistant(
+        "src/module23.ts defines it; it multiplies attempts by baseDelayMs and doubles the result.",
+      ),
+    ]);
+
+    expect(attempt?.failures).toEqual([]);
+  });
+
+  it("needle-in-many-files catches the model that read its way there", async () => {
+    // Right answer, wrong method — and the guessed reads show up as failures.
+    const attempt = await run("needle-in-many-files", [], [
+      assistant("", [
+        { id: "1", name: "read_file", arguments: { path: "src/retry.ts" } },
+      ]),
+      assistant("", [
+        { id: "2", name: "read_file", arguments: { path: "src/module23.ts" } },
+      ]),
+      assistant(
+        "src/module23.ts defines it; it multiplies attempts by baseDelayMs and doubles the result.",
+      ),
+    ]);
+
+    expect(attempt?.passed).toBe(false);
+    const reasons = attempt?.failures.join("\n") ?? "";
+    expect(reasons).toContain("never called search_text");
+    expect(reasons).toContain("read_file failed 1 time(s)");
+  });
+
+  it("trace-the-default catches the model that stopped at the first hop", async () => {
+    const attempt = await run("trace-the-default", [], [
+      assistant("", [
+        { id: "1", name: "read_file", arguments: { path: "src/client.ts" } },
+      ]),
+      assistant("It uses the default of 5000 ms, set in src/defaults.ts."),
+    ]);
+
+    expect(attempt?.passed).toBe(false);
+    expect(attempt?.failures.join("\n")).toContain("30[,. ]?000");
+  });
+
+  it("trace-the-default accepts the answer that followed the override", async () => {
+    const attempt = await run("trace-the-default", [], [
+      assistant("", [
+        { id: "1", name: "read_file", arguments: { path: "src/app.ts" } },
+      ]),
+      assistant(
+        "In production it uses 30000 ms, defined as PRODUCTION_TIMEOUT_MS in src/env.ts.",
+      ),
+    ]);
+
+    expect(attempt?.failures).toEqual([]);
+  });
+});
+
+describe("the tool list a task's capabilities grant", () => {
+  const combinations: (readonly ("writes" | "shell")[])[] = [
+    [],
+    ["writes"],
+    ["shell"],
+    ["writes", "shell"],
+  ];
+
+  it("names exactly the tools the runner builds", () => {
+    // The two lists exist separately because one needs a cwd and the other is
+    // consulted before any workspace exists. This is what stops them drifting.
+    for (const capabilities of combinations) {
+      expect(toolNamesFor(capabilities)).toEqual(
+        toolsFor(capabilities, "/nowhere").map((tool) => tool.name),
+      );
+    }
+  });
+
+  it("refuses a grader that forbids a tool the task never grants", () => {
+    // The assertion would be vacuously true: the model cannot call what it was
+    // never given, so the grader reads like a check and is worth nothing.
+    expect(() =>
+      parseTask(
+        {
+          prompt: "p",
+          capabilities: [],
+          graders: [{ type: "not-used-tool", name: "write_file" }],
+        },
+        "/tasks/t",
+        "/tasks/t/fixture",
+      ),
+    ).toThrow(/never grants/);
+  });
+
+  it("refuses a grader that requires a tool the task never grants", () => {
+    // The mirror image: this one can never pass, so every attempt scores zero
+    // for a reason that has nothing to do with the model.
+    expect(() =>
+      parseTask(
+        {
+          prompt: "p",
+          capabilities: [],
+          graders: [{ type: "used-tool", name: "bash" }],
+        },
+        "/tasks/t",
+        "/tasks/t/fixture",
+      ),
+    ).toThrow(/never grants/);
+  });
+
+  it("names the task and the grader so the fix is obvious", () => {
+    expect(() =>
+      parseTask(
+        {
+          name: "my-task",
+          prompt: "p",
+          capabilities: ["writes"],
+          graders: [
+            { type: "used-tool", name: "read_file" },
+            { type: "tool-never-failed", name: "bash" },
+          ],
+        },
+        "/tasks/t",
+        "/tasks/t/fixture",
+      ),
+    ).toThrow(/my-task: graders\[1\] \(tool-never-failed\)/);
+  });
+
+  it("leaves graders that name no tool alone", () => {
+    expect(() =>
+      parseTask(
+        {
+          prompt: "p",
+          capabilities: [],
+          graders: [{ type: "file-contains", path: "a.ts", text: "x" }],
+        },
+        "/tasks/t",
+        "/tasks/t/fixture",
+      ),
+    ).not.toThrow();
+  });
+});
+
 describe("the eval tasks that ship with chivgent", () => {
   it("all parse, and every grader they declare can be constructed", async () => {
     // A typo in a task.json should surface here, not after paying a provider
@@ -545,25 +904,35 @@ describe("the eval tasks that ship with chivgent", () => {
     }
   });
 
+  it("accepts the refusal wording that the first real baseline rejected", async () => {
+    // Verbatim from docs/eval-baseline-2026-09.md: the model was right, and
+    // the grader was the thing that failed. Pinned so the pattern cannot
+    // narrow back.
+    const task = await loadTask(
+      path.join(process.cwd(), "evals", "no-hallucinated-read"),
+    );
+    const answer =
+      "There is no `src/database/migrations.ts` in this project — in fact, there is no `src/database/` directory at all.";
+
+    for (const spec of task.graders) {
+      expect(await createGrader(spec)(facts({ finalAnswer: answer }))).toMatchObject(
+        { passed: true },
+      );
+    }
+  });
+
   it("declares the capabilities its graders imply", async () => {
+    // Superseded as a hand-written check by the loader's own validation, which
+    // covers every tool rather than the three this used to name. What is left
+    // here is the end-to-end assertion that the shipped tasks satisfy it.
     const tasks = await loadTasks(path.join(process.cwd(), "evals"));
 
     for (const task of tasks) {
-      const usesWriteTool = task.graders.some(
-        (spec) =>
-          (spec.type === "used-tool" || spec.type === "tool-succeeded") &&
-          (spec.name === "edit_file" || spec.name === "write_file"),
-      );
-      const usesShell = task.graders.some(
-        (spec) =>
-          (spec.type === "used-tool" || spec.type === "tool-succeeded") &&
-          spec.name === "bash",
-      );
-      if (usesWriteTool) {
-        expect(task.capabilities).toContain("writes");
-      }
-      if (usesShell) {
-        expect(task.capabilities).toContain("shell");
+      const named = task.graders
+        .filter((spec) => typeof spec.name === "string")
+        .map((spec) => spec.name as string);
+      for (const tool of named) {
+        expect(toolNamesFor(task.capabilities)).toContain(tool);
       }
     }
   });

@@ -146,6 +146,7 @@ export function toJsonReport(
         turnCount: attempt.turnCount,
         durationMs: attempt.durationMs,
         toolsUsed: attempt.toolsUsed,
+        toolCalls: attempt.toolCalls,
         ...(attempt.usage === undefined ? {} : { usage: attempt.usage }),
         failures: attempt.failures,
       })),

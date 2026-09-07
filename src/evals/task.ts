@@ -1,5 +1,6 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
+import { toolNamesFor } from "./tools.js";
 
 export class TaskError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -74,6 +75,45 @@ function readPositiveInteger(
   return value as number;
 }
 
+/** Grader types whose "name" must be a tool the task actually grants. */
+const TOOL_NAME_GRADERS = new Set([
+  "used-tool",
+  "not-used-tool",
+  "tool-succeeded",
+  "tool-never-failed",
+]);
+
+/**
+ * Refuses a grader that names a tool the task never hands to the model.
+ *
+ * `not-used-tool: write_file` on a read-only task can never fail — it asserts
+ * the model did not call something it was never given, so it reads like a
+ * check and is worth nothing. The mirror image, `used-tool` on a tool the task
+ * withholds, can never pass. Both are task-definition mistakes, and both are
+ * caught here rather than at run time so they cost nothing to find.
+ */
+function assertGradersCanFire(
+  name: string,
+  capabilities: readonly Capability[],
+  graders: readonly GraderSpec[],
+): void {
+  const available = toolNamesFor(capabilities);
+  for (const [index, grader] of graders.entries()) {
+    if (!TOOL_NAME_GRADERS.has(grader.type)) {
+      continue;
+    }
+    const tool = grader.name;
+    if (typeof tool !== "string" || available.includes(tool)) {
+      continue;
+    }
+    throw new TaskError(
+      `${name}: graders[${index}] (${grader.type}) names "${tool}", which this task never grants. ` +
+        `Available with capabilities [${capabilities.join(", ")}]: ${available.join(", ")}. ` +
+        `Grant the capability or drop the grader.`,
+    );
+  }
+}
+
 export function parseTask(
   value: unknown,
   directory: string,
@@ -99,10 +139,13 @@ export function parseTask(
     return entry as GraderSpec;
   });
 
+  const capabilities = readCapabilities(value.capabilities, name);
+  assertGradersCanFire(name, capabilities, graders);
+
   return {
     name,
     prompt: value.prompt,
-    capabilities: readCapabilities(value.capabilities, name),
+    capabilities,
     attempts: readPositiveInteger(
       value.attempts,
       DEFAULT_ATTEMPTS,

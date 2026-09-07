@@ -554,6 +554,35 @@ right contents, and an eval that scores results alone would give it full marks.
 For a coding agent, tool misuse is the more common and the more interesting
 failure, so tasks assert on how the work was done.
 
+A grader naming a tool the task never grants is refused when the task loads.
+`not-used-tool: write_file` on a read-only task cannot fail — it asserts the
+model did not call something it was never given — and its mirror image cannot
+pass. Both are task-definition mistakes, and both are caught before the run
+spends anything. One such grader shipped for two releases before this check
+existed.
+
+Two graders exist because a set of tool names cannot answer the question they
+answer. `tool-never-failed` catches a guessed path, which shows up as a failed
+read that a deduplicated name list hides. `file-unchanged` compares against the
+fixture, so "don't touch what you weren't asked to touch" becomes a verdict
+rather than an intention — and it needs no second copy of the file in
+`task.json` to drift out of date. The JSON report carries `toolCalls`, every
+call in order with whether it succeeded, alongside the `toolsUsed` set the table
+prints.
+
+The nine tasks split into what the agent found and what it changed. Four exist
+because the first real baseline passed 29 of 30 attempts and therefore measured
+nothing: `needle-in-many-files` (40 files with uninformative names, so listing
+gives no signal), `trace-the-default` (a value overridden twice, where stopping
+at the first hop yields a plausible wrong number), `decoy-config` (two
+near-identical modules, one of them dead), and `wrong-test` (a failing test
+whose expectation contradicts the contract documented in the source — bending
+the source to fit it is the trap).
+
+A task that scores 0/N or N/N across different models is not measuring anything
+and should be made harder, fixed, or dropped. Passing is not evidence of quality
+when everything passes.
+
 ## Token usage
 
 Providers report what each call cost, and chivgent now keeps it: per turn on

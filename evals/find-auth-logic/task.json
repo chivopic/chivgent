@@ -1,13 +1,31 @@
 {
   "name": "find-auth-logic",
   "prompt": "Where is authentication handled in this project? Name the file and explain in one sentence what it checks.",
-  "capabilities": [],
+  "capabilities": [
+    "writes"
+  ],
   "attempts": 5,
   "maxTurns": 8,
   "graders": [
-    { "type": "answer-matches", "pattern": "auth/session\\.ts" },
-    { "type": "answer-matches", "pattern": "bearer|token" },
-    { "type": "used-tool", "name": "read_file" },
-    { "type": "not-used-tool", "name": "write_file" }
+    {
+      "type": "answer-matches",
+      "pattern": "auth/session\\.ts"
+    },
+    {
+      "type": "answer-matches",
+      "pattern": "bearer|token"
+    },
+    {
+      "type": "used-tool",
+      "name": "read_file"
+    },
+    {
+      "type": "not-used-tool",
+      "name": "write_file"
+    },
+    {
+      "type": "not-used-tool",
+      "name": "edit_file"
+    }
   ]
 }

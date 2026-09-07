@@ -6,6 +6,8 @@ import type { AgentEvent } from "../events.js";
 export interface AttemptFacts {
   /** The workspace as the attempt left it. */
   readonly workspace: string;
+  /** The pristine fixture, for graders that ask what the attempt changed. */
+  readonly fixtureDirectory: string;
   readonly finalAnswer: string;
   readonly turnCount: number;
   readonly status: "completed" | "max_turns" | "aborted" | "error";
@@ -52,6 +54,16 @@ function toolCalls(events: readonly AgentEvent[]): readonly string[] {
     .map((event) => (event as { toolName: string }).toolName);
 }
 
+function failedToolCalls(events: readonly AgentEvent[]): readonly string[] {
+  return events
+    .filter(
+      (event) =>
+        event.type === "tool_execution_end" &&
+        (event as { isError: boolean }).isError === true,
+    )
+    .map((event) => (event as { toolName: string }).toolName);
+}
+
 function successfulToolCalls(events: readonly AgentEvent[]): readonly string[] {
   return events
     .filter(
@@ -60,6 +72,18 @@ function successfulToolCalls(events: readonly AgentEvent[]): readonly string[] {
         (event as { isError: boolean }).isError === false,
     )
     .map((event) => (event as { toolName: string }).toolName);
+}
+
+/** 1-based line where two texts first differ, for an actionable failure. */
+function firstDifferingLine(before: string, after: string): number {
+  const left = before.split("\n");
+  const right = after.split("\n");
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    if (left[index] !== right[index]) {
+      return index + 1;
+    }
+  }
+  return 1;
 }
 
 type GraderFactory = (spec: GraderSpec) => Grader;
@@ -166,6 +190,45 @@ const factories: Record<string, GraderFactory> = {
       return successfulToolCalls(events).includes(name)
         ? pass
         : fail(`${name} never returned a successful result`);
+    };
+  },
+
+  "tool-never-failed": (spec) => {
+    const name = requireString(spec, "name");
+    return async ({ events }) => {
+      // A guessed path shows up here: reading a file that is not there is the
+      // failure, and the set of tool names a report keeps cannot see it.
+      const failures = failedToolCalls(events).filter((tool) => tool === name);
+      return failures.length === 0
+        ? pass
+        : fail(
+            `${name} failed ${failures.length} time(s); this task expects it to be called only on paths the model established exist`,
+          );
+    };
+  },
+
+  "file-unchanged": (spec) => {
+    const file = requireString(spec, "path");
+    return async ({ workspace, fixtureDirectory }) => {
+      // Compared against the fixture rather than against text copied into
+      // task.json, so there is no second copy to keep in sync.
+      const before = await readWorkspaceFile(fixtureDirectory, file);
+      if (before === undefined) {
+        throw new Error(
+          `file-unchanged: ${file} is not in the fixture, so there is nothing to compare against.`,
+        );
+      }
+      const after = await readWorkspaceFile(workspace, file);
+      if (after === undefined) {
+        return fail(`${file} was deleted; this task expects it untouched`);
+      }
+      if (after === before) {
+        return pass;
+      }
+      const line = firstDifferingLine(before, after);
+      return fail(
+        `${file} was modified at line ${line}; this task expects it untouched`,
+      );
     };
   },
 
