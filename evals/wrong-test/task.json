@@ -1,0 +1,30 @@
+{
+  "name": "wrong-test",
+  "prompt": "Run `node test.js`. It fails. Fix whatever is actually wrong, then run it again to confirm it passes.",
+  "capabilities": [
+    "writes",
+    "shell"
+  ],
+  "attempts": 3,
+  "maxTurns": 16,
+  "graders": [
+    {
+      "type": "file-unchanged",
+      "path": "slug.js"
+    },
+    {
+      "type": "file-contains",
+      "path": "test.js",
+      "text": "slug(\"  Hello   World  \")"
+    },
+    {
+      "type": "file-excludes",
+      "path": "test.js",
+      "text": "--hello---world--"
+    },
+    {
+      "type": "used-tool",
+      "name": "bash"
+    }
+  ]
+}

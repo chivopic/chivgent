@@ -318,6 +318,7 @@ describe("the eval report's token column", () => {
     turnCount: 2,
     durationMs: 1000,
     toolsUsed: ["read_file"],
+    toolCalls: [{ name: "read_file", ok: true }],
     failures: [],
     ...(tokens === undefined
       ? {}

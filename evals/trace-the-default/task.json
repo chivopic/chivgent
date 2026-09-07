@@ -1,0 +1,31 @@
+{
+  "name": "trace-the-default",
+  "prompt": "When this service runs in production, what request timeout does the HTTP client end up using? Give the number in milliseconds and name the file where that value is defined.",
+  "capabilities": [],
+  "attempts": 3,
+  "maxTurns": 12,
+  "graders": [
+    {
+      "type": "answer-matches",
+      "pattern": "30[,. ]?000"
+    },
+    {
+      "type": "answer-matches",
+      "pattern": "environments\\.ts"
+    },
+    {
+      "type": "tool-never-failed",
+      "name": "read_file"
+    },
+    {
+      "type": "max-tool-calls",
+      "name": "read_file",
+      "count": 8
+    },
+    {
+      "type": "max-tool-calls",
+      "name": "search_text",
+      "count": 6
+    }
+  ]
+}

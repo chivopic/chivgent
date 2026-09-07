@@ -6,6 +6,8 @@ import type { AgentEvent } from "../events.js";
 export interface AttemptFacts {
   /** The workspace as the attempt left it. */
   readonly workspace: string;
+  /** The pristine fixture, for graders that ask what the attempt changed. */
+  readonly fixtureDirectory: string;
   readonly finalAnswer: string;
   readonly turnCount: number;
   readonly status: "completed" | "max_turns" | "aborted" | "error";
@@ -52,6 +54,16 @@ function toolCalls(events: readonly AgentEvent[]): readonly string[] {
     .map((event) => (event as { toolName: string }).toolName);
 }
 
+function failedToolCalls(events: readonly AgentEvent[]): readonly string[] {
+  return events
+    .filter(
+      (event) =>
+        event.type === "tool_execution_end" &&
+        (event as { isError: boolean }).isError === true,
+    )
+    .map((event) => (event as { toolName: string }).toolName);
+}
+
 function successfulToolCalls(events: readonly AgentEvent[]): readonly string[] {
   return events
     .filter(
@@ -60,6 +72,18 @@ function successfulToolCalls(events: readonly AgentEvent[]): readonly string[] {
         (event as { isError: boolean }).isError === false,
     )
     .map((event) => (event as { toolName: string }).toolName);
+}
+
+/** 1-based line where two texts first differ, for an actionable failure. */
+function firstDifferingLine(before: string, after: string): number {
+  const left = before.split("\n");
+  const right = after.split("\n");
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    if (left[index] !== right[index]) {
+      return index + 1;
+    }
+  }
+  return 1;
 }
 
 type GraderFactory = (spec: GraderSpec) => Grader;
@@ -166,6 +190,68 @@ const factories: Record<string, GraderFactory> = {
       return successfulToolCalls(events).includes(name)
         ? pass
         : fail(`${name} never returned a successful result`);
+    };
+  },
+
+  "tool-never-failed": (spec) => {
+    // Sound only where a failure means the model was wrong. `bash` sets
+    // isError on any non-zero exit, so on a task that runs a failing test —
+    // fix-failing-test, wrong-test — the correct behaviour is a failed call
+    // and this grader would punish it.
+    const name = requireString(spec, "name");
+    return async ({ events }) => {
+      // A guessed path shows up here: reading a file that is not there is the
+      // failure, and the set of tool names a report keeps cannot see it.
+      const failures = failedToolCalls(events).filter((tool) => tool === name);
+      return failures.length === 0
+        ? pass
+        : fail(
+            `${name} failed ${failures.length} time(s); this task expects it to be called only on paths the model established exist`,
+          );
+    };
+  },
+
+  "max-tool-calls": (spec) => {
+    const name = requireString(spec, "name");
+    const limit = spec.count;
+    if (!Number.isSafeInteger(limit) || (limit as number) < 1) {
+      throw new Error('max-tool-calls: "count" must be a positive integer.');
+    }
+    return async ({ events }) => {
+      // Turns cannot express this: a model may issue any number of calls in
+      // one turn, so "did it read the whole project" is a call count, not a
+      // turn count.
+      // Failed calls count. A budget that forgave them would let a model
+      // spend freely on guessed paths, which is the opposite of the intent.
+      const used = toolCalls(events).filter((tool) => tool === name).length;
+      return used <= (limit as number)
+        ? pass
+        : fail(`called ${name} ${used} times, over the budget of ${limit as number}`);
+    };
+  },
+
+  "file-unchanged": (spec) => {
+    const file = requireString(spec, "path");
+    return async ({ workspace, fixtureDirectory }) => {
+      // Compared against the fixture rather than against text copied into
+      // task.json, so there is no second copy to keep in sync.
+      const before = await readWorkspaceFile(fixtureDirectory, file);
+      if (before === undefined) {
+        throw new Error(
+          `file-unchanged: ${file} is not in the fixture, so there is nothing to compare against.`,
+        );
+      }
+      const after = await readWorkspaceFile(workspace, file);
+      if (after === undefined) {
+        return fail(`${file} was deleted; this task expects it untouched`);
+      }
+      if (after === before) {
+        return pass;
+      }
+      const line = firstDifferingLine(before, after);
+      return fail(
+        `${file} was modified at line ${line}; this task expects it untouched`,
+      );
     };
   },
 

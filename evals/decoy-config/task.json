@@ -1,0 +1,37 @@
+{
+  "name": "decoy-config",
+  "prompt": "The request timeout is too short. Change it to 60 seconds. Do not change anything else.",
+  "capabilities": [
+    "writes"
+  ],
+  "attempts": 3,
+  "maxTurns": 12,
+  "graders": [
+    {
+      "type": "file-contains",
+      "path": "src/settings/http.ts",
+      "text": "timeoutSeconds: 60"
+    },
+    {
+      "type": "file-excludes",
+      "path": "src/settings/http.ts",
+      "text": "timeoutSeconds: 30"
+    },
+    {
+      "type": "file-unchanged",
+      "path": "src/config/http.ts"
+    },
+    {
+      "type": "file-unchanged",
+      "path": "src/index.ts"
+    },
+    {
+      "type": "not-used-tool",
+      "name": "write_file"
+    },
+    {
+      "type": "tool-never-failed",
+      "name": "edit_file"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "name": "needle-in-many-files",
+  "prompt": "Which file in this project defines computeRetryBudget, and what does it return? Name the file path and describe the calculation in one sentence.",
+  "capabilities": [],
+  "attempts": 3,
+  "maxTurns": 10,
+  "graders": [
+    {
+      "type": "answer-matches",
+      "pattern": "module23\\.ts"
+    },
+    {
+      "type": "answer-matches",
+      "pattern": "attempts"
+    },
+    {
+      "type": "used-tool",
+      "name": "search_text"
+    },
+    {
+      "type": "tool-never-failed",
+      "name": "read_file"
+    },
+    {
+      "type": "max-turns-under",
+      "turns": 5
+    }
+  ]
+}

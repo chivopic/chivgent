@@ -76,12 +76,12 @@ export function formatTable(results: readonly TaskResult[]): string {
     task: Math.max(4, ...rows.map((row) => row.task.length)),
     pass: Math.max(4, ...rows.map((row) => row.pass.length)),
     turns: Math.max(5, ...rows.map((row) => row.turns.length)),
-    tokens: Math.max(6, ...rows.map((row) => row.tokens.length)),
+    tokens: Math.max(7, ...rows.map((row) => row.tokens.length)),
     tools: Math.max(5, ...rows.map((row) => row.tools.length)),
   };
 
   const lines = [
-    `${pad("task", widths.task)}  ${pad("pass", widths.pass)}  ${pad("turns", widths.turns)}  ${pad("tokens", widths.tokens)}  ${pad("tools", widths.tools)}  p50`,
+    `${pad("task", widths.task)}  ${pad("pass", widths.pass)}  ${pad("turns", widths.turns)}  ${pad("tok/att", widths.tokens)}  ${pad("tools", widths.tools)}  p50`,
   ];
   for (const row of rows) {
     lines.push(
@@ -146,6 +146,7 @@ export function toJsonReport(
         turnCount: attempt.turnCount,
         durationMs: attempt.durationMs,
         toolsUsed: attempt.toolsUsed,
+        toolCalls: attempt.toolCalls,
         ...(attempt.usage === undefined ? {} : { usage: attempt.usage }),
         failures: attempt.failures,
       })),

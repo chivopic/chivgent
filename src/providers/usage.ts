@@ -32,7 +32,9 @@ export function fromChatCompletionsUsage(value: unknown): Usage | undefined {
   const reasoningTokens = positive(details?.reasoning_tokens);
   const cachedInputTokens =
     positive(promptDetails?.cached_tokens) ??
-    // DeepSeek reports cache hits at the top level rather than in details.
+    // DeepSeek also reports cache hits at the top level. It populates both,
+    // so this branch is a fallback for a Provider that reports only the flat
+    // form, not the path DeepSeek actually takes.
     positive(record.prompt_cache_hit_tokens);
 
   return {
