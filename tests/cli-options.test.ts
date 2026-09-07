@@ -252,6 +252,14 @@ describe("remote session options", () => {
     expect(options.prompt).toBe("what changed");
   });
 
+  it("rejects an empty --api-key rather than falling through", () => {
+    // An unset shell variable expands to "", and a silent fall-through would
+    // run against a different credential than the one named on the line.
+    expect(() =>
+      parseCliArgs(["--api-key", ""], { DEEPSEEK_API_KEY: "from-env" }),
+    ).toThrow(/requires a value/);
+  });
+
   it("requires a value for --connect", () => {
     expect(() => parseCliArgs(["--connect"], {})).toThrow(/requires a value/);
   });

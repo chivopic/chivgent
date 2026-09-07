@@ -152,8 +152,12 @@ Token capture works. See D6 for one stale assumption it rests on.
 
 ## chivgent defects
 
-Found while measuring, and deliberately **not** fixed — patching mid-measurement
-would invalidate the numbers above. None of these are model failures.
+Found while measuring, and deliberately not fixed *during* the run — patching
+mid-measurement would have invalidated the numbers above. None are model
+failures. D4 and D5 are fixed in the commit that lands this document, because
+neither touches the suite and one of them leaks a credential. D1–D3 change what
+the suite measures, so they are left for the follow-up that gives it headroom;
+fixing them here would make this baseline uncomparable with the next one.
 
 **D1 — `no-hallucinated-read`'s answer pattern is too narrow.**
 `evals/no-hallucinated-read/task.json`. It rejects "There is no X", the most
@@ -182,12 +186,15 @@ and npm echoes the fully-expanded command to stdout before running it —
 verified, the key appears in the clear and lands in any captured log or CI
 output. The env-var form (`DEEPSEEK_API_KEY=... npm run eval -- ...`) does not
 leak. The docs should lead with the env var and note the flag's exposure.
+**Fixed in the commit that lands this report** — the README examples and
+`docs/stage-11-evals.md` now lead with the environment variable and say why.
 
 **D5 — an empty `--api-key` is silently ignored.** `--api-key ""` does not
 error; it falls through to the environment and then `auth.json`. A typo or an
 unset shell variable therefore runs against *a different credential than the
 one named on the command line*, with no warning. This bit this exercise
-directly — see the caveat below.
+directly — see the caveat below. **Fixed in the commit that lands this
+report**: `--api-key ""` now fails with `--api-key requires a value.`
 
 **D6 — the DeepSeek cache fallback in `usage.ts` is dead for this model.** The
 comment at `src/providers/usage.ts:35` says "DeepSeek reports cache hits at the

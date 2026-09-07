@@ -151,7 +151,7 @@ npm run eval -- --task rename-symbol
 npm run eval -- --attempts 10     # 覆盖任务里的 attempts
 npm run eval -- --json report.json
 npm run eval -- --provider deepseek --model deepseek-v4-flash
-npm run eval -- --provider deepseek --api-key sk-...
+DEEPSEEK_API_KEY=sk-... npm run eval -- --provider deepseek
 ```
 
 需要凭证，走既有的凭证解析链。没有凭证时报出和 CLI 一致的那条消息，而不是跑出一堆

@@ -124,6 +124,12 @@ export function parseCliArgs(
       index += 1;
     } else if (argument === "--api-key") {
       apiKey = readOptionValue(argv, index, "--api-key");
+      if (apiKey.length === 0) {
+        // An empty key would fall through to the environment and then the
+        // stored file, so an unset shell variable would silently run against
+        // a different credential than the one named on the command line.
+        throw new TypeError("--api-key requires a value.");
+      }
       index += 1;
     } else if (argument === "--max-turns") {
       maxTurns = parseMaxTurns(readOptionValue(argv, index, "--max-turns"));
