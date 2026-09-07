@@ -2,6 +2,7 @@ import { createInterface, type Interface } from "node:readline";
 import type { AgentSession } from "./session.js";
 import type { OutputStream } from "./render.js";
 import type { RegisteredCommand } from "./extensions/api.js";
+import { formatTokens } from "./providers/usage.js";
 
 export const REPL_PROMPT = "› ";
 
@@ -133,12 +134,33 @@ export function handleSlashCommand(
   }
 }
 
+function describeUsage(context: SlashCommandContext): readonly string[] {
+  const usage = context.session.usage;
+  if (usage === undefined || usage.usage.totalTokens === 0) {
+    return [];
+  }
+  // Shown on request rather than after every answer: a token count printed
+  // beneath each reply is noise for the ninety-nine turns you did not ask.
+  const parts = [
+    `${formatTokens(usage.usage.totalTokens)} total`,
+    `${formatTokens(usage.usage.inputTokens)} in`,
+    `${formatTokens(usage.usage.outputTokens)} out`,
+  ];
+  if (usage.usage.cachedInputTokens !== undefined) {
+    parts.push(`${formatTokens(usage.usage.cachedInputTokens)} cached`);
+  }
+  return [
+    `tokens:    ${parts.join(", ")}${usage.complete ? "" : " (a turn reported none)"}`,
+  ];
+}
+
 function describeSession(context: SlashCommandContext): string {
   const lines = [
     `id:        ${context.session.id}`,
     `workspace: ${context.session.cwd}`,
     `prompts:   ${context.session.turns}`,
     `messages:  ${context.session.messages.length}`,
+    ...describeUsage(context),
   ];
   if (context.sessionFile !== undefined) {
     lines.push(`log:       ${context.sessionFile}`);

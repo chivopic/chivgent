@@ -16,9 +16,32 @@ export interface LLMRequest {
   readonly signal?: AbortSignal;
 }
 
+/**
+ * What one Provider call cost, as the Provider itself reported it.
+ *
+ * Tokens only, never money: a model-to-price table goes stale silently when a
+ * Provider changes its rates, and a confidently wrong dollar figure is worse
+ * than none, because nobody questions a number with a decimal point in it.
+ */
+export interface Usage {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly totalTokens: number;
+  /** The cached share of the input, when the Provider reports one. */
+  readonly cachedInputTokens?: number;
+  /** Thinking tokens billed separately by reasoning models. */
+  readonly reasoningTokens?: number;
+}
+
 export interface LLMResponse {
   readonly message: AssistantMessage;
   readonly continuation?: LLMContinuation;
+  /**
+   * Absent when the Provider did not report it, which is a normal state and
+   * never an error. Treating "not reported" as zero would quietly understate
+   * every total that contains it.
+   */
+  readonly usage?: Usage;
 }
 
 export interface LLMStreamHandlers {

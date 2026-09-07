@@ -1,6 +1,7 @@
 import { Agent, type AgentOptions, type AgentRunResult } from "./agent.js";
 import type { AgentEvent, AgentEventListener } from "./events.js";
 import type { Message } from "./messages.js";
+import { addUsage, type UsageTotal } from "./providers/usage.js";
 import {
   createSessionId,
   SESSION_FORMAT_VERSION,
@@ -38,6 +39,7 @@ export class AgentSession {
   private transcript: readonly Message[];
   private headerWritten: boolean;
   private promptCount = 0;
+  private usageTotal: UsageTotal | undefined;
 
   constructor(options: AgentSessionOptions) {
     this.id = options.id ?? createSessionId();
@@ -60,6 +62,11 @@ export class AgentSession {
 
   get turns(): number {
     return this.promptCount;
+  }
+
+  /** What this session has cost so far, across every prompt. */
+  get usage(): UsageTotal | undefined {
+    return this.usageTotal;
   }
 
   get toolNames(): readonly string[] {
@@ -90,6 +97,10 @@ export class AgentSession {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
     this.transcript = result.messages;
+    this.usageTotal = addUsage(this.usageTotal, result.usage?.usage);
+    if (result.usage?.complete === false) {
+      this.usageTotal = { usage: this.usageTotal.usage, complete: false };
+    }
     await this.flush();
     return result;
   }

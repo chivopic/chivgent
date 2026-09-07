@@ -37,6 +37,7 @@
 - 支持带续读提示的分段 `read_file`，所有工具结果都有容量上限。
 - 默认只读；`--allow-writes` 才会启用 `write_file` 和 `edit_file`。
 - 通过 `--allow-shell` 选择性开启的 `bash` 工具，输出边跑边显示。
+- 采集 Provider 报告的 token 用量：按轮、按次运行、按 eval 任务分别统计。
 - Eval 套件：衡量 Agent 能不能把活干成，而不只是能不能跑起来。
 - 远程会话：一个进程持有会话，其他进程通过本地 socket 接上来。
 - 多个客户端可以同时观察同一个会话，其中任何一个都能中断当前运行。
@@ -390,6 +391,7 @@ src/
     write.ts                     原子整文件写入与精确编辑
   providers/
     registry.ts                  Provider 注册表
+    usage.ts                     Provider token 用量的解析与累加
     deferred-client.ts           Provider 可以稍后到位的客户端
     definitions.ts               内置 Provider 声明
     client.ts                    凭据解析并构造 LLM Client
@@ -478,14 +480,18 @@ npm run eval -- --allow-writes --allow-shell --json report.json
 ```
 
 ```text
-task                  pass  turns  tools                       p50
-find-auth-logic       4/5   2.0    list_files,search_text,...  6.1s
-rename-symbol         3/5   5.4    read_file,edit_file         9.8s
+task                  pass  turns  tokens  tools                       p50
+find-auth-logic       4/5   2.0    3.4k    list_files,search_text,...  6.1s
+rename-symbol         3/5   5.4    12.1k   read_file,edit_file         9.8s
 
-overall  7/10 (70%)
+overall  7/10 (70%)  58.3k tokens
 
 rename-symbol attempt 2,5: not-used-tool name="write_file" — called write_file 1 time(s)
 ```
+
+`tokens` 那一列是 Provider 自己报的数字，于是一次改动可以同时看两个维度：
+一个把通过率从 70% 提到 75%、token 却翻三倍的 prompt 改动通常是笔坏买卖，
+而少了第二个数字它看起来是纯赚。
 
 **Eval 不是测试。** 模型是不确定的，所以一个任务跑一次就是抛硬币：通过与失败不是这次
 运行的属性，而是"模型 + harness"这个组合的属性。因此 eval 的基本单位是 **N 次尝试的
@@ -516,6 +522,32 @@ rename-symbol attempt 2,5: not-used-tool name="write_file" — called write_file
 最后两条判定才是重点。整文件重写同样能得到正确的内容，一个只看结果的 eval 会给它满分。
 对编码 Agent 来说，**工具误用是比答错更常见、也更值得测的失败**，所以任务不仅判定
 "做对了没有"，还判定"是怎么做的"。
+
+## Token 用量
+
+Provider 每次调用都会报告代价，chivgent 现在会把它留下来：每轮在 `message_end` 上、
+整次运行在 `agent_end` 和运行结果上、每次 eval 尝试在报告里、以及 `/session` 的累计。
+
+```text
+› /session
+id:        2026-09-07T...
+workspace: /home/me/project
+prompts:   4
+messages:  18
+tokens:    38.2k total, 35.9k in, 2.3k out, 12.0k cached
+```
+
+**只报 token，不报钱。** 换算成金额需要一张"模型 → 单价"的表，而那张表会在 Provider
+调价时**悄悄过期**，产出一个看起来精确、实际错误的金额——那比没有数字更糟，因为没人
+会去质疑一个带小数点的数。token 数是 Provider 自己报的事实，不会过期。
+
+某次调用没报用量时，合计会被**标记为不完整**，而不是当成零：缺失的数字要看得见地
+缺着，而不是悄悄把合计压小。压缩自己那次摘要调用**计入**合计——它拿"现在多花一次
+调用"换"后续输入更小"，少算一半就没法判断这笔交易划不划算。
+
+流式的 Chat Completions 默认不报用量，必须显式索取，所以 chivgent 会发送
+`stream_options: { include_usage: true }`。某些较早的自建 OpenAI 兼容端点可能不认识
+这个字段而拒绝请求，此时 `--no-stream` 是退路。
 
 ## 远程会话
 
@@ -674,7 +706,8 @@ CI 任务或管道运行永远不会自作主张去执行一个 clone 里的代�
 - [x] 扩展系统与 Project Trust
 - [x] 基于本地 socket 的远程会话
 - [x] 带确定性判定器和通过率的 Eval 套件
-- [ ] TUI 和 Telemetry
+- [x] Provider Token 用量采集与聚合
+- [ ] TUI
 
 逐条命令确认和命令白名单是**主动放弃**的方向。有了 Shell 工具之后，`bash` 能做的
 事是 `write_file` 的超集，任何白名单都能被一行 `sh -c` 绕开，而逐条弹确认只会训练
@@ -694,6 +727,7 @@ CI 任务或管道运行永远不会自作主张去执行一个 clone 里的代�
 - [Stage 9：扩展系统与 Project Trust](docs/stage-9-extensions.md)
 - [Stage 10：远程会话](docs/stage-10-remote-sessions.md)
 - [Stage 11：Evals](docs/stage-11-evals.md)
+- [Stage 12：Token 用量](docs/stage-12-usage.md)
 - [发布流程](docs/releasing.md)
 
 ## 参与贡献

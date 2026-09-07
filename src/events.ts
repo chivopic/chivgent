@@ -3,6 +3,8 @@ import type {
   Message,
   ToolResultMessage,
 } from "./messages.js";
+import type { Usage } from "./llm.js";
+import type { UsageTotal } from "./providers/usage.js";
 
 /**
  * Terminal state of one Agent run. `aborted` is reported, never thrown, so a
@@ -66,6 +68,8 @@ export interface MessageEndEvent {
   readonly type: "message_end";
   readonly turn: number;
   readonly message: AssistantMessage;
+  /** What this turn cost, when the Provider reported it. */
+  readonly usage?: Usage;
 }
 
 export interface ToolExecutionStartEvent {
@@ -114,6 +118,8 @@ export interface AgentEndEvent {
   readonly status: AgentRunStatus;
   readonly turnCount: number;
   readonly messages: readonly Message[];
+  /** The run's total, flagged incomplete when a turn reported nothing. */
+  readonly usage?: UsageTotal;
   readonly error?: string;
 }
 

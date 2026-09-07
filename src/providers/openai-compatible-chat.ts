@@ -20,6 +20,7 @@ import type {
   Message,
   ToolResultMessage,
 } from "../messages.js";
+import { fromChatCompletionsUsage } from "./usage.js";
 
 interface CompatibleAssistantMessage extends ChatCompletionMessage {
   readonly reasoning_content?: string | null;
@@ -82,7 +83,12 @@ export class OpenAICompatibleChatClient implements LLMClient {
             signal: request.signal,
           });
 
-    return this.toLLMResponse(request, history, getProviderMessage(response));
+    return this.toLLMResponse(
+      request,
+      history,
+      getProviderMessage(response),
+      fromChatCompletionsUsage((response as { usage?: unknown }).usage),
+    );
   }
 
   async stream(
@@ -93,6 +99,10 @@ export class OpenAICompatibleChatClient implements LLMClient {
     const parameters = {
       ...this.createParameters(request, history),
       stream: true as const,
+      // Chat Completions omits usage from a stream unless it is asked for. A
+      // Provider that does not know this field would reject the request, which
+      // is what --no-stream is the fallback for.
+      stream_options: { include_usage: true },
     };
     const chunks =
       request.signal === undefined
@@ -102,14 +112,18 @@ export class OpenAICompatibleChatClient implements LLMClient {
           });
 
     const accumulator = new ChatCompletionAccumulator();
+    let usage: ReturnType<typeof fromChatCompletionsUsage>;
     for await (const chunk of chunks as AsyncIterable<ChatCompletionChunk>) {
+      // The usage chunk arrives last and carries no choices; the accumulator
+      // already ignores a chunk without one.
+      usage = fromChatCompletionsUsage((chunk as { usage?: unknown }).usage) ?? usage;
       const delta = accumulator.add(chunk);
       if (delta.length > 0) {
         handlers.onTextDelta(delta);
       }
     }
 
-    return this.toLLMResponse(request, history, accumulator.toMessage());
+    return this.toLLMResponse(request, history, accumulator.toMessage(), usage);
   }
 
   private createHistory(request: LLMRequest): CompatibleHistoryMessage[] {
@@ -137,9 +151,11 @@ export class OpenAICompatibleChatClient implements LLMClient {
     request: LLMRequest,
     history: readonly CompatibleHistoryMessage[],
     providerMessage: CompatibleAssistantMessage,
+    usage?: ReturnType<typeof fromChatCompletionsUsage>,
   ): LLMResponse {
     return {
       message: toInternalMessage(providerMessage),
+      ...(usage === undefined ? {} : { usage }),
       continuation: {
         provider: this.continuationTag,
         systemPrompt: request.systemPrompt,

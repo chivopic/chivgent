@@ -17,6 +17,7 @@ import type {
   Message,
   ToolResultMessage,
 } from "../messages.js";
+import { fromResponsesUsage } from "./usage.js";
 
 interface OpenAIContinuation {
   readonly provider: "openai-responses";
@@ -102,8 +103,10 @@ export class OpenAIClient implements LLMClient {
 }
 
 function toLLMResponse(response: OpenAIResponse): LLMResponse {
+  const usage = fromResponsesUsage((response as { usage?: unknown }).usage);
   return {
     message: fromOpenAIResponse(response),
+    ...(usage === undefined ? {} : { usage }),
     continuation: {
       provider: "openai-responses",
       previousResponseId: response.id,
