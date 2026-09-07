@@ -2,35 +2,224 @@
   "schemaVersion": 1,
   "provider": "deepseek",
   "model": "deepseek-v4-flash",
-  "version": "0.15.0",
-  "startedAt": "2026-09-07T08:06:10.043Z",
+  "version": "0.16.0",
+  "startedAt": "2026-09-07T08:30:40.228Z",
   "tasks": [
+    {
+      "name": "decoy-config",
+      "passed": 2,
+      "total": 3,
+      "passRate": 0.6666666666666666,
+      "meanTurns": 5,
+      "totalTokens": 41409,
+      "medianDurationMs": 10721,
+      "attempts": [
+        {
+          "attempt": 1,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 6,
+          "durationMs": 38989,
+          "toolsUsed": [
+            "list_files",
+            "search_text",
+            "read_file",
+            "edit_file"
+          ],
+          "toolCalls": [
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "search_text",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "search_text",
+              "ok": true
+            },
+            {
+              "name": "search_text",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "edit_file",
+              "ok": true
+            }
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 17400,
+              "outputTokens": 4420,
+              "totalTokens": 21820,
+              "cachedInputTokens": 16512,
+              "reasoningTokens": 3615
+            },
+            "complete": true
+          },
+          "failures": []
+        },
+        {
+          "attempt": 2,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 5,
+          "durationMs": 10721,
+          "toolsUsed": [
+            "list_files",
+            "search_text",
+            "read_file",
+            "edit_file"
+          ],
+          "toolCalls": [
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "search_text",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "edit_file",
+              "ok": true
+            }
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 10150,
+              "outputTokens": 1170,
+              "totalTokens": 11320,
+              "cachedInputTokens": 9344,
+              "reasoningTokens": 610
+            },
+            "complete": true
+          },
+          "failures": []
+        },
+        {
+          "attempt": 3,
+          "passed": false,
+          "status": "completed",
+          "turnCount": 4,
+          "durationMs": 6598,
+          "toolsUsed": [
+            "list_files",
+            "search_text",
+            "read_file",
+            "edit_file"
+          ],
+          "toolCalls": [
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "search_text",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "edit_file",
+              "ok": true
+            },
+            {
+              "name": "edit_file",
+              "ok": true
+            }
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 7518,
+              "outputTokens": 751,
+              "totalTokens": 8269,
+              "cachedInputTokens": 6784,
+              "reasoningTokens": 184
+            },
+            "complete": true
+          },
+          "failures": [
+            "file-unchanged path=\"src/config/http.ts\" — src/config/http.ts was modified at line 3; this task expects it untouched"
+          ]
+        }
+      ]
+    },
     {
       "name": "find-auth-logic",
       "passed": 3,
       "total": 3,
       "passRate": 1,
-      "meanTurns": 3.3333333333333335,
-      "totalTokens": 12845,
-      "medianDurationMs": 4329,
+      "meanTurns": 3,
+      "totalTokens": 15036,
+      "medianDurationMs": 3305,
       "attempts": [
         {
           "attempt": 1,
           "passed": true,
           "status": "completed",
           "turnCount": 3,
-          "durationMs": 4329,
+          "durationMs": 3124,
           "toolsUsed": [
             "list_files",
             "read_file"
           ],
+          "toolCalls": [
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            }
+          ],
           "usage": {
             "usage": {
-              "inputTokens": 3461,
-              "outputTokens": 374,
-              "totalTokens": 3835,
-              "cachedInputTokens": 3072,
-              "reasoningTokens": 95
+              "inputTokens": 4503,
+              "outputTokens": 235,
+              "totalTokens": 4738,
+              "cachedInputTokens": 4224,
+              "reasoningTokens": 38
             },
             "complete": true
           },
@@ -41,18 +230,32 @@
           "passed": true,
           "status": "completed",
           "turnCount": 3,
-          "durationMs": 3425,
+          "durationMs": 3305,
           "toolsUsed": [
             "list_files",
             "read_file"
           ],
+          "toolCalls": [
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            }
+          ],
           "usage": {
             "usage": {
-              "inputTokens": 3283,
-              "outputTokens": 263,
-              "totalTokens": 3546,
-              "cachedInputTokens": 3072,
-              "reasoningTokens": 71
+              "inputTokens": 4681,
+              "outputTokens": 304,
+              "totalTokens": 4985,
+              "cachedInputTokens": 4224,
+              "reasoningTokens": 34
             },
             "complete": true
           },
@@ -62,20 +265,38 @@
           "attempt": 3,
           "passed": true,
           "status": "completed",
-          "turnCount": 4,
-          "durationMs": 5003,
+          "turnCount": 3,
+          "durationMs": 4098,
           "toolsUsed": [
             "list_files",
-            "read_file",
-            "search_text"
+            "search_text",
+            "read_file"
+          ],
+          "toolCalls": [
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "search_text",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            }
           ],
           "usage": {
             "usage": {
-              "inputTokens": 5025,
-              "outputTokens": 439,
-              "totalTokens": 5464,
-              "cachedInputTokens": 4480,
-              "reasoningTokens": 94
+              "inputTokens": 4860,
+              "outputTokens": 453,
+              "totalTokens": 5313,
+              "cachedInputTokens": 4352,
+              "reasoningTokens": 104
             },
             "complete": true
           },
@@ -88,29 +309,59 @@
       "passed": 3,
       "total": 3,
       "passRate": 1,
-      "meanTurns": 5,
-      "totalTokens": 33166,
-      "medianDurationMs": 6336,
+      "meanTurns": 5.333333333333333,
+      "totalTokens": 36012,
+      "medianDurationMs": 7900,
       "attempts": [
         {
           "attempt": 1,
           "passed": true,
           "status": "completed",
-          "turnCount": 5,
-          "durationMs": 6336,
+          "turnCount": 6,
+          "durationMs": 7900,
           "toolsUsed": [
             "list_files",
-            "bash",
             "read_file",
+            "bash",
             "edit_file"
+          ],
+          "toolCalls": [
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "bash",
+              "ok": false
+            },
+            {
+              "name": "edit_file",
+              "ok": true
+            },
+            {
+              "name": "bash",
+              "ok": true
+            }
           ],
           "usage": {
             "usage": {
-              "inputTokens": 10898,
-              "outputTokens": 570,
-              "totalTokens": 11468,
-              "cachedInputTokens": 10112,
-              "reasoningTokens": 80
+              "inputTokens": 13453,
+              "outputTokens": 714,
+              "totalTokens": 14167,
+              "cachedInputTokens": 12544,
+              "reasoningTokens": 135
             },
             "complete": true
           },
@@ -121,20 +372,46 @@
           "passed": true,
           "status": "completed",
           "turnCount": 5,
-          "durationMs": 5966,
+          "durationMs": 8274,
           "toolsUsed": [
             "list_files",
             "read_file",
             "edit_file",
             "bash"
           ],
+          "toolCalls": [
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "edit_file",
+              "ok": true
+            },
+            {
+              "name": "bash",
+              "ok": true
+            }
+          ],
           "usage": {
             "usage": {
-              "inputTokens": 10312,
-              "outputTokens": 636,
-              "totalTokens": 10948,
-              "cachedInputTokens": 9728,
-              "reasoningTokens": 88
+              "inputTokens": 10298,
+              "outputTokens": 640,
+              "totalTokens": 10938,
+              "cachedInputTokens": 9856,
+              "reasoningTokens": 84
             },
             "complete": true
           },
@@ -145,20 +422,152 @@
           "passed": true,
           "status": "completed",
           "turnCount": 5,
-          "durationMs": 6717,
+          "durationMs": 6434,
           "toolsUsed": [
             "list_files",
             "read_file",
             "edit_file",
             "bash"
           ],
+          "toolCalls": [
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "edit_file",
+              "ok": true
+            },
+            {
+              "name": "bash",
+              "ok": true
+            }
+          ],
           "usage": {
             "usage": {
-              "inputTokens": 10169,
-              "outputTokens": 581,
-              "totalTokens": 10750,
-              "cachedInputTokens": 9600,
-              "reasoningTokens": 36
+              "inputTokens": 10284,
+              "outputTokens": 623,
+              "totalTokens": 10907,
+              "cachedInputTokens": 9728,
+              "reasoningTokens": 85
+            },
+            "complete": true
+          },
+          "failures": []
+        }
+      ]
+    },
+    {
+      "name": "needle-in-many-files",
+      "passed": 3,
+      "total": 3,
+      "passRate": 1,
+      "meanTurns": 3,
+      "totalTokens": 10880,
+      "medianDurationMs": 3630,
+      "attempts": [
+        {
+          "attempt": 1,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 3,
+          "durationMs": 2823,
+          "toolsUsed": [
+            "search_text",
+            "read_file"
+          ],
+          "toolCalls": [
+            {
+              "name": "search_text",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            }
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 3371,
+              "outputTokens": 242,
+              "totalTokens": 3613,
+              "cachedInputTokens": 3072,
+              "reasoningTokens": 14
+            },
+            "complete": true
+          },
+          "failures": []
+        },
+        {
+          "attempt": 2,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 3,
+          "durationMs": 3630,
+          "toolsUsed": [
+            "search_text",
+            "read_file"
+          ],
+          "toolCalls": [
+            {
+              "name": "search_text",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            }
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 3343,
+              "outputTokens": 246,
+              "totalTokens": 3589,
+              "cachedInputTokens": 3072
+            },
+            "complete": true
+          },
+          "failures": []
+        },
+        {
+          "attempt": 3,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 3,
+          "durationMs": 3846,
+          "toolsUsed": [
+            "search_text",
+            "read_file"
+          ],
+          "toolCalls": [
+            {
+              "name": "search_text",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            }
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 3389,
+              "outputTokens": 289,
+              "totalTokens": 3678,
+              "cachedInputTokens": 3072,
+              "reasoningTokens": 42
             },
             "complete": true
           },
@@ -171,27 +580,46 @@
       "passed": 3,
       "total": 3,
       "passRate": 1,
-      "meanTurns": 3,
-      "totalTokens": 11909,
-      "medianDurationMs": 4930,
+      "meanTurns": 3.6666666666666665,
+      "totalTokens": 14696,
+      "medianDurationMs": 5565,
       "attempts": [
         {
           "attempt": 1,
           "passed": true,
           "status": "completed",
-          "turnCount": 3,
-          "durationMs": 4930,
+          "turnCount": 4,
+          "durationMs": 6610,
           "toolsUsed": [
+            "read_file",
             "list_files",
-            "read_file"
+            "search_text"
+          ],
+          "toolCalls": [
+            {
+              "name": "read_file",
+              "ok": false
+            },
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "search_text",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            }
           ],
           "usage": {
             "usage": {
-              "inputTokens": 3463,
-              "outputTokens": 514,
-              "totalTokens": 3977,
-              "cachedInputTokens": 3200,
-              "reasoningTokens": 80
+              "inputTokens": 4755,
+              "outputTokens": 593,
+              "totalTokens": 5348,
+              "cachedInputTokens": 4224,
+              "reasoningTokens": 112
             },
             "complete": true
           },
@@ -202,18 +630,36 @@
           "passed": true,
           "status": "completed",
           "turnCount": 3,
-          "durationMs": 5425,
+          "durationMs": 5237,
           "toolsUsed": [
             "list_files",
             "read_file"
           ],
+          "toolCalls": [
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": false
+            },
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            }
+          ],
           "usage": {
             "usage": {
-              "inputTokens": 3420,
-              "outputTokens": 495,
-              "totalTokens": 3915,
-              "cachedInputTokens": 3072,
-              "reasoningTokens": 80
+              "inputTokens": 3474,
+              "outputTokens": 602,
+              "totalTokens": 4076,
+              "cachedInputTokens": 3200,
+              "reasoningTokens": 111
             },
             "complete": true
           },
@@ -223,19 +669,37 @@
           "attempt": 3,
           "passed": true,
           "status": "completed",
-          "turnCount": 3,
-          "durationMs": 4839,
+          "turnCount": 4,
+          "durationMs": 5565,
           "toolsUsed": [
-            "read_file",
-            "list_files"
+            "list_files",
+            "read_file"
+          ],
+          "toolCalls": [
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": false
+            },
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            }
           ],
           "usage": {
             "usage": {
-              "inputTokens": 3458,
-              "outputTokens": 559,
-              "totalTokens": 4017,
-              "cachedInputTokens": 3200,
-              "reasoningTokens": 138
+              "inputTokens": 4747,
+              "outputTokens": 525,
+              "totalTokens": 5272,
+              "cachedInputTokens": 4352,
+              "reasoningTokens": 110
             },
             "complete": true
           },
@@ -249,27 +713,54 @@
       "total": 3,
       "passRate": 1,
       "meanTurns": 4,
-      "totalTokens": 22816,
-      "medianDurationMs": 5504,
+      "totalTokens": 23324,
+      "medianDurationMs": 6070,
       "attempts": [
         {
           "attempt": 1,
           "passed": true,
           "status": "completed",
           "turnCount": 4,
-          "durationMs": 5181,
+          "durationMs": 5462,
           "toolsUsed": [
             "search_text",
+            "list_files",
             "read_file",
             "edit_file"
           ],
+          "toolCalls": [
+            {
+              "name": "search_text",
+              "ok": true
+            },
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "edit_file",
+              "ok": true
+            },
+            {
+              "name": "edit_file",
+              "ok": true
+            }
+          ],
           "usage": {
             "usage": {
-              "inputTokens": 6947,
-              "outputTokens": 583,
-              "totalTokens": 7530,
+              "inputTokens": 7110,
+              "outputTokens": 610,
+              "totalTokens": 7720,
               "cachedInputTokens": 6400,
-              "reasoningTokens": 22
+              "reasoningTokens": 31
             },
             "complete": true
           },
@@ -280,19 +771,50 @@
           "passed": true,
           "status": "completed",
           "turnCount": 4,
-          "durationMs": 5504,
+          "durationMs": 6309,
           "toolsUsed": [
             "search_text",
+            "list_files",
             "read_file",
             "edit_file"
           ],
+          "toolCalls": [
+            {
+              "name": "search_text",
+              "ok": true
+            },
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "edit_file",
+              "ok": true
+            },
+            {
+              "name": "edit_file",
+              "ok": true
+            },
+            {
+              "name": "edit_file",
+              "ok": true
+            }
+          ],
           "usage": {
             "usage": {
-              "inputTokens": 6947,
-              "outputTokens": 605,
-              "totalTokens": 7552,
+              "inputTokens": 7143,
+              "outputTokens": 632,
+              "totalTokens": 7775,
               "cachedInputTokens": 6400,
-              "reasoningTokens": 55
+              "reasoningTokens": 23
             },
             "complete": true
           },
@@ -303,20 +825,46 @@
           "passed": true,
           "status": "completed",
           "turnCount": 4,
-          "durationMs": 6037,
+          "durationMs": 6070,
           "toolsUsed": [
             "search_text",
             "list_files",
             "read_file",
             "edit_file"
           ],
+          "toolCalls": [
+            {
+              "name": "search_text",
+              "ok": true
+            },
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "edit_file",
+              "ok": true
+            },
+            {
+              "name": "edit_file",
+              "ok": true
+            }
+          ],
           "usage": {
             "usage": {
-              "inputTokens": 7115,
-              "outputTokens": 619,
-              "totalTokens": 7734,
-              "cachedInputTokens": 6400,
-              "reasoningTokens": 40
+              "inputTokens": 7180,
+              "outputTokens": 649,
+              "totalTokens": 7829,
+              "cachedInputTokens": 6784,
+              "reasoningTokens": 67
             },
             "complete": true
           },
@@ -330,27 +878,40 @@
       "total": 3,
       "passRate": 1,
       "meanTurns": 4,
-      "totalTokens": 19554,
-      "medianDurationMs": 4621,
+      "totalTokens": 19511,
+      "medianDurationMs": 4205,
       "attempts": [
         {
           "attempt": 1,
           "passed": true,
           "status": "completed",
           "turnCount": 4,
-          "durationMs": 4700,
+          "durationMs": 3922,
           "toolsUsed": [
             "list_files",
             "read_file",
             "edit_file"
           ],
+          "toolCalls": [
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "edit_file",
+              "ok": true
+            }
+          ],
           "usage": {
             "usage": {
-              "inputTokens": 6175,
-              "outputTokens": 282,
-              "totalTokens": 6457,
-              "cachedInputTokens": 5888,
-              "reasoningTokens": 19
+              "inputTokens": 6118,
+              "outputTokens": 249,
+              "totalTokens": 6367,
+              "cachedInputTokens": 5888
             },
             "complete": true
           },
@@ -361,20 +922,38 @@
           "passed": true,
           "status": "completed",
           "turnCount": 4,
-          "durationMs": 4560,
+          "durationMs": 4796,
           "toolsUsed": [
             "list_files",
             "search_text",
             "read_file",
             "edit_file"
           ],
+          "toolCalls": [
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "search_text",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "edit_file",
+              "ok": true
+            }
+          ],
           "usage": {
             "usage": {
-              "inputTokens": 6403,
+              "inputTokens": 6409,
               "outputTokens": 325,
-              "totalTokens": 6728,
+              "totalTokens": 6734,
               "cachedInputTokens": 5888,
-              "reasoningTokens": 7
+              "reasoningTokens": 9
             },
             "complete": true
           },
@@ -385,18 +964,367 @@
           "passed": true,
           "status": "completed",
           "turnCount": 4,
-          "durationMs": 4621,
+          "durationMs": 4205,
           "toolsUsed": [
             "list_files",
             "read_file",
             "edit_file"
           ],
+          "toolCalls": [
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "edit_file",
+              "ok": true
+            }
+          ],
           "usage": {
             "usage": {
-              "inputTokens": 6118,
-              "outputTokens": 251,
-              "totalTokens": 6369,
-              "cachedInputTokens": 5760
+              "inputTokens": 6145,
+              "outputTokens": 265,
+              "totalTokens": 6410,
+              "cachedInputTokens": 5888,
+              "reasoningTokens": 9
+            },
+            "complete": true
+          },
+          "failures": []
+        }
+      ]
+    },
+    {
+      "name": "trace-the-default",
+      "passed": 3,
+      "total": 3,
+      "passRate": 1,
+      "meanTurns": 3.3333333333333335,
+      "totalTokens": 15643,
+      "medianDurationMs": 5582,
+      "attempts": [
+        {
+          "attempt": 1,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 3,
+          "durationMs": 4736,
+          "toolsUsed": [
+            "list_files",
+            "read_file"
+          ],
+          "toolCalls": [
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            }
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 3858,
+              "outputTokens": 643,
+              "totalTokens": 4501,
+              "cachedInputTokens": 3200,
+              "reasoningTokens": 198
+            },
+            "complete": true
+          },
+          "failures": []
+        },
+        {
+          "attempt": 2,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 4,
+          "durationMs": 6998,
+          "toolsUsed": [
+            "list_files",
+            "read_file",
+            "search_text"
+          ],
+          "toolCalls": [
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "search_text",
+              "ok": true
+            },
+            {
+              "name": "search_text",
+              "ok": true
+            }
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 5768,
+              "outputTokens": 824,
+              "totalTokens": 6592,
+              "cachedInputTokens": 5120,
+              "reasoningTokens": 186
+            },
+            "complete": true
+          },
+          "failures": []
+        },
+        {
+          "attempt": 3,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 3,
+          "durationMs": 5582,
+          "toolsUsed": [
+            "list_files",
+            "read_file"
+          ],
+          "toolCalls": [
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            }
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 3820,
+              "outputTokens": 730,
+              "totalTokens": 4550,
+              "cachedInputTokens": 3200,
+              "reasoningTokens": 262
+            },
+            "complete": true
+          },
+          "failures": []
+        }
+      ]
+    },
+    {
+      "name": "wrong-test",
+      "passed": 3,
+      "total": 3,
+      "passRate": 1,
+      "meanTurns": 6.333333333333333,
+      "totalTokens": 65327,
+      "medianDurationMs": 18417,
+      "attempts": [
+        {
+          "attempt": 1,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 6,
+          "durationMs": 18417,
+          "toolsUsed": [
+            "list_files",
+            "read_file",
+            "bash",
+            "edit_file"
+          ],
+          "toolCalls": [
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "bash",
+              "ok": false
+            },
+            {
+              "name": "edit_file",
+              "ok": true
+            },
+            {
+              "name": "bash",
+              "ok": true
+            }
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 16665,
+              "outputTokens": 2119,
+              "totalTokens": 18784,
+              "cachedInputTokens": 15744,
+              "reasoningTokens": 1410
+            },
+            "complete": true
+          },
+          "failures": []
+        },
+        {
+          "attempt": 2,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 6,
+          "durationMs": 13032,
+          "toolsUsed": [
+            "list_files",
+            "read_file",
+            "bash",
+            "edit_file"
+          ],
+          "toolCalls": [
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "bash",
+              "ok": false
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "edit_file",
+              "ok": true
+            },
+            {
+              "name": "bash",
+              "ok": true
+            }
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 15787,
+              "outputTokens": 1362,
+              "totalTokens": 17149,
+              "cachedInputTokens": 14720,
+              "reasoningTokens": 605
+            },
+            "complete": true
+          },
+          "failures": []
+        },
+        {
+          "attempt": 3,
+          "passed": true,
+          "status": "completed",
+          "turnCount": 7,
+          "durationMs": 34469,
+          "toolsUsed": [
+            "list_files",
+            "read_file",
+            "bash",
+            "search_text",
+            "edit_file"
+          ],
+          "toolCalls": [
+            {
+              "name": "list_files",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "read_file",
+              "ok": true
+            },
+            {
+              "name": "bash",
+              "ok": false
+            },
+            {
+              "name": "bash",
+              "ok": false
+            },
+            {
+              "name": "search_text",
+              "ok": true
+            },
+            {
+              "name": "edit_file",
+              "ok": true
+            },
+            {
+              "name": "bash",
+              "ok": true
+            }
+          ],
+          "usage": {
+            "usage": {
+              "inputTokens": 25400,
+              "outputTokens": 3994,
+              "totalTokens": 29394,
+              "cachedInputTokens": 24064,
+              "reasoningTokens": 3060
             },
             "complete": true
           },
@@ -406,8 +1334,8 @@
     }
   ],
   "overall": {
-    "passed": 15,
-    "total": 15,
-    "totalTokens": 100290
+    "passed": 26,
+    "total": 27,
+    "totalTokens": 241838
   }
 }
