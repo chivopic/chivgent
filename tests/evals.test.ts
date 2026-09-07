@@ -588,6 +588,20 @@ describe("eval CLI arguments", () => {
     expect(options.providerArgs).toEqual(["--provider", "deepseek", "--model", "x"]);
   });
 
+  it("passes a key through so an ephemeral machine can supply one", () => {
+    // The credential chain names --api-key the highest-priority source, and
+    // the no-credential error tells the user to pass it; the eval runner used
+    // to reject it, which made that advice wrong under npm run eval.
+    const options = parseEvalArgs(["--provider", "deepseek", "--api-key", "sk-x"]);
+
+    expect(options.providerArgs).toEqual([
+      "--provider",
+      "deepseek",
+      "--api-key",
+      "sk-x",
+    ]);
+  });
+
   it("grants capabilities explicitly", () => {
     const options = parseEvalArgs(["--allow-writes", "--allow-shell"]);
 

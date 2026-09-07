@@ -477,6 +477,7 @@ npm install -g ./chivgent-0.6.0.tgz
 npm run eval                              # 跑 evals/ 下全部任务
 npm run eval -- --task rename-symbol --attempts 10
 npm run eval -- --allow-writes --allow-shell --json report.json
+npm run eval -- --provider deepseek --api-key sk-...   # 也可以走环境变量
 ```
 
 ```text

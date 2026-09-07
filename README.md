@@ -498,6 +498,7 @@ nothing about whether this is a good agent. `npm run eval` answers that:
 npm run eval                              # every task in evals/
 npm run eval -- --task rename-symbol --attempts 10
 npm run eval -- --allow-writes --allow-shell --json report.json
+npm run eval -- --provider deepseek --api-key sk-...   # or the usual env var
 ```
 
 ```text
