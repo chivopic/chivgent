@@ -11,6 +11,7 @@ import {
 } from "./cli-options.js";
 import type { LLMClient } from "./llm.js";
 import { createEventRenderer, createJsonEventWriter } from "./render.js";
+import { createLiveRegion, terminalWidth } from "./tui/live.js";
 import { runRepl } from "./repl.js";
 import { AgentSession } from "./session.js";
 import {
@@ -110,6 +111,26 @@ const BUILT_IN_TOOL_NAMES = [
  * Trust is decided before a single module is imported, because importing is
  * already execution.
  */
+/** Why --tui cannot run here, or undefined when it can. */
+function tuiRefusal(
+  options: CliOptions,
+  interactive: boolean,
+): string | undefined {
+  if (options.serve) {
+    return "--tui has nothing to draw with --serve: the server has no terminal of its own.";
+  }
+  if (options.json) {
+    return "--tui and --json cannot be combined: one draws a region, the other emits a machine-readable stream.";
+  }
+  if (!interactive) {
+    return "--tui only applies to an interactive session; a one-shot run has nothing to keep live.";
+  }
+  if (process.stdin.isTTY !== true || process.stderr.isTTY !== true) {
+    return "--tui needs a terminal on both stdin and stderr.";
+  }
+  return undefined;
+}
+
 async function setupExtensions(
   options: CliOptions,
   cwd: string,
@@ -222,6 +243,16 @@ async function main(argv: readonly string[]): Promise<number> {
     return 1;
   }
 
+  if (options.tui) {
+    // Refused rather than quietly ignored: a switch that silently does nothing
+    // makes a mistyped command look like it worked.
+    const reason = tuiRefusal(options, interactive);
+    if (reason !== undefined) {
+      process.stderr.write(`${reason}\n`);
+      return 1;
+    }
+  }
+
   const configured = await createConfiguredClient(options);
   // A missing key used to end the run here, which left no way to fix it from
   // inside chivgent. An interactive session starts anyway and /login fills it
@@ -300,10 +331,20 @@ async function main(argv: readonly string[]): Promise<number> {
     ...(store === undefined ? {} : { store }),
   });
 
+  // In TUI mode the live region *is* the renderer: it owns both the region and
+  // the transcript it flushes to scrollback, so attaching the append-only
+  // renderer as well would print every answer twice.
+  const liveRegion = options.tui
+    ? createLiveRegion({
+        stream: process.stderr,
+        width: () => terminalWidth(process.stderr),
+      })
+    : undefined;
   session.subscribe(
     options.json
       ? createJsonEventWriter(process.stdout, session.header())
-      : createEventRenderer(
+      : (liveRegion?.listener ??
+        createEventRenderer(
           { stdout: process.stdout, stderr: process.stderr },
           {
             stream: options.stream,
@@ -314,8 +355,14 @@ async function main(argv: readonly string[]): Promise<number> {
               !options.quiet && process.stderr.isTTY === true,
             color: process.stderr.isTTY === true,
           },
-        ),
+        )),
   );
+
+  if (liveRegion !== undefined) {
+    // A resize reflows what is on screen, so the diff baseline no longer
+    // describes it. This is the one moment a full repaint is correct.
+    process.stdout.on("resize", liveRegion.resized);
+  }
 
   if (registry !== undefined) {
     session.subscribe(registry.eventListener);
@@ -347,21 +394,27 @@ async function main(argv: readonly string[]): Promise<number> {
   };
 
   if (interactive) {
-    return runRepl({
-      session,
-      signIn,
-      input: process.stdin,
-      // In JSON mode stdout carries the event stream and nothing else: readline
-      // writes its prompt and echo to the same stream it is given, which would
-      // otherwise prefix the first event with terminal escape codes.
-      output: options.json ? process.stderr : process.stdout,
-      stderr: process.stderr,
-      banner: banner(options, session.id, restored.resumed, signedOutMessage),
-      ...(store === undefined ? {} : { sessionFile: store.location(session.id) }),
-      ...(registry === undefined
-        ? {}
-        : { extensionCommands: registry.registeredCommands }),
-    });
+    try {
+      return await runRepl({
+        session,
+        signIn,
+        input: process.stdin,
+        // In JSON mode stdout carries the event stream and nothing else:
+        // readline writes its prompt and echo to the same stream it is given,
+        // which would otherwise prefix the first event with escape codes.
+        output: options.json ? process.stderr : process.stdout,
+        stderr: process.stderr,
+        banner: banner(options, session.id, restored.resumed, signedOutMessage),
+        ...(store === undefined ? {} : { sessionFile: store.location(session.id) }),
+        ...(registry === undefined
+          ? {}
+          : { extensionCommands: registry.registeredCommands }),
+      });
+    } finally {
+      // A region left on screen after the process leaves would be mistaken for
+      // output that belongs to the shell.
+      liveRegion?.stop();
+    }
   }
 
   return runOnce(session, prompt);
