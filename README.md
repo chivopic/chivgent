@@ -620,6 +620,59 @@ Streamed Chat Completions only report usage when asked, so chivgent sends
 endpoint that predates that field may reject the request; `--no-stream` is the
 fallback.
 
+## The live region
+
+`--tui` draws a status region above the prompt while a run is in progress: the
+turn, whether the model is thinking or running tools, which tools are running
+with what they are aimed at and their newest output, elapsed time, and the
+running token count.
+
+```text
+Let me look at how sessions are stored.
+  read_file src/session.ts (2s)
+  search_text (1s)  src/store.ts:41: export class SessionStore
+running tools  ·  turn 2/8  ·  11s  ·  4.2k tokens  ·  ctrl+c to stop
+```
+
+It is the first consumer of the event stream that runs backwards. Every other
+one — streamed output, the session log, extensions, the remote client — is
+append-only: an event arrives, it is printed, it is forgotten. This one has to
+rebuild *what is happening now* from the same stream and keep it right as more
+arrives, which splits into three pieces:
+
+```text
+reduce(state, event, now)  ->  ViewState     pure
+view(state, {width, now})  ->  string[]      pure
+paint(previous, next)                        the only part that touches a terminal
+```
+
+Both pure pieces are tested without a terminal, which is where the real
+guarantees live. One asymmetry in the event vocabulary is what makes the state
+model load-bearing: `message_update` carries a **delta**, `tool_execution_update`
+carries a truncated **snapshot**. Appending a snapshot stacks output that was
+never produced — the window has already had its front dropped — and replacing on
+a delta leaves the last token and loses the answer. An append-only renderer
+never has to know the difference, because it just prints whatever arrives. Two
+tests fail when either is written the wrong way round.
+
+It does not take the alternate screen buffer. That would cost the scrollback,
+and getting it back means reimplementing scrolling, search and selection —
+thousands of lines that teach terminal graphics rather than agent architecture.
+A finished turn is flushed to the terminal's own scrollback and dropped from
+the state, so a long session never grows it. Input stays with readline for the
+same reason: a line editor is not the interesting problem here.
+
+Painting rewrites only the lines whose content changed, so a ticking timer
+costs one line rather than a repaint. A resize invalidates that baseline — the
+terminal has reflowed what is on screen — and is the one moment a full repaint
+is correct rather than lazy.
+
+`--tui` needs a terminal on stdin and stderr and an interactive session; it
+refuses rather than falling back silently, since a switch that quietly does
+nothing makes a mistyped command look like it worked. It is not the default
+yet. Typing while a run is in progress currently disturbs the region, because
+readline still echoes keystrokes the REPL is not reading.
+
 ## Remote sessions
 
 A session normally lives and dies with the terminal that started it. `--serve`
@@ -811,7 +864,7 @@ project.
 - [x] Remote sessions over a local socket
 - [x] An eval suite with deterministic graders and pass rates
 - [x] Token usage from the Provider, aggregated per run and per eval
-- [ ] TUI
+- [x] A live status region driven by the event stream (`--tui`)
 
 Per-command confirmation prompts and command allowlists are deliberately not
 planned. Once a shell tool exists, `bash` can do anything `write_file` can and

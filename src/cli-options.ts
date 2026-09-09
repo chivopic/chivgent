@@ -56,6 +56,8 @@ export interface CliOptions {
    * can do everything the write tools can and is not bound by the workspace.
    */
   readonly allowShell: boolean;
+  /** Draw a live status region above the prompt. Interactive terminals only. */
+  readonly tui: boolean;
   /** Load extensions from the user and (once trusted) the project directory. */
   readonly extensions: boolean;
   /** List loaded extensions and what they registered, then exit. */
@@ -98,6 +100,7 @@ export function parseCliArgs(
   let listSessions = false;
   let allowWrites = false;
   let allowShell = false;
+  let tui = false;
   let extensions = true;
   let serve = false;
   let connect: string | undefined;
@@ -137,6 +140,8 @@ export function parseCliArgs(
       index += 1;
     } else if (argument === "--no-stream") {
       stream = false;
+    } else if (argument === "--tui") {
+      tui = true;
     } else if (argument === "--quiet" || argument === "-q") {
       quiet = true;
     } else if (argument === "--json") {
@@ -208,6 +213,7 @@ export function parseCliArgs(
     listSessions,
     allowWrites,
     allowShell,
+    tui,
     extensions,
     serve,
     ...(connect === undefined ? {} : { connect }),
@@ -237,6 +243,7 @@ Options:
   --api-key KEY    API key for this run; prefer an environment variable
   --max-turns N    Tool-calling turn limit (default: ${DEFAULT_MAX_TURNS}, ${DEFAULT_WRITE_MAX_TURNS} with --allow-writes or --allow-shell)
   --no-stream      Wait for the full answer instead of streaming tokens
+  --tui            Live status region above the prompt (interactive TTY only)
   -q, --quiet      Hide tool activity on stderr
   --json           Write the run as JSON lines instead of rendered text
   -c, --continue   Resume the most recent session for this workspace

@@ -4,6 +4,7 @@ import type { AgentEvent } from "../events.js";
 import type { LLMClient } from "../llm.js";
 import type { UsageTotal } from "../providers/usage.js";
 import { LocalWorkspace } from "../workspace.js";
+import { callTarget } from "../tools/target.js";
 import { toolsFor } from "./tools.js";
 import { createAttemptWorkspace } from "./fixture.js";
 import { createGrader, describeGrader, type AttemptFacts } from "./graders.js";
@@ -24,28 +25,6 @@ export interface ToolCallRecord {
    * neither.
    */
   readonly target?: string;
-}
-
-const MAX_TARGET_LENGTH = 80;
-
-/** The one argument worth keeping, short enough to sit in a report. */
-function callTarget(argumentsValue: unknown): string | undefined {
-  if (typeof argumentsValue !== "object" || argumentsValue === null) {
-    return undefined;
-  }
-  const record = argumentsValue as Record<string, unknown>;
-  const value =
-    typeof record.path === "string"
-      ? record.path
-      : typeof record.command === "string"
-        ? record.command
-        : undefined;
-  if (value === undefined) {
-    return undefined;
-  }
-  return value.length > MAX_TARGET_LENGTH
-    ? `${value.slice(0, MAX_TARGET_LENGTH)}…`
-    : value;
 }
 
 export interface AttemptResult {
