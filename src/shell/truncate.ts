@@ -42,19 +42,30 @@ function splitLines(content: string): string[] {
 }
 
 /** Keeps whole characters, never splitting a multi-byte sequence. */
-function takeLastBytes(value: string, maxBytes: number): string {
-  const characters = [...value];
+export function takeLastBytes(value: string, maxBytes: number): string {
   let bytes = 0;
-  let index = characters.length;
+  let index = value.length;
+  // Walk UTF-16 backwards without allocating an array for the entire input.
+  // A surrogate pair is one four-byte UTF-8 character; an unpaired surrogate
+  // is encoded as the three-byte replacement character, just like Buffer.
   while (index > 0) {
-    const size = byteLength(characters[index - 1] ?? "");
+    const code = value.charCodeAt(index - 1);
+    let units = 1;
+    let size = code <= 0x7f ? 1 : code <= 0x7ff ? 2 : 3;
+    if (code >= 0xdc00 && code <= 0xdfff && index > 1) {
+      const previous = value.charCodeAt(index - 2);
+      if (previous >= 0xd800 && previous <= 0xdbff) {
+        units = 2;
+        size = 4;
+      }
+    }
     if (bytes + size > maxBytes) {
       break;
     }
     bytes += size;
-    index -= 1;
+    index -= units;
   }
-  return characters.slice(index).join("");
+  return value.slice(index);
 }
 
 export function countLines(content: string): number {

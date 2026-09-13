@@ -7,6 +7,7 @@ import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_LINES,
   truncateTail,
+  takeLastBytes,
   type TruncationResult,
 } from "./truncate.js";
 
@@ -167,19 +168,8 @@ export class OutputAccumulator {
     }
     // Dropping from the front can cut mid-line; truncateTail rebuilds whole
     // lines from what is left, and the totals stay correct either way.
-    const characters = [...this.tail];
-    let bytes = 0;
-    let index = characters.length;
-    while (index > 0) {
-      const size = Buffer.byteLength(characters[index - 1] ?? "", "utf8");
-      if (bytes + size > this.maxRollingBytes) {
-        break;
-      }
-      bytes += size;
-      index -= 1;
-    }
-    this.tail = characters.slice(index).join("");
-    this.tailBytes = bytes;
+    this.tail = takeLastBytes(this.tail, this.maxRollingBytes);
+    this.tailBytes = Buffer.byteLength(this.tail, "utf8");
   }
 
   private spillToTempFile(): void {

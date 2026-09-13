@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { resolveShellConfig } from "../src/shell/config.js";
 import { OutputAccumulator } from "../src/shell/output.js";
 import { sanitizeShellOutput } from "../src/shell/sanitize.js";
-import { truncateTail } from "../src/shell/truncate.js";
+import { takeLastBytes, truncateTail } from "../src/shell/truncate.js";
 import { ShellUnavailableError } from "../src/shell/types.js";
 
 const temporaryDirectories: string[] = [];
@@ -22,6 +22,21 @@ afterEach(async () => {
       rm(directory, { recursive: true, force: true }),
     ),
   );
+});
+
+describe("takeLastBytes", () => {
+  it("matches a code-point reference for every byte boundary", () => {
+    for (const input of ["", "ASCII", "é中文😀z", "😀😀", "a\ud800b\udc00", "\ud800😀\udc00"]) {
+      for (let limit = 0; limit <= Buffer.byteLength(input) + 1; limit++) {
+        let expected = "";
+        for (const character of [...input].reverse()) {
+          if (Buffer.byteLength(character + expected) > limit) break;
+          expected = character + expected;
+        }
+        expect(takeLastBytes(input, limit)).toBe(expected);
+      }
+    }
+  });
 });
 
 describe("truncateTail", () => {
@@ -84,6 +99,24 @@ describe("sanitizeShellOutput", () => {
 });
 
 describe("OutputAccumulator", () => {
+  it("preserves Unicode tails and full output across repeated trimming", async () => {
+    const accumulator = new OutputAccumulator({
+      maxBytes: 17,
+      tempDirectory: await temporaryDirectory(),
+    });
+    const text = "中文😀x".repeat(100);
+    const bytes = Buffer.from(text);
+    for (let i = 0; i < bytes.length; i += 7) {
+      accumulator.append(bytes.subarray(i, i + 7));
+    }
+    accumulator.finish();
+    const snapshot = accumulator.snapshot();
+    await accumulator.close();
+    expect(snapshot.content).toBe(truncateTail(text, { maxBytes: 17 }).content);
+    expect(snapshot.truncation.totalBytes).toBe(bytes.length);
+    expect(await readFile(snapshot.fullOutputPath as string, "utf8")).toBe(text);
+  });
+
   it("decodes a multi-byte character split across chunks", () => {
     const accumulator = new OutputAccumulator();
     const bytes = Buffer.from("\u6211", "utf8");
