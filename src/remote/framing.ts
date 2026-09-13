@@ -31,34 +31,48 @@ export function encodeMessage(value: unknown): string {
  * buffer is capped and overflow is a protocol error rather than a slow death.
  */
 export class LineDecoder {
-  private buffer = "";
+  private fragments: string[] = [];
+  private bufferedBytes = 0;
   private readonly decoder = new TextDecoder("utf-8");
 
   constructor(private readonly maxLineBytes: number = MAX_LINE_BYTES) {}
 
   push(chunk: Buffer): string[] {
-    this.buffer += this.decoder.decode(chunk, { stream: true });
+    const text = this.decoder.decode(chunk, { stream: true });
     const lines: string[] = [];
+    let start = 0;
 
+    // Scan only newly decoded text. Joining an unfinished line on every push
+    // repeatedly copies and scans its prefix when the transport fragments it.
     for (;;) {
-      const index = this.buffer.indexOf("\n");
-      if (index === -1) {
+      const end = text.indexOf("\n", start);
+      if (end === -1) {
+        this.appendFragment(text.slice(start));
         break;
       }
-      const line = this.buffer.slice(0, index);
-      this.buffer = this.buffer.slice(index + 1);
-      const trimmed = line.trim();
+      this.appendFragment(text.slice(start, end));
+      const trimmed = this.fragments.join("").trim();
+      this.fragments = [];
+      this.bufferedBytes = 0;
       if (trimmed.length > 0) {
         lines.push(trimmed);
       }
+      start = end + 1;
     }
+    return lines;
+  }
 
-    if (Buffer.byteLength(this.buffer, "utf8") > this.maxLineBytes) {
+  private appendFragment(fragment: string): void {
+    const bytes = Buffer.byteLength(fragment, "utf8");
+    if (this.bufferedBytes + bytes > this.maxLineBytes) {
       throw new FramingError(
         `A single line exceeded the ${this.maxLineBytes}-byte limit.`,
       );
     }
-    return lines;
+    if (fragment.length > 0) {
+      this.fragments.push(fragment);
+      this.bufferedBytes += bytes;
+    }
   }
 }
 

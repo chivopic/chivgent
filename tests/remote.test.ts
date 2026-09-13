@@ -187,6 +187,33 @@ afterEach(async () => {
 });
 
 describe("LineDecoder", () => {
+  it("reassembles many tiny chunks including whitespace and Unicode", () => {
+    const decoder = new LineDecoder();
+    const messages = ["  中文😀  ", "", "second", " x "];
+    const bytes = Buffer.from(`${messages.join("\n")}\nunfinished`);
+    const lines: string[] = [];
+    for (const byte of bytes) {
+      lines.push(...decoder.push(Buffer.from([byte])));
+    }
+    expect(lines).toEqual(["中文😀", "second", "x"]);
+    expect(decoder.push(Buffer.from("\n"))).toEqual(["unfinished"]);
+  });
+
+  it("enforces the limit on completed lines and resets it between lines", () => {
+    const decoder = new LineDecoder(4);
+    expect(decoder.push(Buffer.from("😀\nabcd\n"))).toEqual(["😀", "abcd"]);
+    expect(() => decoder.push(Buffer.from("abcde\n"))).toThrow(FramingError);
+  });
+
+  it("counts decoded UTF-8 bytes across chunk boundaries", () => {
+    const decoder = new LineDecoder(4);
+    const bytes = Buffer.from("😀");
+    for (const byte of bytes) {
+      expect(decoder.push(Buffer.from([byte]))).toEqual([]);
+    }
+    expect(() => decoder.push(Buffer.from("x"))).toThrow(FramingError);
+  });
+
   it("reassembles a message split across chunks", () => {
     const decoder = new LineDecoder();
     const line = encodeMessage({ type: "interrupt" });
