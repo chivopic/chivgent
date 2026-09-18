@@ -1,0 +1,53 @@
+import { PassThrough } from "node:stream";
+
+type TerminalInput = NodeJS.ReadableStream & {
+  isTTY?: boolean;
+  setRawMode?: (enabled: boolean) => unknown;
+};
+
+/**
+ * Readline keeps its normal editing and history. During a run, only Ctrl+C
+ * reaches it: typing must neither echo into the live region nor queue prompts.
+ * The source stays in raw mode so cancellation still arrives immediately.
+ */
+export class TuiInput extends PassThrough {
+  readonly isTTY: boolean;
+  private busy = false;
+
+  constructor(private readonly source: TerminalInput) {
+    super();
+    this.isTTY = source.isTTY === true;
+    source.on("data", this.receive);
+    source.on("end", this.ended);
+    source.on("error", this.failed);
+  }
+
+  setRawMode(enabled: boolean): this {
+    this.source.setRawMode?.(enabled);
+    return this;
+  }
+
+  setBusy(busy: boolean): void {
+    this.busy = busy;
+  }
+
+  dispose(): void {
+    this.source.off("data", this.receive);
+    this.source.off("end", this.ended);
+    this.source.off("error", this.failed);
+    this.setRawMode(false);
+    this.source.pause();
+    this.destroy();
+  }
+
+  private readonly receive = (chunk: Buffer | string): void => {
+    if (!this.busy) {
+      this.write(chunk);
+    } else if (chunk.includes("\u0003")) {
+      this.write("\u0003");
+    }
+  };
+
+  private readonly ended = (): void => { this.end(); };
+  private readonly failed = (error: Error): void => { this.destroy(error); };
+}

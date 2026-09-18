@@ -1,6 +1,6 @@
 {
   "name": "chivgent",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "description": "A minimal coding agent CLI built to learn agent harness architecture.",
   "license": "MIT",
   "repository": {
@@ -39,6 +39,7 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "demo:tui": "npm run build && node scripts/tui-demo.mjs",
     "release:check": "npm run check && npm test && npm run build && npm pack --dry-run",
     "prepublishOnly": "npm run check && npm test",
     "prepack": "npm run build",
@@ -46,7 +47,8 @@
   },
   "dependencies": {
     "ignore": "7.0.6",
-    "openai": "7.5.0"
+    "openai": "7.5.0",
+    "string-width": "7.2.0"
   },
   "devDependencies": {
     "@types/node": "26.2.0",

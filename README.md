@@ -670,8 +670,25 @@ is correct rather than lazy.
 `--tui` needs a terminal on stdin and stderr and an interactive session; it
 refuses rather than falling back silently, since a switch that quietly does
 nothing makes a mistyped command look like it worked. It is not the default
-yet. Typing while a run is in progress currently disturbs the region, because
-readline still echoes keystrokes the REPL is not reading.
+yet. The welcome panel shows the Provider, model, workspace and session. Use Tab
+to complete slash commands (including extension commands), and Up/Down for input
+history. During a run ordinary typing is ignored; Ctrl+C cancels immediately.
+After cancellation the prompt is ready again and partial text stays in scrollback.
+A completion line records the outcome, elapsed time and reported token usage.
+
+Chinese, combining characters and joined emoji are clipped by terminal columns;
+short terminals keep the status visible. Resizing repaints the existing region.
+All prompts and UI output go to stderr; stdout receives final answers only, so
+`chivgent --tui > answers.txt` keeps the terminal interactive while saving answers.
+
+```sh
+npm run build
+node dist/cli.js --tui
+npm run demo:tui  # Offline interactive demo; no API key or network required
+```
+
+The demo uses a stub Provider and simulated tool progress; it does not modify the
+workspace. See [the TUI guide](docs/tui.md) for controls and verification.
 
 ## Remote sessions
 

@@ -1,3 +1,4 @@
+import { TuiInput } from "./tui/input.js";
 import { createInterface, type Interface } from "node:readline";
 import type { AgentSession } from "./session.js";
 import type { OutputStream } from "./render.js";
@@ -169,6 +170,7 @@ function describeSession(context: SlashCommandContext): string {
 }
 
 export interface ReplOptions {
+  readonly tui?: boolean;
   readonly session: AgentSession;
   readonly input: NodeJS.ReadableStream;
   readonly output: NodeJS.WritableStream;
@@ -253,14 +255,25 @@ export async function runRepl(options: ReplOptions): Promise<number> {
   const write = (text: string): void => {
     options.stderr.write(text);
   };
+  const tuiInput = options.tui ? new TuiInput(options.input) : undefined;
   const readline = createInterface({
-    input: options.input,
+    input: tuiInput ?? options.input,
     output: options.output,
     terminal: true,
     prompt: REPL_PROMPT,
+    ...(options.tui ? {
+      completer: (line: string): [string[], string] => {
+        const commands = [...BUILT_IN_COMMANDS, ...(options.extensionCommands ?? []).map((command) => command.name)];
+        const matches = line.startsWith("/") && !/\s/.test(line)
+          ? [...new Set(commands)].map((name) => `/${name}`).filter((name) => name.startsWith(line))
+          : [];
+        return [matches, line];
+      },
+    } : {}),
   });
 
   let controller: AbortController | undefined;
+  readline.on("close", () => controller?.abort());
   readline.on("SIGINT", () => {
     if (controller === undefined) {
       write("Press Ctrl+D or /exit to leave.\n");
@@ -281,78 +294,87 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     return next.done === true ? undefined : next.value;
   };
 
-  for (;;) {
-    const line = await readNextLine();
-    if (line === undefined) {
-      break;
-    }
-    if (line.trim().length === 0) {
-      readline.prompt();
-      continue;
-    }
-
-    const outcome = handleSlashCommand(line, {
-      session: options.session,
-      write,
-      ...(options.sessionFile === undefined
-        ? {}
-        : { sessionFile: options.sessionFile }),
-      ...(options.extensionCommands === undefined
-        ? {}
-        : { extensionCommands: options.extensionCommands }),
-      ...(options.signIn === undefined ? {} : { signIn: options.signIn }),
-    });
-    if (outcome === "exit") {
-      break;
-    }
-    if (typeof outcome === "object" && outcome.kind === "login") {
-      if (options.signIn !== undefined) {
-        await runSignIn(readline, readNextLine, write, options.signIn);
+  try {
+    for (;;) {
+      const line = await readNextLine();
+      if (line === undefined) {
+        break;
       }
-      readline.prompt();
-      continue;
-    }
-    if (typeof outcome === "object") {
-      // An extension command runs here rather than inside the parser so it may
-      // be async, and so a throwing command cannot take the REPL down.
+      if (line.trim().length === 0) {
+        readline.prompt();
+        continue;
+      }
+
+      const outcome = handleSlashCommand(line, {
+        session: options.session,
+        write,
+        ...(options.sessionFile === undefined
+          ? {}
+          : { sessionFile: options.sessionFile }),
+        ...(options.extensionCommands === undefined
+          ? {}
+          : { extensionCommands: options.extensionCommands }),
+        ...(options.signIn === undefined ? {} : { signIn: options.signIn }),
+      });
+      if (outcome === "exit") {
+        break;
+      }
+      if (typeof outcome === "object" && outcome.kind === "login") {
+        if (options.signIn !== undefined) {
+          await runSignIn(readline, readNextLine, write, options.signIn);
+        }
+        readline.prompt();
+        continue;
+      }
+      if (typeof outcome === "object") {
+        // An extension command runs here rather than inside the parser so it may
+        // be async, and so a throwing command cannot take the REPL down.
+        try {
+          await outcome.command.run({
+            session: options.session,
+            write,
+            argument: outcome.argument,
+          });
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          write(`/${outcome.command.name} failed: ${message}\n`);
+        }
+        readline.prompt();
+        continue;
+      }
+      if (outcome === "handled") {
+        readline.prompt();
+        continue;
+      }
+
+      if (options.signIn !== undefined && !options.signIn.ready()) {
+        // Saying this before the run starts is clearer than letting the Provider
+        // call fail and reporting it as an agent failure.
+        write("No API key yet. Run /login to add one.\n");
+        readline.prompt();
+        continue;
+      }
+
+      controller = new AbortController();
+      tuiInput?.setBusy(true);
       try {
-        await outcome.command.run({
-          session: options.session,
-          write,
-          argument: outcome.argument,
-        });
+        const signal = controller.signal;
+        const prompt = () => options.session.prompt(line, { signal });
+        if (options.tui) await withoutEcho(readline, prompt);
+        else await prompt();
       } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        write(`/${outcome.command.name} failed: ${message}\n`);
+        const message = error instanceof Error ? error.message : "Unknown error";
+        write(`Agent failed: ${message}\n`);
+      } finally {
+        controller = undefined;
+        tuiInput?.setBusy(false);
       }
       readline.prompt();
-      continue;
-    }
-    if (outcome === "handled") {
-      readline.prompt();
-      continue;
     }
 
-    if (options.signIn !== undefined && !options.signIn.ready()) {
-      // Saying this before the run starts is clearer than letting the Provider
-      // call fail and reporting it as an agent failure.
-      write("No API key yet. Run /login to add one.\n");
-      readline.prompt();
-      continue;
-    }
-
-    controller = new AbortController();
-    try {
-      await options.session.prompt(line, { signal: controller.signal });
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      write(`Agent failed: ${message}\n`);
-    } finally {
-      controller = undefined;
-    }
-    readline.prompt();
+  } finally {
+    readline.close();
+    tuiInput?.dispose();
   }
-
-  readline.close();
   return 0;
 }

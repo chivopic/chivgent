@@ -1,3 +1,4 @@
+import { displayWidth } from "./text.js";
 import type { OutputStream } from "../render.js";
 
 const CURSOR_UP = "\u001B[A";
@@ -24,6 +25,8 @@ export class Painter {
    * without the painter knowing anything about it.
    */
   private previous: readonly string[] = [];
+  private invalidated = false;
+  private previousRows = 0;
 
   constructor(private readonly options: PainterOptions) {}
 
@@ -35,19 +38,25 @@ export class Painter {
    * lines that are no longer there. This is the one moment a full repaint is
    * the correct answer rather than a lazy one.
    */
-  invalidate(): void {
-    this.previous = [];
+  invalidate(columns?: number): void {
+    this.invalidated = true;
+    if (columns !== undefined && columns > 0) {
+      this.previousRows = this.previous.reduce(
+        (rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line) / columns)),
+        0,
+      );
+    }
   }
 
   render(lines: readonly string[]): void {
-    if (sameLines(this.previous, lines)) {
+    if (!this.invalidated && sameLines(this.previous, lines)) {
       return;
     }
     // Back to the top of the region, then forward a line at a time, so the
     // cursor ends where it began and the caller's prompt line is undisturbed.
-    let out = CURSOR_UP.repeat(this.previous.length) + CARRIAGE_RETURN;
+    let out = CURSOR_UP.repeat(this.previousRows) + CARRIAGE_RETURN;
 
-    const height = Math.max(this.previous.length, lines.length);
+    const height = Math.max(this.previousRows, lines.length);
     for (let index = 0; index < height; index += 1) {
       const next = lines[index];
       if (next === undefined) {
@@ -55,7 +64,7 @@ export class Painter {
         out += `${CLEAR_LINE}\n`;
         continue;
       }
-      out += this.previous[index] === next ? "\n" : `${CLEAR_LINE}${next}\n`;
+      out += !this.invalidated && this.previous[index] === next ? "\n" : `${CLEAR_LINE}${next}\n`;
     }
 
     // A shrunken region left the cursor below its new last line.
@@ -65,11 +74,13 @@ export class Painter {
 
     this.options.stream.write(out);
     this.previous = [...lines];
+    this.previousRows = lines.length;
+    this.invalidated = false;
   }
 
   /** Erases the region entirely, leaving the cursor where it began. */
   clear(): void {
-    const height = this.previous.length;
+    const height = this.previousRows;
     if (height === 0) {
       return;
     }
@@ -80,6 +91,8 @@ export class Painter {
         CURSOR_UP.repeat(height),
     );
     this.previous = [];
+    this.previousRows = 0;
+    this.invalidated = false;
   }
 }
 
