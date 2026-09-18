@@ -33,6 +33,41 @@ const turnEnd: AgentEvent = {
 };
 
 describe("createLiveRegion", () => {
+  it("does not move the readline cursor when resized between runs", () => {
+    const output = recorder();
+    const region = live(output);
+    region.resized();
+    expect(output.written()).toBe("");
+    region.stop();
+  });
+
+  it("sends only the final answer to a separate answer stream", () => {
+    const terminal = recorder();
+    const answers = recorder();
+    const region = createLiveRegion({ stream: terminal.stream, answerStream: answers.stream, width: () => 80 });
+    region.listener(start);
+    region.listener(turnEnd);
+    region.listener({ type: "agent_end", status: "completed", turnCount: 1, messages: [] });
+    expect(answers.written()).toBe("the answer\n");
+    expect(terminal.written()).toContain("read_file a.ts");
+    expect(terminal.written()).toContain("Completed");
+    expect(terminal.written()).not.toContain("the answer");
+  });
+
+  it("retains unfinished streamed text after cancellation and reports failures", () => {
+    const output = recorder();
+    const region = live(output);
+    region.listener(start);
+    region.listener({ type: "message_update", turn: 1, delta: "partial answer" });
+    output.chunks.length = 0;
+    region.listener({ type: "agent_end", status: "aborted", turnCount: 1, messages: [] });
+    expect(output.written()).toContain("partial answer\n");
+    expect(output.written()).toContain("Stopped");
+    region.listener(start);
+    region.listener({ type: "agent_end", status: "error", turnCount: 1, messages: [], error: "provider unavailable" });
+    expect(output.written()).toContain("provider unavailable");
+  });
+
   it("draws the region once a run begins", () => {
     const output = recorder();
     const region = live(output);

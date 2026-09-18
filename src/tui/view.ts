@@ -1,17 +1,19 @@
 import type { TurnEndEvent } from "../events.js";
 import { formatTokens } from "../providers/usage.js";
 import { callTarget } from "../tools/target.js";
+import { fitLine } from "./text.js";
 import type { RunningTool, ViewState } from "./state.js";
 
 /** Tools listed individually before the rest are summarised as a count. */
 const MAX_LISTED_TOOLS = 3;
 /** Lines of the answer kept visible while it streams. */
 const MAX_TEXT_LINES = 3;
-const MINIMUM_WIDTH = 20;
+
 
 export interface ViewOptions {
   readonly width: number;
   readonly now: number;
+  readonly height?: number;
 }
 
 function elapsed(from: number, now: number): string {
@@ -20,12 +22,6 @@ function elapsed(from: number, now: number): string {
     return `${seconds}s`;
   }
   return `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`;
-}
-
-/** Cuts to the width, marking the cut so a truncated line never reads as whole. */
-function fit(line: string, width: number): string {
-  const usable = Math.max(MINIMUM_WIDTH, width);
-  return line.length <= usable ? line : `${line.slice(0, usable - 1)}…`;
 }
 
 function describeTool(tool: RunningTool, now: number): string {
@@ -58,16 +54,16 @@ export function view(
   const tail = run.text.split("\n").slice(-MAX_TEXT_LINES);
   for (const line of tail) {
     if (line.length > 0) {
-      lines.push(fit(line, options.width));
+      lines.push(fitLine(line, options.width));
     }
   }
 
   for (const tool of run.running.slice(0, MAX_LISTED_TOOLS)) {
-    lines.push(fit(describeTool(tool, options.now), options.width));
+    lines.push(fitLine(describeTool(tool, options.now), options.width));
   }
   const hidden = run.running.length - MAX_LISTED_TOOLS;
   if (hidden > 0) {
-    lines.push(`  and ${hidden} more`);
+    lines.push(fitLine(`  and ${hidden} more`, options.width));
   }
 
   const status = [
@@ -81,9 +77,9 @@ export function view(
     );
   }
   status.push("ctrl+c to stop");
-  lines.push(fit(status.join("  ·  "), options.width));
+  lines.push(fitLine(status.join("  ·  "), options.width));
 
-  return lines;
+  return lines.slice(-Math.max(1, options.height ?? lines.length));
 }
 
 /**

@@ -1,3 +1,5 @@
+import { formatTokens } from "../providers/usage.js";
+import { terminalText, fitLine } from "./text.js";
 import type { AgentEvent, AgentEventListener } from "../events.js";
 import type { OutputStream } from "../render.js";
 import { Painter } from "./paint.js";
@@ -12,6 +14,9 @@ export interface LiveRegionOptions {
   readonly stream: OutputStream;
   /** Re-read on every paint: a resize changes it under us. */
   readonly width: () => number;
+  readonly height?: () => number;
+  /** Final answers can be redirected independently of terminal chrome. */
+  readonly answerStream?: OutputStream;
   readonly now?: () => number;
   readonly tickMs?: number;
 }
@@ -38,7 +43,12 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
   let timer: NodeJS.Timeout | undefined;
 
   const paint = (): void => {
-    painter.render(view(state, { width: options.width(), now: clock() }));
+    painter.render(view(state, {
+      // Leave one cell spare to avoid a terminal's pending autowrap state.
+      width: Math.max(1, options.width() - 1),
+      height: Math.max(1, (options.height?.() ?? 24) - 2),
+      now: clock(),
+    }));
   };
 
   const startClock = (): void => {
@@ -65,12 +75,19 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
         // region is erased first so the transcript lands where it was, then
         // the region is drawn again below it.
         painter.clear();
-        const lines = transcriptLines(event);
+        const lines = transcriptLines(options.answerStream === undefined ? event : {
+          ...event,
+          message: { ...event.message, content: "" },
+        });
         if (lines.length > 0) {
-          options.stream.write(`${lines.join("\n")}\n`);
+          options.stream.write(`${terminalText(lines.join("\n"))}\n`);
+        }
+        if (options.answerStream !== undefined && event.message.content.trim().length > 0) {
+          options.answerStream.write(`${event.message.content}\n`);
         }
       }
 
+      const previous = state;
       state = reduce(state, event, clock());
 
       if (event.type === "agent_start") {
@@ -79,6 +96,24 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
       if (event.type === "agent_end") {
         stopClock();
         painter.clear();
+        // Cancellation can end a streamed turn before turn_end arrives.
+        if (previous.run?.text) {
+          (options.answerStream ?? options.stream).write(`${terminalText(previous.run.text)}\n`);
+        }
+        const label = event.status === "completed" ? "Completed"
+          : event.status === "aborted" ? "Stopped"
+          : event.status === "max_turns" ? "Turn limit reached" : "Failed";
+        const parts = [label, `${event.turnCount} turn(s)`];
+        if (previous.run !== undefined) {
+          parts.push(`${Math.max(0, Math.round((clock() - previous.run.startedAt) / 1000))}s`);
+        }
+        if (event.usage !== undefined) {
+          parts.push(`${formatTokens(event.usage.usage.totalTokens)} tokens${event.usage.complete ? "" : "+"}`);
+        }
+        options.stream.write(`${fitLine(parts.join(" · "), options.width() - 1)}\n`);
+        if (event.error !== undefined) {
+          options.stream.write(`${terminalText(event.error)}\n`);
+        }
         return;
       }
       paint();
@@ -91,7 +126,8 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
     },
 
     resized: (): void => {
-      painter.invalidate();
+      if (state.run === undefined) return;
+      painter.invalidate(options.width());
       paint();
     },
   };

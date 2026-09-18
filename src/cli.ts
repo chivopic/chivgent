@@ -11,6 +11,7 @@ import {
 } from "./cli-options.js";
 import type { LLMClient } from "./llm.js";
 import { createEventRenderer, createJsonEventWriter } from "./render.js";
+import { welcome } from "./tui/welcome.js";
 import { createLiveRegion, terminalWidth } from "./tui/live.js";
 import { runRepl } from "./repl.js";
 import { AgentSession } from "./session.js";
@@ -338,6 +339,8 @@ async function main(argv: readonly string[]): Promise<number> {
     ? createLiveRegion({
         stream: process.stderr,
         width: () => terminalWidth(process.stderr),
+        height: () => process.stderr.rows || 24,
+        answerStream: process.stdout,
       })
     : undefined;
   session.subscribe(
@@ -361,7 +364,7 @@ async function main(argv: readonly string[]): Promise<number> {
   if (liveRegion !== undefined) {
     // A resize reflows what is on screen, so the diff baseline no longer
     // describes it. This is the one moment a full repaint is correct.
-    process.stdout.on("resize", liveRegion.resized);
+    process.stderr.on("resize", liveRegion.resized);
   }
 
   if (registry !== undefined) {
@@ -402,9 +405,19 @@ async function main(argv: readonly string[]): Promise<number> {
         // In JSON mode stdout carries the event stream and nothing else:
         // readline writes its prompt and echo to the same stream it is given,
         // which would otherwise prefix the first event with escape codes.
-        output: options.json ? process.stderr : process.stdout,
+        output: options.json || options.tui ? process.stderr : process.stdout,
+        tui: options.tui,
         stderr: process.stderr,
-        banner: banner(options, session.id, restored.resumed, signedOutMessage),
+        banner: options.tui ? welcome({
+          version: VERSION,
+          provider: options.provider,
+          model: options.model ?? "unknown model",
+          cwd,
+          sessionId: session.id,
+          resumed: restored.resumed,
+          signedOut: signedOutMessage !== undefined,
+          width: terminalWidth(process.stderr),
+        }) : banner(options, session.id, restored.resumed, signedOutMessage),
         ...(store === undefined ? {} : { sessionFile: store.location(session.id) }),
         ...(registry === undefined
           ? {}
@@ -414,6 +427,7 @@ async function main(argv: readonly string[]): Promise<number> {
       // A region left on screen after the process leaves would be mistaken for
       // output that belongs to the shell.
       liveRegion?.stop();
+      if (liveRegion !== undefined) process.stderr.off("resize", liveRegion.resized);
     }
   }
 

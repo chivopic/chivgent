@@ -33,6 +33,11 @@ function recorder() {
 }
 
 describe("view", () => {
+  it("keeps the status visible in a short narrow terminal", () => {
+    const lines = view(state({ text: "one\ntwo\nthree" }), { width: 8, height: 1, now: NOW });
+    expect(lines).toEqual(["thinkin…"]);
+  });
+
   it("draws nothing between runs", () => {
     expect(view(EMPTY_STATE, { width: 80, now: NOW })).toEqual([]);
   });
@@ -166,6 +171,17 @@ describe("transcriptLines", () => {
 });
 
 describe("Painter", () => {
+  it("erases reflowed rows on resize instead of appending a duplicate region", () => {
+    const output = recorder();
+    const painter = new Painter({ stream: output.stream });
+    painter.render(["abcdefgh", "status"]);
+    output.chunks.length = 0;
+    painter.invalidate(4);
+    painter.render(["abc…"]);
+    expect(output.written().startsWith("\u001B[A".repeat(4))).toBe(true);
+    expect(output.written().split(CLEAR_LINE)).toHaveLength(5);
+  });
+
   it("writes nothing at all when the lines are unchanged", () => {
     const output = recorder();
     const painter = new Painter({ stream: output.stream });
