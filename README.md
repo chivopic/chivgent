@@ -5,7 +5,7 @@
 > A small, readable coding-agent CLI for learning how an agent harness actually
 > works.
 
-![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-339933?logo=nodedotjs&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=nodedotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-ESM-3178C6?logo=typescript&logoColor=white)
 [![CI](https://github.com/chivopic/chivgent/actions/workflows/ci.yml/badge.svg)](https://github.com/chivopic/chivgent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -62,7 +62,7 @@ to study before adding production-harness complexity.
 
 ### Requirements
 
-- Node.js 20 or newer
+- Node.js 22 or newer
 - npm
 - An API key for OpenAI, DeepSeek, or a compatible Provider
 
@@ -673,6 +673,9 @@ nothing makes a mistyped command look like it worked. It is not the default
 yet. The welcome panel shows the Provider, model, workspace and session. Use Tab
 to complete slash commands (including extension commands), and Up/Down for input
 history. During a run ordinary typing is ignored; Ctrl+C cancels immediately.
+At an idle prompt Ctrl+C clears the draft; Ctrl+D on an empty line exits cleanly.
+Input is single-line: only the first submitted line in an input batch is accepted.
+Wait for the prompt before sending another question.
 After cancellation the prompt is ready again and partial text stays in scrollback.
 A completion line records the outcome, elapsed time and reported token usage.
 

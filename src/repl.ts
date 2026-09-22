@@ -1,5 +1,5 @@
 import { TuiInput } from "./tui/input.js";
-import { createInterface, type Interface } from "node:readline";
+import { createInterface, emitKeypressEvents, type Interface } from "node:readline";
 import type { AgentSession } from "./session.js";
 import type { OutputStream } from "./render.js";
 import type { RegisteredCommand } from "./extensions/api.js";
@@ -256,6 +256,10 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     options.stderr.write(text);
   };
   const tuiInput = options.tui ? new TuiInput(options.input) : undefined;
+  // Decode independently so readline uses normal editing for every key. Its
+  // chunked-paste fast path can lose wrapped cursor rows or overwrite text
+  // when inserting a paste in the middle of an existing draft.
+  if (tuiInput !== undefined) emitKeypressEvents(tuiInput);
   const readline = createInterface({
     input: tuiInput ?? options.input,
     output: options.output,
@@ -273,11 +277,30 @@ export async function runRepl(options: ReplOptions): Promise<number> {
   });
 
   let controller: AbortController | undefined;
-  readline.on("close", () => controller?.abort());
+  let promptVisible = false;
+  const showPrompt = (): void => {
+    promptVisible = true;
+    readline.prompt();
+  };
+  readline.on("line", () => { promptVisible = false; });
+  readline.on("close", () => {
+    controller?.abort();
+    if (options.tui && promptVisible) {
+      // Ctrl+D closes an empty input line without printing a newline.
+      options.output.write("\r\u001B[2K");
+      promptVisible = false;
+    }
+  });
   readline.on("SIGINT", () => {
     if (controller === undefined) {
-      write("Press Ctrl+D or /exit to leave.\n");
-      readline.prompt();
+      if (options.tui) {
+        // Use readline's editing operations so wrapped input is also erased.
+        readline.write(null, { ctrl: true, name: "e" });
+        readline.write(null, { ctrl: true, name: "u" });
+      } else {
+        write("Press Ctrl+D or /exit to leave.\n");
+      }
+      showPrompt();
       return;
     }
     controller.abort();
@@ -286,10 +309,11 @@ export async function runRepl(options: ReplOptions): Promise<number> {
   if (options.banner !== undefined) {
     write(options.banner);
   }
-  readline.prompt();
+  showPrompt();
 
   const lines = readline[Symbol.asyncIterator]();
   const readNextLine = async (): Promise<string | undefined> => {
+    tuiInput?.acceptLine();
     const next = await lines.next();
     return next.done === true ? undefined : next.value;
   };
@@ -301,7 +325,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         break;
       }
       if (line.trim().length === 0) {
-        readline.prompt();
+        showPrompt();
         continue;
       }
 
@@ -323,7 +347,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         if (options.signIn !== undefined) {
           await runSignIn(readline, readNextLine, write, options.signIn);
         }
-        readline.prompt();
+        showPrompt();
         continue;
       }
       if (typeof outcome === "object") {
@@ -339,11 +363,11 @@ export async function runRepl(options: ReplOptions): Promise<number> {
           const message = error instanceof Error ? error.message : String(error);
           write(`/${outcome.command.name} failed: ${message}\n`);
         }
-        readline.prompt();
+        showPrompt();
         continue;
       }
       if (outcome === "handled") {
-        readline.prompt();
+        showPrompt();
         continue;
       }
 
@@ -351,7 +375,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         // Saying this before the run starts is clearer than letting the Provider
         // call fail and reporting it as an agent failure.
         write("No API key yet. Run /login to add one.\n");
-        readline.prompt();
+        showPrompt();
         continue;
       }
 
@@ -369,7 +393,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         controller = undefined;
         tuiInput?.setBusy(false);
       }
-      readline.prompt();
+      showPrompt();
     }
 
   } finally {

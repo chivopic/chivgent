@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_MAX_TURNS,
@@ -178,7 +179,8 @@ describe("CLI options", () => {
     expect(helpText()).toContain("--context-window");
     expect(helpText()).toContain("--no-compaction");
     expect(helpText()).toContain("--allow-shell");
-    expect(VERSION).toBe("0.18.0");
+    const metadata = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
+    expect(VERSION).toBe(metadata.version);
   });
 });
 

@@ -70,7 +70,7 @@ The workflow lives at `.github/workflows/publish.yml`. It uses a GitHub-hosted r
 
 It also holds `contents: write` so it can create the GitHub release itself. The release is created only after `npm publish` succeeds, so a failed publish never leaves a tag pointing at a version that is not on the registry. Before publishing, the workflow fails fast if a release for the current `package.json` version already exists, which turns a forgotten version bump into an early error instead of a duplicate-version failure from npm.
 
-Trusted Publishing requires npm CLI 11.5.1 or newer and Node.js 22.14.0 or newer in the publishing environment. The workflow uses Node.js 24 to satisfy those requirements. This does not change chivgent's runtime requirement of Node.js 20 or newer for users.
+Trusted Publishing requires npm CLI 11.5.1 or newer and Node.js 22.14.0 or newer in the publishing environment. The workflow uses Node.js 24 to satisfy those requirements. This does not change chivgent's runtime requirement of Node.js 22 or newer for users.
 
 When Trusted Publishing is used from this public GitHub repository, npm automatically generates provenance attestations for the published public package.
 

@@ -13,6 +13,8 @@ type TerminalInput = NodeJS.ReadableStream & {
 export class TuiInput extends PassThrough {
   readonly isTTY: boolean;
   private busy = false;
+  private submitted = false;
+  private afterCR = false;
 
   constructor(private readonly source: TerminalInput) {
     super();
@@ -31,6 +33,11 @@ export class TuiInput extends PassThrough {
     this.busy = busy;
   }
 
+  /** Called only when the REPL is ready to read its next line. */
+  acceptLine(): void {
+    this.submitted = false;
+  }
+
   dispose(): void {
     this.source.off("data", this.receive);
     this.source.off("end", this.ended);
@@ -41,10 +48,26 @@ export class TuiInput extends PassThrough {
   }
 
   private readonly receive = (chunk: Buffer | string): void => {
-    if (!this.busy) {
-      this.write(chunk);
-    } else if (chunk.includes("\u0003")) {
-      this.write("\u0003");
+    let bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+    if (bytes.length === 0) return;
+    if (this.afterCR && bytes[0] === 10) bytes = bytes.subarray(1);
+    this.afterCR = false;
+    if (bytes.length === 0) return;
+    if (this.busy || this.submitted) {
+      if (bytes.includes(3)) this.write("\u0003");
+      return;
+    }
+
+    // Stop at the first submission *before* readline receives the chunk.
+    // Its async iterator can otherwise queue later lines before runRepl has
+    // entered the busy state. Keep bytes intact for split UTF-8 characters.
+    const end = bytes.findIndex((byte) => byte === 10 || byte === 13);
+    if (end === -1) {
+      this.write(bytes);
+    } else {
+      this.submitted = true;
+      this.afterCR = bytes[end] === 13 && end === bytes.length - 1;
+      this.write(bytes.subarray(0, end + 1));
     }
   };
 
