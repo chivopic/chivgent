@@ -52,6 +52,27 @@ it("keeps reading Ctrl+C while dropping busy input and restores raw mode", async
   expect(source.listenerCount("data")).toBe(0);
 });
 
+it("latches submission across chunks and consumes a split CRLF only once", () => {
+  const source = new Input();
+  const gate = new TuiInput(source);
+  let received = "";
+  gate.on("data", (chunk) => { received += chunk.toString(); });
+  try {
+    source.write("first\r");
+    source.write("queued\r");
+    expect(received).toBe("first\r");
+    gate.acceptLine();
+    source.write("second\r");
+    gate.acceptLine();
+    source.write("\nthird\r\nfourth\n");
+    source.write("also queued\n");
+    expect(received).toBe("first\rsecond\rthird\r");
+    gate.acceptLine();
+    source.write("final\n");
+    expect(received).toBe("first\rsecond\rthird\rfinal\n");
+  } finally { gate.dispose(); }
+});
+
 describe("TUI REPL", () => {
   it("keeps /login entry hidden and restores the prompt afterwards", async () => {
     vi.stubEnv("TERM", "xterm-256color");

@@ -38,13 +38,19 @@ export class Painter {
    * lines that are no longer there. This is the one moment a full repaint is
    * the correct answer rather than a lazy one.
    */
-  invalidate(columns?: number): void {
+  invalidate(columns?: number, rows?: number): void {
     this.invalidated = true;
     if (columns !== undefined && columns > 0) {
       this.previousRows = this.previous.reduce(
         (rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line) / columns)),
         0,
       );
+    }
+    // Reflow can push part of the region into scrollback. Cursor-up cannot
+    // reach it; counting it as visible would scroll the replacement away
+    // while erasing the old rows. Reserve the blank row below the region.
+    if (rows !== undefined && rows > 0) {
+      this.previousRows = Math.min(this.previousRows, Math.max(0, rows - 1));
     }
   }
 

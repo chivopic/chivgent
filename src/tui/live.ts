@@ -127,7 +127,7 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
 
     resized: (): void => {
       if (state.run === undefined) return;
-      painter.invalidate(options.width());
+      painter.invalidate(options.width(), options.height?.());
       paint();
     },
   };

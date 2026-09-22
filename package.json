@@ -1,6 +1,6 @@
 {
   "name": "chivgent",
-  "version": "0.18.0",
+  "version": "0.18.1",
   "description": "A minimal coding agent CLI built to learn agent harness architecture.",
   "license": "MIT",
   "repository": {
@@ -32,7 +32,7 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -52,6 +52,7 @@
   },
   "devDependencies": {
     "@types/node": "26.2.0",
+    "@xterm/headless": "5.5.0",
     "typescript": "7.0.2",
     "vitest": "4.1.11"
   }

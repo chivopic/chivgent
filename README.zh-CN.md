@@ -4,7 +4,7 @@
 
 > 一个小巧、易读的 Coding Agent CLI，用来理解 Agent Harness 的真实工作原理。
 
-![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-339933?logo=nodedotjs&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=nodedotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-ESM-3178C6?logo=typescript&logoColor=white)
 [![CI](https://github.com/chivopic/chivgent/actions/workflows/ci.yml/badge.svg)](https://github.com/chivopic/chivgent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -59,7 +59,7 @@
 
 ### 环境要求
 
-- Node.js 20 或更高版本
+- Node.js 22 或更高版本
 - npm
 - OpenAI、DeepSeek 或其他兼容供应商的 API Key
 
@@ -161,7 +161,9 @@ chivgent [选项]                   进入交互式会话
 ```
 
 交互式会话中 `/help` 会列出全部斜杠命令：`/session`、`/tools`、`/clear`、`/login` 和
-`/exit`。Ctrl+C 只中断当前回答，不会退出会话；Ctrl+D 才会离开。
+`/exit`。Ctrl+C 中断当前回答，不会退出会话；Ctrl+D 在空行时离开。
+在 `--tui` 的空闲提示符处，Ctrl+C 清空草稿。当前为单行输入，一个输入批次只提交首行，
+后续内容被丢弃；请等提示符重新出现后再输入下一条问题。
 
 退出码：`0` 正常回答，`1` 配置或 Provider 失败，`2` 达到轮次上限，`130` 被
 Ctrl+C 中断。
