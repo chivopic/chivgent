@@ -70,6 +70,17 @@ npm install -g chivgent
 chivgent --version
 ```
 
+通过 npm 全局安装后，可以直接更新：
+
+```bash
+chivgent update --check  # 只检查版本
+chivgent update         # 安装更新，完成后重新启动 chivgent
+```
+
+旧版本若还没有这个命令，先执行一次 `npm install -g chivgent@latest`。
+仅在主动运行命令时检查更新；源码、本地项目依赖和临时 `npx` 运行会显示对应的更新指引。
+详见[更新说明](docs/updating.zh-CN.md)。
+
 如果希望安装当前源码版本：
 
 ```bash

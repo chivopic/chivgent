@@ -195,6 +195,10 @@ interface RestoredSession {
 async function main(argv: readonly string[]): Promise<number> {
   ignoreBrokenPipe(process.stdout);
   ignoreBrokenPipe(process.stderr);
+  if (argv[0] === "update") {
+    const { runUpdate } = await import("./update.js");
+    return runUpdate(argv.slice(1), { version: VERSION });
+  }
   const options = parseCliArgs(argv, process.env);
   if (options.help) {
     process.stdout.write(helpText());
