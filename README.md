@@ -73,6 +73,18 @@ npm install -g chivgent
 chivgent --version
 ```
 
+Update an npm global installation with:
+
+```bash
+chivgent update --check  # Check without installing
+chivgent update         # Install the newer version, then restart chivgent
+```
+
+For older releases without this command, run `npm install -g chivgent@latest`
+once. The updater checks only when requested. Source checkouts, local dependencies
+and temporary `npx` runs receive instructions for their installation type.
+See [updating chivgent](docs/updating.md) for details and troubleshooting.
+
 To install the current source checkout instead:
 
 ```bash

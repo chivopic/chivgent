@@ -179,6 +179,9 @@ export function parseCliArgs(
       index += 1;
     } else if (argument === "--no-compaction") {
       compaction = false;
+    } else if (argument === "--") {
+      promptParts.push(...argv.slice(index + 1));
+      break;
     } else if (argument?.startsWith("-")) {
       throw new TypeError(`Unknown option: ${argument}`);
     } else if (argument !== undefined) {
@@ -236,6 +239,7 @@ export function helpText(
 Usage:
   chivgent [options] "question"     Answer one question and exit
   chivgent [options]                Start an interactive session
+  chivgent update [--check]         Update the npm global installation
 
 Options:
   --provider NAME  ${registry.ids().join(", ")} (default: openai)
