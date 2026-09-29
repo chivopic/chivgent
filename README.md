@@ -2,19 +2,18 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-> A small, readable coding-agent CLI for learning how an agent harness actually
-> works.
+> A readable terminal coding agent with a streaming TUI and configurable AI providers.
 
 ![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=nodedotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-ESM-3178C6?logo=typescript&logoColor=white)
 [![CI](https://github.com/chivopic/chivgent/actions/workflows/ci.yml/badge.svg)](https://github.com/chivopic/chivgent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Status](https://img.shields.io/badge/status-MVP-orange)
+![Version](https://img.shields.io/badge/version-1.0.0-blue)
 
 `chivgent` connects a Provider-independent agent loop to LLM APIs, tools, and a
-workspace boundary. The current MVP can discover files, search source text, and
-read bounded file ranges before answering with OpenAI, DeepSeek, or any
-compatible Chat Completions endpoint.
+workspace boundary. It can discover files, search source text, read bounded
+file ranges, and optionally edit files or run commands. It works with OpenAI,
+DeepSeek, and compatible Chat Completions endpoints.
 
 The project is intentionally compact: it is designed to make the mechanics of
 tool calling, conversation state, Provider adapters, and loop termination easy
@@ -28,13 +27,14 @@ to study before adding production-harness complexity.
 - API keys resolved from `--api-key`, the environment, then an optional file.
 - OpenAI support through the Responses API.
 - DeepSeek support through a reusable OpenAI-compatible Chat Completions client.
-- Custom OpenAI-compatible endpoints through environment-only configuration.
+- Custom OpenAI-compatible endpoints through the TUI, CLI options, or environment.
+- A rolling TUI with inline slash-command suggestions and a Provider picker.
 - An interactive session with slash commands, or a single-shot question.
 - Sessions that persist as JSON lines and can be resumed in a later process.
 - A context manager that summarises old turns to stay inside the window.
 - A `--json` event stream for scripting and other front ends.
 - Streamed answers rendered from a typed runtime event stream.
-- Interruptible runs: Ctrl+C ends the current run without losing the transcript.
+- Interruptible runs: Ctrl+C stops the current answer; at an idle prompt it exits.
 - Per-attempt Provider timeouts and bounded exponential-backoff retries.
 - Deterministic project discovery through `list_files` and literal `search_text`.
 - Ranged `read_file` output with continuation hints and bounded tool results.
@@ -176,9 +176,12 @@ Options:
   -v, --version    Show version
 ```
 
-In an interactive session, `/help` lists the slash commands: `/session`,
-`/tools`, `/clear`, `/login`, and `/exit`. Ctrl+C stops the answer in progress without
-leaving the session; Ctrl+D leaves it.
+In an interactive session, `/help` lists the slash commands, including
+`/provider`, `/model`, `/endpoint`, `/login`, `/session`, `/tools`, `/clear`, and `/exit`.
+In the TUI, typing `/` opens an inline command menu; `/provider` opens a Provider picker
+with Up/Down and Enter. Selecting a Provider without a saved key immediately asks for
+its API key. Use `/login` later to replace a key. Ctrl+C stops a running answer;
+at an idle prompt it exits with code 130. Ctrl+D also leaves the session.
 
 Exit codes: `0` answered, `1` configuration or Provider failure, `2` turn limit
 reached, `130` interrupted with Ctrl+C.
@@ -188,27 +191,20 @@ reached, `130` interrupted with Ctrl+C.
 The quickest way in is to start chivgent and let it ask:
 
 ```text
-$ chivgent
-chivgent 0.13.0 · openai · gpt-5.6
-session 2026-09-07T...
-
-No API key for openai yet.
-Run /login to store one, or leave and set an environment variable.
-Type /help for commands, Ctrl+D to leave.
-› /login
-Paste an API key for openai. It is not echoed.
-It will be stored in ~/.chivgent/auth.json, readable only by you.
-API key:
-Stored the key for openai.
+$ chivgent --tui
+  v1.0.0
+  openai / gpt-5.6
+  Start with /provider → choose a Provider
+› /provider deepseek
+Selected deepseek / deepseek-v4-flash. API key needed for deepseek.
+API key for deepseek (hidden, saved locally; Enter skips):
+Stored the key for deepseek. Ready for your next prompt.
 › 
 ```
 
-An interactive session starts even without a key, so the fix is reachable from
-inside chivgent rather than being something to go and arrange first. `/login`
-stores the key for the Provider this session is using — start with
-`--provider deepseek` to store one for another — and puts it to use straight
-away, so the prompt you type next already works. Running `/login` again replaces
-a key that turned out to be wrong.
+An interactive session starts even without a key. Choose a Provider in the TUI
+and enter its key when asked; the next prompt can use it immediately. An already
+configured Provider skips this step. `/login` remains available to replace a key.
 
 The key is not echoed as you type, and `auth.json` is written owner-only. It is
 not verified against the Provider when stored; the first prompt after it is what
@@ -216,6 +212,27 @@ proves it works.
 
 A non-interactive run still fails fast when no key is configured: a pipeline has
 nobody to ask.
+
+You can switch Providers and models without restarting or losing history:
+
+```text
+› /provider
+› /provider deepseek
+› /model deepseek-v4-pro
+› /provider openrouter
+› /model anthropic/claude-sonnet-4
+› /provider openai-compatible
+› /model vendor-model
+› /endpoint https://api.vendor.example/v1
+```
+
+In the TUI, a newly selected Provider asks for its key if none is configured.
+For Providers that also need a model or endpoint, the key can be stored first.
+
+`--api-key` remains scoped to the Provider selected at startup; it is never
+reused for a different Provider.
+Switching from OpenAI to a custom compatible endpoint also does not reuse
+`OPENAI_API_KEY`; the TUI asks for that endpoint's own key.
 
 ### Provider configuration
 
@@ -637,7 +654,9 @@ fallback.
 `--tui` draws a status region above the prompt while a run is in progress: the
 turn, whether the model is thinking or running tools, which tools are running
 with what they are aimed at and their newest output, elapsed time, and the
-running token count.
+running token count. Long single-line replies keep their newest text visible;
+long paths retain the filename and tool progress. On narrow terminals, the
+status and stop shortcut take priority.
 
 ```text
 Let me look at how sessions are stored.
@@ -682,10 +701,12 @@ is correct rather than lazy.
 `--tui` needs a terminal on stdin and stderr and an interactive session; it
 refuses rather than falling back silently, since a switch that quietly does
 nothing makes a mistyped command look like it worked. It is not the default
-yet. The welcome panel shows the Provider, model, workspace and session. Use Tab
-to complete slash commands (including extension commands), and Up/Down for input
-history. During a run ordinary typing is ignored; Ctrl+C cancels immediately.
-At an idle prompt Ctrl+C clears the draft; Ctrl+D on an empty line exits cleanly.
+yet. The startup wordmark shows the Provider, model, workspace and next action;
+use `/session` for the session id. Type `/` to open the inline command menu
+(including extension commands); Up/Down selects, Tab completes, and Enter runs.
+Outside a menu, Up/Down browses input history. During a run ordinary typing is ignored; Ctrl+C cancels immediately.
+At an idle prompt Ctrl+C exits, clearing the draft and returning the terminal
+to the shell. Ctrl+D on an empty line also exits.
 Input is single-line: only the first submitted line in an input batch is accepted.
 Wait for the prompt before sending another question.
 After cancellation the prompt is ready again and partial text stays in scrollback.

@@ -17,7 +17,7 @@ const HELP = `Commands:
   /tools     List the tools the server offers
   /exit      Leave this client (the server keeps running)
 
-Anything else is sent to the server. Ctrl+C interrupts the answer in progress.
+Anything else is sent to the server. Ctrl+C interrupts a running answer; at the prompt it detaches.
 `;
 
 /**
@@ -41,10 +41,11 @@ export async function runRemoteRepl(
   });
 
   let running = false;
+  let interrupted = false;
   readline.on("SIGINT", () => {
     if (!running) {
-      write("Press Ctrl+D or /exit to leave.\n");
-      readline.prompt();
+      interrupted = true;
+      readline.close();
       return;
     }
     options.remote.interrupt();
@@ -56,7 +57,7 @@ export async function runRemoteRepl(
       `attached to ${summary.id}`,
       `workspace:    ${summary.cwd}`,
       `capabilities: ${summary.capabilities.length === 0 ? "read-only" : summary.capabilities.join(" ")}`,
-      "Type /help for commands, Ctrl+D to detach.",
+      "Type /help for commands, Ctrl+C or Ctrl+D to detach.",
       "",
       "",
     ].join("\n"),
@@ -114,5 +115,5 @@ export async function runRemoteRepl(
   }
 
   readline.close();
-  return 0;
+  return interrupted ? 130 : 0;
 }

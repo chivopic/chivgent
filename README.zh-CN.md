@@ -2,17 +2,17 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-> 一个小巧、易读的 Coding Agent CLI，用来理解 Agent Harness 的真实工作原理。
+> 一款易读的终端 Coding Agent，提供流式 TUI 与可切换的 AI 供应商。
 
 ![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=nodedotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-ESM-3178C6?logo=typescript&logoColor=white)
 [![CI](https://github.com/chivopic/chivgent/actions/workflows/ci.yml/badge.svg)](https://github.com/chivopic/chivgent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Status](https://img.shields.io/badge/status-MVP-orange)
+![Version](https://img.shields.io/badge/version-1.0.0-blue)
 
 `chivgent` 将 Provider 无关的 Agent Loop 与 LLM API、工具和工作区边界连接起来。
-当前 MVP 可以先发现文件、搜索源码并分段读取内容，再使用 OpenAI、DeepSeek 或
-任意兼容 Chat Completions 的 API 回答代码问题。
+它可以发现文件、搜索源码、分段读取内容，并可按需编辑文件或运行命令；
+支持 OpenAI、DeepSeek 和兼容 Chat Completions 的 API。
 
 这个项目刻意保持精简：先让 Tool Calling、Conversation State、Provider Adapter
 和循环终止条件容易理解，再逐步加入成熟 Agent Harness 所需的工程复杂度。
@@ -25,13 +25,14 @@
 - API Key 依次从 `--api-key`、环境变量、可选文件解析。
 - 通过 Responses API 支持 OpenAI。
 - 通过通用 OpenAI-compatible Chat Completions 客户端支持 DeepSeek。
-- 无需修改代码即可配置自定义 OpenAI-compatible API。
+- 可通过 TUI、CLI 参数或环境变量配置自定义 OpenAI-compatible API。
+- 滚动式 TUI：输入斜杠显示命令建议，可在菜单中选择供应商。
 - 既可以进入带斜杠命令的交互式会话，也可以单次提问后退出。
 - Session 以 JSON Lines 持久化，可以在之后的进程中恢复。
 - 提供 `--json` 事件流，便于脚本和其他前端消费。
 - 基于类型化运行时事件流的流式输出。
 - 上下文管理器：压缩较早的轮次以待在窗口内。
-- 可中断的运行：Ctrl+C 结束当前运行，且不会丢失已产生的 transcript。
+- 可中断的运行：Ctrl+C 停止当前回答；空闲时退出，不丢失会话记录。
 - Provider 调用具备单次超时和有上限的指数退避重试。
 - 通过 `list_files` 和字面量 `search_text` 确定性地发现项目内容。
 - 支持带续读提示的分段 `read_file`，所有工具结果都有容量上限。
@@ -171,9 +172,13 @@ chivgent [选项]                   进入交互式会话
   -v, --version    显示版本
 ```
 
-交互式会话中 `/help` 会列出全部斜杠命令：`/session`、`/tools`、`/clear`、`/login` 和
-`/exit`。Ctrl+C 中断当前回答，不会退出会话；Ctrl+D 在空行时离开。
-在 `--tui` 的空闲提示符处，Ctrl+C 清空草稿。当前为单行输入，一个输入批次只提交首行，
+交互式会话中 `/help` 会列出全部斜杠命令，包括 `/provider`、`/model`、`/endpoint`、`/login`、
+`/session`、`/tools`、`/clear` 和 `/exit`。TUI 输入 `/` 会在当前输入行下方打开命令菜单；
+输入 `/provider` 会打开供应商菜单，可用上下键选择并按 Enter 切换。
+选中没有 Key 的供应商后会直接进入隐藏的 Key 输入；已有 Key 时直接可用。
+`/login` 保留用于更换 Key。
+运行中按 Ctrl+C 中断当前回答，不会退出会话；空闲时按 Ctrl+C 则退出（退出码 130）。
+Ctrl+D 在空行时也可离开。当前为单行输入，一个输入批次只提交首行，
 后续内容被丢弃；请等提示符重新出现后再输入下一条问题。
 
 退出码：`0` 正常回答，`1` 配置或 Provider 失败，`2` 达到轮次上限，`130` 被
@@ -184,30 +189,42 @@ Ctrl+C 中断。
 最省事的方式是直接启动 chivgent，让它来问：
 
 ```text
-$ chivgent
-chivgent 0.13.0 · openai · gpt-5.6
-session 2026-09-07T...
-
-No API key for openai yet.
-Run /login to store one, or leave and set an environment variable.
-Type /help for commands, Ctrl+D to leave.
-› /login
-Paste an API key for openai. It is not echoed.
-It will be stored in ~/.chivgent/auth.json, readable only by you.
-API key:
-Stored the key for openai.
+$ chivgent --tui
+  v1.0.0
+  openai / gpt-5.6
+  Start with /provider → choose a Provider
+› /provider deepseek
+Selected deepseek / deepseek-v4-flash. API key needed for deepseek.
+API key for deepseek (hidden, saved locally; Enter skips):
+Stored the key for deepseek. Ready for your next prompt.
 › 
 ```
 
-**没有 Key 时交互式会话照样能启动**，所以补 Key 这件事在 chivgent 里面就能完成，
-不必先出去安排好再进来。`/login` 会把 Key 存给**当前会话使用的那个 Provider**
-（要存给别的 Provider，启动时加 `--provider deepseek`），并且**立即生效**——
-你紧接着敲的那句话就已经能用了。Key 输错了就再跑一次 `/login` 覆盖掉。
+**没有 Key 时交互式会话照样能启动**。打开 `/provider`、选中供应商后，
+TUI 会直接询问它的 Key；已有 Key 就跳过。Key 保存后立即生效，
+无需再输入 `/login`。需要替换 Key 时仍可运行 `/login`。
 
 输入的 Key 不会回显，`auth.json` 以仅所有者可读的权限写入。存的时候**不会**去
 Provider 那里验证；你之后的第一次提问才是真正的检验。
 
 非交互式运行在没有 Key 时依然立刻失败——管道里没有人可问。
+
+在会话中换供应商或模型：
+
+```text
+› /provider                          # 打开供应商菜单，上下键选择
+› /provider deepseek                 # 选用默认模型；缺 Key 时直接输入
+› /model deepseek-v4-pro             # 改用另一模型
+› /provider openrouter               # 先切换供应商
+› /model anthropic/claude-sonnet-4   # 再设置该供应商的模型
+› /provider openai-compatible
+› /model vendor-model
+› /endpoint https://api.vendor.example/v1
+```
+
+切换后保留会话历史。`--api-key` 仅用于启动时选择的供应商，不会被带到另一家。
+从 OpenAI 在会话内切换到自定义兼容端点时，也不会复用 `OPENAI_API_KEY`；
+TUI 会单独询问这个端点的 Key。
 
 ### Provider 配置
 
@@ -630,11 +647,13 @@ paint(previous, next)                        唯一碰终端的地方
 
 `--tui` 需要 stdin 和 stderr 都是终端，且是交互式会话；不满足时**直接报错而不是静默
 退回**，因为一个安静地什么都不做的开关，会让打错的命令看起来像成功了。目前**不是默认**。
-欢迎面板会显示供应商、模型、工作目录和会话。按 Tab 补全斜杠命令（包括扩展命令），
+简短的启动提示显示供应商、模型、工作目录和下一步操作；用 `/session` 查看会话 ID。
+输入 `/` 即在当前输入行下方显示斜杠命令（包括扩展命令），可用上下键选择、Tab 补全；
 上下键浏览输入历史。运行中普通输入会被忽略，Ctrl+C 仍可立即取消；取消后恢复提示符，
 已收到的部分回答保留在滚动历史中。运行结束会显示结果、耗时和已报告的 token 用量。
 
-中文、组合字符和 Emoji 按终端列宽截断；较矮的窗口优先保留状态行。窗口缩放会重绘当前
+中文、组合字符和 Emoji 按终端列宽截断；长的单行回答保留最新文字，长路径保留文件名和
+工具进度，窄窗口优先显示状态与停止快捷键。较矮的窗口优先保留状态行，缩放会重绘当前
 区域。提示符及界面走 stderr，最终回答走 stdout，可用 `chivgent --tui > answers.txt`
 保存回答，同时继续在终端交互。
 

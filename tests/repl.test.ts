@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { PassThrough } from "node:stream";
+import { describe, expect, it, vi } from "vitest";
 import { createJsonEventWriter } from "../src/render.js";
 import type { SlashCommandOutcome } from "../src/repl.js";
-import { handleSlashCommand } from "../src/repl.js";
+import { handleSlashCommand, runRepl } from "../src/repl.js";
 import { AgentSession } from "../src/session.js";
 import type { Tool } from "../src/tools/tool.js";
 import type { Workspace } from "../src/workspace.js";
@@ -73,6 +74,18 @@ function run(line: string): {
 }
 
 describe("REPL commands", () => {
+  it("exits the standard interactive REPL on idle Ctrl+C", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const input = Object.assign(new PassThrough(), { isTTY: true,
+      setRawMode(_enabled: boolean) { return this; } });
+    const output = new PassThrough();
+    const result = runRepl({ session: createSession(), input, output, stderr: output });
+    try {
+      input.write("\x03");
+      expect(await result).toBe(130);
+    } finally { input.end(); vi.unstubAllEnvs(); await result; }
+  });
+
   it("treats ordinary input as a prompt", () => {
     expect(run("What does src/agent.ts do?").outcome).toBe("not-a-command");
     expect(run("  ").outcome).toBe("not-a-command");
@@ -84,6 +97,29 @@ describe("REPL commands", () => {
     expect(outcome).toBe("handled");
     expect(output).toContain("/session");
     expect(output).toContain("Ctrl+C");
+    expect(output).toContain("/provider");
+    expect(output).toContain("/model");
+  });
+
+  it("routes Provider and model changes through the interactive control", () => {
+    const session = createSession();
+    let output = "";
+    const context = {
+      session, write: (text: string) => { output += text; },
+      providers: {
+        provider: "openai", model: "gpt-test", describe: () => "available Providers\n",
+        providerIds: () => ["openai", "deepseek"],
+        select: async () => ({ ok: true, message: "selected\n" }),
+        changeModel: async () => ({ ok: true, message: "changed\n" }),
+        changeEndpoint: async () => ({ ok: true, message: "endpoint changed\n" }),
+      },
+    };
+    expect(handleSlashCommand("/provider", context)).toBe("handled");
+    expect(output).toContain("available Providers");
+    expect(handleSlashCommand("/provider deepseek", context)).toEqual({ kind: "provider", argument: "deepseek" });
+    expect(handleSlashCommand("/model", context)).toBe("handled");
+    expect(output).toContain("gpt-test");
+    expect(handleSlashCommand("/model next", context)).toEqual({ kind: "model", argument: "next" });
   });
 
   it("describes the session, including its log file", () => {

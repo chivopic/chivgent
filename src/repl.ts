@@ -1,4 +1,5 @@
 import { TuiInput } from "./tui/input.js";
+import { InputMenu, type MenuItem } from "./tui/menu.js";
 import { createInterface, emitKeypressEvents, type Interface } from "node:readline";
 import type { AgentSession } from "./session.js";
 import type { OutputStream } from "./render.js";
@@ -12,7 +13,10 @@ export type SlashCommandOutcome =
   | "exit"
   | "not-a-command"
   /** The REPL runs the sign-in flow, which needs to read from the terminal. */
-  | { readonly kind: "login" }
+  | { readonly kind: "login"; readonly providerArgument: string }
+  | { readonly kind: "provider"; readonly argument: string }
+  | { readonly kind: "model"; readonly argument: string }
+  | { readonly kind: "endpoint"; readonly argument: string }
   /** An extension command matched; the REPL runs it, since it may be async. */
   | {
       readonly kind: "extension";
@@ -28,6 +32,23 @@ export interface SlashCommandContext {
   readonly extensionCommands?: readonly RegisteredCommand[];
   /** Present when this session can store a key; absent for a signed-in remote. */
   readonly signIn?: SignIn;
+  readonly providers?: ProviderControl;
+}
+
+export interface ProviderSelection {
+  readonly ok: boolean;
+  readonly message: string;
+}
+
+export interface ProviderControl {
+  readonly provider: string;
+  readonly model?: string;
+  describe(): string;
+  unavailableMessage?(): string;
+  providerIds(): readonly string[];
+  select(argument: string): Promise<ProviderSelection>;
+  changeModel(model: string): Promise<ProviderSelection>;
+  changeEndpoint(url: string): Promise<ProviderSelection>;
 }
 
 export interface SignIn {
@@ -35,8 +56,11 @@ export interface SignIn {
   readonly authFile: string;
   /** Live check: /login can make this true part-way through a session. */
   ready(): boolean;
+  /** Checks credentials even if the current model or endpoint is still incomplete. */
+  needsApiKey?(): Promise<boolean>;
   /** Saves the key and puts it to use, or returns why it could not. */
   submit(apiKey: string): Promise<string | undefined>;
+  unavailableMessage?(): string;
 }
 
 export const BUILT_IN_COMMANDS = [
@@ -47,6 +71,9 @@ export const BUILT_IN_COMMANDS = [
   "exit",
   "quit",
   "login",
+  "provider",
+  "model",
+  "endpoint",
 ] as const;
 
 const HELP = `Commands:
@@ -54,10 +81,13 @@ const HELP = `Commands:
   /session   Show the current session id, workspace, and size
   /tools     List the tools available to the model
   /clear     Start a new transcript in the same session
-  /login     Store an API key for this Provider
-  /exit      Leave chivgent (Ctrl+D also works)
+  /provider  Choose a Provider (↑↓ and Enter in the TUI)
+  /model     Show or change the current model: /model MODEL
+  /endpoint  Set the URL for an OpenAI-compatible Provider
+  /login     Store a key for the current Provider; /login NAME switches first
+  /exit      Leave chivgent (Ctrl+C or Ctrl+D also works)
 
-Anything else is sent to the model. Ctrl+C stops the answer in progress.
+Anything else is sent to the model. Ctrl+C stops a running answer; at the prompt it exits.
 `;
 
 function helpText(context: SlashCommandContext): string {
@@ -108,6 +138,39 @@ export function handleSlashCommand(
       context.write("Transcript cleared.\n");
       return "handled";
 
+    case "/provider":
+      if (context.providers === undefined) {
+        context.write("Provider switching is unavailable in this session.\n");
+        return "handled";
+      }
+      if (trimmed === "/provider") {
+        context.write(context.providers.describe());
+        return "handled";
+      }
+      return { kind: "provider", argument: trimmed.slice("/provider".length).trim() };
+
+    case "/model":
+      if (context.providers === undefined) {
+        context.write("Model switching is unavailable in this session.\n");
+        return "handled";
+      }
+      if (trimmed === "/model") {
+        context.write(`Current model: ${context.providers.model ?? "not set"}. Use /model MODEL to change it.\n`);
+        return "handled";
+      }
+      return { kind: "model", argument: trimmed.slice("/model".length).trim() };
+
+    case "/endpoint":
+      if (context.providers === undefined) {
+        context.write("Endpoint configuration is unavailable in this session.\n");
+        return "handled";
+      }
+      if (trimmed === "/endpoint") {
+        context.write("Use /endpoint https://api.example.com/v1 for an OpenAI-compatible Provider.\n");
+        return "handled";
+      }
+      return { kind: "endpoint", argument: trimmed.slice("/endpoint".length).trim() };
+
     case "/login":
       if (context.signIn === undefined) {
         context.write(
@@ -115,7 +178,7 @@ export function handleSlashCommand(
         );
         return "handled";
       }
-      return { kind: "login" };
+      return { kind: "login", providerArgument: trimmed.slice("/login".length).trim() };
 
     case "/exit":
     case "/quit":
@@ -179,6 +242,7 @@ export interface ReplOptions {
   readonly sessionFile?: string;
   readonly extensionCommands?: readonly RegisteredCommand[];
   readonly signIn?: SignIn;
+  readonly providers?: ProviderControl;
 }
 
 /**
@@ -214,11 +278,7 @@ async function runSignIn(
   signIn: SignIn,
 ): Promise<void> {
   write(
-    [
-      `Paste an API key for ${signIn.provider}. It is not echoed.`,
-      `It will be stored in ${signIn.authFile}, readable only by you.`,
-      "API key: ",
-    ].join("\n"),
+    `API key for ${signIn.provider} (hidden, saved locally; Enter skips): `,
   );
 
   // The key is read from the same line source the loop uses. readline's
@@ -241,15 +301,14 @@ async function runSignIn(
     write(`${failure}\n`);
     return;
   }
-  write(
-    `Stored the key for ${signIn.provider}. The key is not checked until your next prompt.\n`,
-  );
+  write(signIn.ready()
+    ? `Stored the key for ${signIn.provider}. Ready for your next prompt.\n`
+    : `Stored the key for ${signIn.provider}. ${signIn.unavailableMessage?.() ?? "Finish Provider setup before sending a prompt."}\n`);
 }
 
 /**
- * Reads prompts until the user leaves. One run at a time: Ctrl+C cancels the
- * answer in progress instead of killing the process, so the transcript and the
- * session log survive an interrupt.
+ * Reads prompts until the user leaves. Ctrl+C cancels a running answer, keeping
+ * its transcript and log; at an idle prompt it closes the REPL.
  */
 export async function runRepl(options: ReplOptions): Promise<number> {
   const write = (text: string): void => {
@@ -265,25 +324,107 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     output: options.output,
     terminal: true,
     prompt: REPL_PROMPT,
-    ...(options.tui ? {
-      completer: (line: string): [string[], string] => {
-        const commands = [...BUILT_IN_COMMANDS, ...(options.extensionCommands ?? []).map((command) => command.name)];
-        const matches = line.startsWith("/") && !/\s/.test(line)
-          ? [...new Set(commands)].map((name) => `/${name}`).filter((name) => name.startsWith(line))
-          : [];
-        return [matches, line];
-      },
-    } : {}),
   });
+
+  const menu = tuiInput === undefined ? undefined : new InputMenu(readline, options.output);
+  let dismissedLine: string | undefined;
+  let refreshQueued = false;
+  const commands: readonly MenuItem[] = [...BUILT_IN_COMMANDS, ...(options.extensionCommands ?? []).map((command) => command.name)]
+    .filter((name, index, all) => all.indexOf(name) === index)
+    .map((name) => ({ value: name, label: `/${name}${name === "provider" ? "  ·  choose a Provider" : name === "model" ? "  ·  change model" : ""}` }));
+  const menuItems = (line: string): readonly MenuItem[] => {
+    if (line === "/provider" || line.startsWith("/provider ")) {
+      const query = line.slice("/provider".length).trim().toLowerCase();
+      return (options.providers?.providerIds() ?? []).filter((id) => id.includes(query))
+        .map((id) => ({ value: `provider ${id}`, label: `${id === options.providers?.provider ? "●" : "○"} ${id}` }));
+    }
+    if (line.startsWith("/") && !/\s/.test(line)) {
+      return commands.filter((item) => item.label.startsWith(line));
+    }
+    return [];
+  };
+  const refreshMenu = (): void => {
+    if (menu === undefined || inputClosed || signingIn || controller !== undefined) return;
+    const line = readline.line;
+    menu.show(line === dismissedLine ? [] : menuItems(line), true);
+  };
+  const queueRefresh = (): void => {
+    if (refreshQueued) return;
+    refreshQueued = true;
+    setImmediate(() => { refreshQueued = false; refreshMenu(); });
+  };
+  const replaceDraft = (value: string): void => {
+    menu?.reset();
+    readline.write(null, { ctrl: true, name: "a" });
+    readline.write(null, { ctrl: true, name: "k" });
+    readline.write(value);
+  };
 
   let controller: AbortController | undefined;
   let promptVisible = false;
+  let inputClosed = false;
+  let signingIn = false;
+  let interrupted = false;
+  if (tuiInput !== undefined) {
+    tuiInput.setMenuControls(() => {
+      menu?.clear();
+      dismissedLine = undefined;
+    }, (key) => {
+      if (signingIn || controller !== undefined) return false;
+      if (key === "enter" && !menu?.active && readline.line === "/provider" && options.providers !== undefined) {
+        menu?.show(menuItems(readline.line));
+        return true;
+      }
+      if (key === "tab" && !menu?.active) {
+        const first = menuItems(readline.line)[0]?.value;
+        if (first !== undefined) {
+          replaceDraft(`/${first}${first === "model" || first === "endpoint" ? " " : ""}`);
+          queueRefresh();
+          return true;
+        }
+      }
+      if (!menu?.active) return false;
+      if (key === "up" || key === "down") {
+        menu.move(key === "up" ? -1 : 1);
+        return true;
+      }
+      if (key === "escape") {
+        dismissedLine = readline.line;
+        menu.clear();
+        return true;
+      }
+      const chosen = menu.selection;
+      if (chosen === undefined) return false;
+      const replacement = `/${chosen}`;
+      if (key === "tab") {
+        replaceDraft(replacement + (chosen === "model" || chosen === "endpoint" ? " " : ""));
+        queueRefresh();
+        return true;
+      }
+      if (key === "enter") {
+        replaceDraft(replacement);
+        if (chosen === "provider" || chosen === "model" || chosen === "endpoint") {
+          if (chosen !== "provider") readline.write(" ");
+          queueRefresh();
+        } else {
+          tuiInput.markSubmitted();
+          readline.write("\r");
+        }
+        return true;
+      }
+      return false;
+    });
+    tuiInput.on("keypress", queueRefresh);
+  }
   const showPrompt = (): void => {
+    if (inputClosed) return;
     promptVisible = true;
     readline.prompt();
   };
-  readline.on("line", () => { promptVisible = false; });
+  readline.on("line", () => { menu?.reset(); promptVisible = false; });
   readline.on("close", () => {
+    menu?.reset();
+    inputClosed = true;
     controller?.abort();
     if (options.tui && promptVisible) {
       // Ctrl+D closes an empty input line without printing a newline.
@@ -294,13 +435,14 @@ export async function runRepl(options: ReplOptions): Promise<number> {
   readline.on("SIGINT", () => {
     if (controller === undefined) {
       if (options.tui) {
-        // Use readline's editing operations so wrapped input is also erased.
+        // Erase wrapped drafts before removing the prompt on close.
         readline.write(null, { ctrl: true, name: "e" });
         readline.write(null, { ctrl: true, name: "u" });
       } else {
-        write("Press Ctrl+D or /exit to leave.\n");
+        options.output.write("\n");
       }
-      showPrompt();
+      interrupted = true;
+      readline.close();
       return;
     }
     controller.abort();
@@ -316,6 +458,26 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     tuiInput?.acceptLine();
     const next = await lines.next();
     return next.done === true ? undefined : next.value;
+  };
+
+  const signInAfterProviderSelection = async (): Promise<void> => {
+    if (!options.tui || options.signIn === undefined) return;
+    let missingKey: boolean;
+    try {
+      missingKey = options.signIn.needsApiKey === undefined
+        ? !options.signIn.ready()
+        : await options.signIn.needsApiKey();
+    } catch (error: unknown) {
+      write(`Could not check saved API key: ${error instanceof Error ? error.message : String(error)}\n`);
+      return;
+    }
+    if (!missingKey) return;
+    signingIn = true;
+    try {
+      await runSignIn(readline, readNextLine, write, options.signIn);
+    } finally {
+      signingIn = false;
+    }
   };
 
   try {
@@ -339,13 +501,44 @@ export async function runRepl(options: ReplOptions): Promise<number> {
           ? {}
           : { extensionCommands: options.extensionCommands }),
         ...(options.signIn === undefined ? {} : { signIn: options.signIn }),
+        ...(options.providers === undefined ? {} : { providers: options.providers }),
       });
       if (outcome === "exit") {
         break;
       }
       if (typeof outcome === "object" && outcome.kind === "login") {
+        if (outcome.providerArgument.length > 0) {
+          if (options.providers === undefined) {
+            write("Provider switching is unavailable in this session.\n");
+            showPrompt();
+            continue;
+          }
+          const selected = await options.providers.select(outcome.providerArgument);
+          write(selected.message);
+          if (!selected.ok) {
+            showPrompt();
+            continue;
+          }
+        }
         if (options.signIn !== undefined) {
-          await runSignIn(readline, readNextLine, write, options.signIn);
+          signingIn = true;
+          try {
+            await runSignIn(readline, readNextLine, write, options.signIn);
+          } finally {
+            signingIn = false;
+          }
+        }
+        showPrompt();
+        continue;
+      }
+      if (typeof outcome === "object" && (outcome.kind === "provider" || outcome.kind === "model" || outcome.kind === "endpoint")) {
+        if (options.providers !== undefined) {
+          const selected = outcome.kind === "provider"
+            ? await options.providers.select(outcome.argument)
+            : outcome.kind === "model" ? await options.providers.changeModel(outcome.argument)
+              : await options.providers.changeEndpoint(outcome.argument);
+          write(selected.message);
+          if (selected.ok && outcome.kind === "provider") await signInAfterProviderSelection();
         }
         showPrompt();
         continue;
@@ -374,7 +567,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       if (options.signIn !== undefined && !options.signIn.ready()) {
         // Saying this before the run starts is clearer than letting the Provider
         // call fail and reporting it as an agent failure.
-        write("No API key yet. Run /login to add one.\n");
+        write(`${options.providers?.unavailableMessage?.() ?? `No API key for ${options.signIn.provider}. Run /login or use /provider to switch.`}\n`);
         showPrompt();
         continue;
       }
@@ -400,5 +593,5 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     readline.close();
     tuiInput?.dispose();
   }
-  return 0;
+  return interrupted ? 130 : 0;
 }

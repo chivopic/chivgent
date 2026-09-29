@@ -165,7 +165,7 @@ describe("/login", () => {
       signIn,
     });
 
-    expect(outcome).toEqual({ kind: "login" });
+    expect(outcome).toEqual({ kind: "login", providerArgument: "" });
   });
 
   it("says so when this session cannot store a key", () => {
@@ -201,7 +201,7 @@ describe("/login", () => {
     });
 
     // The built-in wins: an extension must not intercept key entry.
-    expect(outcome).toEqual({ kind: "login" });
+    expect(outcome).toEqual({ kind: "login", providerArgument: "" });
   });
 });
 
@@ -241,7 +241,7 @@ describe("the REPL without a key", () => {
       submit: async () => undefined,
     });
 
-    expect(output).toContain("Run /login to add one.");
+    expect(output).toContain("No API key for openai. Run /login or use /provider to switch.");
     // The prompt was never sent, so the transcript stays empty.
     expect(session.messages).toEqual([]);
     expect(session.turns).toBe(0);

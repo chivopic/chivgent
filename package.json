@@ -1,7 +1,7 @@
 {
   "name": "chivgent",
-  "version": "0.19.0",
-  "description": "A minimal coding agent CLI built to learn agent harness architecture.",
+  "version": "1.0.0",
+  "description": "A terminal coding agent with a streaming TUI and configurable AI providers.",
   "license": "MIT",
   "repository": {
     "type": "git",
