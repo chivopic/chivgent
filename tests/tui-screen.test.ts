@@ -18,6 +18,95 @@ function session() {
 }
 
 describe("rendered input line", () => {
+  it("keeps slash suggestions below the draft while typing on the same line", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const screen = terminalHarness(80, 24);
+    const run = runRepl({ session: session(), ...screen, stderr: screen.output, tui: true });
+    try {
+      screen.input.write("/");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("/provider"));
+      await screen.flush();
+      expect(screen.visible()).toContain("› /");
+      screen.input.write("help");
+      await screen.flush();
+      expect(screen.visible()).toContain("› /help");
+      screen.input.write("\r");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("Commands:"));
+      screen.input.write("\x03");
+      expect(await run).toBe(130);
+    } finally { screen.input.end(); await run; screen.dispose(); }
+  });
+
+  it("selects a Provider with arrow keys without choosing a model", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const screen = terminalHarness(80, 24);
+    const selected: string[] = [];
+    const providers = {
+      provider: "openai", model: "gpt-test", providerIds: () => ["openai", "deepseek", "openrouter"],
+      describe: () => "providers\n",
+      select: async (id: string) => { selected.push(id); return { ok: true, message: `Selected ${id}\n` }; },
+      changeModel: async () => ({ ok: true, message: "model changed\n" }),
+      changeEndpoint: async () => ({ ok: true, message: "endpoint changed\n" }),
+    };
+    const run = runRepl({ session: session(), ...screen, stderr: screen.output, tui: true, providers });
+    try {
+      screen.input.write("/provider");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("○ deepseek"));
+      await screen.flush();
+      expect(screen.visible()).toContain("› /provider");
+      screen.input.write("\u001b[B\r"); // Terminal may batch selection and confirmation.
+      await vi.waitFor(() => expect(selected).toEqual(["deepseek"]));
+      expect(screen.bytes()).toContain("Selected deepseek");
+      screen.input.write("\x03");
+      expect(await run).toBe(130);
+    } finally { screen.input.end(); await run; screen.dispose(); }
+  });
+
+  it("accepts an arrow sequence split across terminal chunks", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const screen = terminalHarness();
+    const selected: string[] = [];
+    const providers = {
+      provider: "openai", model: "gpt-test", providerIds: () => ["openai", "deepseek"],
+      describe: () => "providers\n",
+      select: async (id: string) => { selected.push(id); return { ok: true, message: `Selected ${id}\n` }; },
+      changeModel: async () => ({ ok: true, message: "model changed\n" }),
+      changeEndpoint: async () => ({ ok: true, message: "endpoint changed\n" }),
+    };
+    const run = runRepl({ session: session(), ...screen, stderr: screen.output, tui: true, providers });
+    try {
+      screen.input.write("/provider");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("○ deepseek"));
+      screen.input.write("\u001b[");
+      screen.input.write("B\r");
+      await vi.waitFor(() => expect(selected).toEqual(["deepseek"]));
+      screen.input.write("\x03");
+      expect(await run).toBe(130);
+    } finally { screen.input.end(); await run; screen.dispose(); }
+  });
+
+  it("keeps the draft at the prompt when suggestions open at the bottom of the terminal", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const screen = terminalHarness(48, 12);
+    const run = runRepl({ session: session(), ...screen, stderr: screen.output, tui: true,
+      banner: Array.from({ length: 18 }, (_, index) => `history ${index}\n`).join("") });
+    try {
+      screen.input.write("/");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("/provider"));
+      await screen.flush();
+      expect(screen.visible()).toContain("› /");
+      screen.input.write("help");
+      await screen.flush();
+      expect(screen.visible()).toContain("› /help");
+      screen.input.write("\x03");
+      expect(await run).toBe(130);
+      screen.output.write("shell$ ");
+      await screen.flush();
+      expect(screen.visible()).toContain("shell$ ");
+      expect(screen.visible().join("\n")).not.toContain("/provider");
+    } finally { screen.input.end(); await run; screen.dispose(); }
+  });
+
   it("inserts a pasted Unicode string at the cursor and keeps editing in sync", async () => {
     vi.stubEnv("TERM", "xterm-256color");
     const screen = terminalHarness(32, 12);
@@ -51,7 +140,7 @@ describe("rendered input line", () => {
       screen.resize(32, 12);
       await screen.flush();
       screen.input.write("\x01");
-      screen.input.write("\x03");
+      screen.input.write("\x0b"); // Ctrl+K deletes from the cursor to the end.
       await screen.flush();
       expect(screen.visible().filter(Boolean)).toEqual(["› "]);
       screen.resize(120, 40);
@@ -62,7 +151,7 @@ describe("rendered input line", () => {
     } finally { screen.input.end(); await run; screen.dispose(); }
   });
 
-  it("clears a wrapped draft on Ctrl+C before accepting a new command", async () => {
+  it("exits cleanly on Ctrl+C with a wrapped draft", async () => {
     vi.stubEnv("TERM", "xterm-256color");
     const screen = terminalHarness(32, 12);
     const current = session();
@@ -71,13 +160,12 @@ describe("rendered input line", () => {
       screen.input.write("DISCARD_THIS_DRAFT".repeat(8));
       screen.input.write("\x01"); // Cancel with the cursor away from the end.
       screen.input.write("\x03");
+      expect(await run).toBe(130);
+      screen.output.write("shell$ ");
       await screen.flush();
-      expect(screen.visible().filter(Boolean)).toEqual(["› "]);
-      screen.input.write("/session\r");
-      await vi.waitFor(() => expect(screen.bytes()).toContain("prompts:   0"));
+      expect(screen.visible().filter(Boolean)).toEqual(["shell$ "]);
       expect(current.turns).toBe(0);
-      screen.input.write("\x04");
-      await run;
+      expect(screen.input.raw).toBe(false);
     } finally { screen.input.end(); await run; screen.dispose(); }
   });
 

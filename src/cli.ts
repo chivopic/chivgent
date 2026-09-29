@@ -49,8 +49,7 @@ import type { Message } from "./messages.js";
 import { LocalWorkspace } from "./workspace.js";
 import { createConfiguredClient } from "./providers/client.js";
 import { DeferredLLMClient } from "./providers/deferred-client.js";
-import { defaultAuthFile, writeApiKey } from "./auth/file-credentials.js";
-import type { SignIn } from "./repl.js";
+import { InteractiveProvider } from "./providers/interactive.js";
 import {
   SHELL_SYSTEM_PROMPT,
   SYSTEM_PROMPT,
@@ -379,32 +378,14 @@ async function main(argv: readonly string[]): Promise<number> {
     return serveSession(options, session);
   }
 
-  const signIn: SignIn = {
-    provider: options.provider,
-    authFile: defaultAuthFile(process.env),
-    ready: () => llm.ready,
-    submit: async (apiKey) => {
-      const client = await createConfiguredClient({ ...options, apiKey });
-      if (typeof client === "string") {
-        return client;
-      }
-      try {
-        await writeApiKey(options.provider, apiKey);
-      } catch (error: unknown) {
-        return error instanceof Error ? error.message : String(error);
-      }
-      // Used immediately, so the key that was just stored works in this
-      // session rather than only the next one.
-      llm.set(client);
-      return undefined;
-    },
-  };
+  const providerControl = interactive ? new InteractiveProvider(options, llm) : undefined;
 
   if (interactive) {
     try {
       return await runRepl({
         session,
-        signIn,
+        signIn: providerControl,
+        providers: providerControl,
         input: process.stdin,
         // In JSON mode stdout carries the event stream and nothing else:
         // readline writes its prompt and echo to the same stream it is given,
@@ -417,10 +398,13 @@ async function main(argv: readonly string[]): Promise<number> {
           provider: options.provider,
           model: options.model ?? "unknown model",
           cwd,
-          sessionId: session.id,
           resumed: restored.resumed,
           signedOut: signedOutMessage !== undefined,
+          ...(options.model === undefined ? { setupIssue: "model" as const }
+            : options.provider === "openai-compatible" && options.baseURL === undefined
+              ? { setupIssue: "base-url" as const } : {}),
           width: terminalWidth(process.stderr),
+          color: process.stderr.isTTY === true && process.env.NO_COLOR === undefined && process.env.TERM !== "dumb",
         }) : banner(options, session.id, restored.resumed, signedOutMessage),
         ...(store === undefined ? {} : { sessionFile: store.location(session.id) }),
         ...(registry === undefined
@@ -732,7 +716,7 @@ function banner(
       "Run /login to store one, or leave and set an environment variable.",
     );
   }
-  lines.push("Type /help for commands, Ctrl+D to leave.", "");
+  lines.push("Type /help for commands, Ctrl+C or Ctrl+D to leave.", "");
   return lines.join("\n");
 }
 

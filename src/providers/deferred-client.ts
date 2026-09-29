@@ -24,7 +24,7 @@ export class NotSignedInError extends Error {
 export class DeferredLLMClient implements LLMClient {
   private client: LLMClient | undefined;
 
-  constructor(private readonly missingMessage: string) {}
+  constructor(private missingMessage: string) {}
 
   get ready(): boolean {
     return this.client !== undefined;
@@ -37,6 +37,11 @@ export class DeferredLLMClient implements LLMClient {
 
   set(client: LLMClient): void {
     this.client = client;
+  }
+
+  clear(message: string): void {
+    this.client = undefined;
+    this.missingMessage = message;
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {

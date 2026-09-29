@@ -1,7 +1,7 @@
 import type { TurnEndEvent } from "../events.js";
 import { formatTokens } from "../providers/usage.js";
 import { callTarget } from "../tools/target.js";
-import { fitLine } from "./text.js";
+import { displayWidth, fitLine, fitLineTail, terminalText } from "./text.js";
 import type { RunningTool, ViewState } from "./state.js";
 
 /** Tools listed individually before the rest are summarised as a count. */
@@ -24,13 +24,53 @@ function elapsed(from: number, now: number): string {
   return `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`;
 }
 
-function describeTool(tool: RunningTool, now: number): string {
-  const head = tool.target === undefined ? tool.name : `${tool.name} ${tool.target}`;
-  // The newest line of a tool's output says more than its first, and a running
-  // command's interesting output is at the end.
-  const latest = tool.progress.split("\n").filter((line) => line.length > 0).at(-1);
-  const suffix = latest === undefined ? "" : `  ${latest}`;
-  return `  ${head} (${elapsed(tool.startedAt, now)})${suffix}`;
+function toolHead(tool: RunningTool, now: number, width: number): string {
+  const prefix = `  ${terminalText(tool.name)}`;
+  const duration = ` (${elapsed(tool.startedAt, now)})`;
+  if (displayWidth(prefix) + displayWidth(duration) > width) return fitLine(prefix, width);
+  if (tool.target === undefined) return fitLine(`${prefix}${duration}`, width);
+  const targetWidth = width - displayWidth(prefix) - displayWidth(duration) - 1;
+  if (targetWidth < 2) return fitLine(`${prefix}${duration}`, width);
+  return `${prefix} ${fitLineTail(tool.target, targetWidth)}${duration}`;
+}
+
+function describeTool(tool: RunningTool, now: number, width: number): string {
+  // Preserve the tool name, the end of a long path, and the latest progress.
+  const latest = terminalText(tool.progress.split("\n").filter((line) => line.length > 0).at(-1) ?? "");
+  if (latest.length === 0) return toolHead(tool, now, width);
+  const fullHead = toolHead(tool, now, width);
+  if (displayWidth(fullHead) + 2 + displayWidth(latest) <= width) {
+    return `${fullHead}  ${latest}`;
+  }
+  const progressWidth = Math.max(6, Math.floor(width * 0.35));
+  if (width - progressWidth < 14) return fullHead;
+  return `${toolHead(tool, now, width - progressWidth - 2)}  ${fitLineTail(latest, progressWidth)}`;
+}
+
+function statusLine(run: NonNullable<ViewState["run"]>, now: number, width: number): string {
+  const status = run.status === "thinking" ? "thinking" : "running tools";
+  const shortStatus = run.status === "thinking" ? "thinking" : "tools";
+  const duration = elapsed(run.startedAt, now);
+  const usage = run.usage;
+  const tokens = usage !== undefined && usage.usage.totalTokens > 0
+    ? `${formatTokens(usage.usage.totalTokens)} tokens${usage.complete ? "" : "+"}`
+    : undefined;
+  const candidates = [
+    [status, `turn ${run.turn}/${run.maxTurns}`, duration, ...(tokens === undefined ? [] : [tokens]), "ctrl+c to stop"],
+    [status, `turn ${run.turn}/${run.maxTurns}`, duration, "ctrl+c to stop"],
+    [status, `${run.turn}/${run.maxTurns}`, duration, "^C stop"],
+    [status, duration, "^C stop"],
+    [shortStatus, duration, "^C stop"],
+    [shortStatus, "^C stop"],
+  ];
+  for (const parts of candidates) {
+    const line = parts.join("  ·  ");
+    if (displayWidth(line) <= width) return line;
+  }
+  for (const line of [`${shortStatus} ^C stop`, `${shortStatus} ^C`]) {
+    if (displayWidth(line) <= width) return line;
+  }
+  return fitLine("^C stop", width);
 }
 
 /**
@@ -51,33 +91,20 @@ export function view(
 
   const lines: string[] = [];
 
-  const tail = run.text.split("\n").slice(-MAX_TEXT_LINES);
+  const tail = run.text.split("\n").filter((line) => line.length > 0).slice(-MAX_TEXT_LINES);
   for (const line of tail) {
-    if (line.length > 0) {
-      lines.push(fitLine(line, options.width));
-    }
+    lines.push(fitLineTail(line, options.width));
   }
 
   for (const tool of run.running.slice(0, MAX_LISTED_TOOLS)) {
-    lines.push(fitLine(describeTool(tool, options.now), options.width));
+    lines.push(describeTool(tool, options.now, options.width));
   }
   const hidden = run.running.length - MAX_LISTED_TOOLS;
   if (hidden > 0) {
     lines.push(fitLine(`  and ${hidden} more`, options.width));
   }
 
-  const status = [
-    run.status === "thinking" ? "thinking" : "running tools",
-    `turn ${run.turn}/${run.maxTurns}`,
-    elapsed(run.startedAt, options.now),
-  ];
-  if (run.usage !== undefined && run.usage.usage.totalTokens > 0) {
-    status.push(
-      `${formatTokens(run.usage.usage.totalTokens)} tokens${run.usage.complete ? "" : "+"}`,
-    );
-  }
-  status.push("ctrl+c to stop");
-  lines.push(fitLine(status.join("  ·  "), options.width));
+  lines.push(statusLine(run, options.now, options.width));
 
   return lines.slice(-Math.max(1, options.height ?? lines.length));
 }

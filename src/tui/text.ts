@@ -29,3 +29,20 @@ export function fitLine(text: string, columns: number): string {
   }
   return `${result}…`;
 }
+
+/** Show the newest part of a changing line, keeping whole terminal cells. */
+export function fitLineTail(text: string, columns: number): string {
+  const width = Math.max(0, Math.floor(columns));
+  const clean = terminalText(text).replace(/\n/g, " ");
+  if (width === 0) return "";
+  if (stringWidth(clean) <= width) return clean;
+  let result = "";
+  let used = 0;
+  for (const { segment } of [...graphemes.segment(clean)].reverse()) {
+    const size = stringWidth(segment);
+    if (used + size > width - 1) break;
+    result = segment + result;
+    used += size;
+  }
+  return `…${result}`;
+}

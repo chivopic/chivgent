@@ -35,7 +35,17 @@ function recorder() {
 describe("view", () => {
   it("keeps the status visible in a short narrow terminal", () => {
     const lines = view(state({ text: "one\ntwo\nthree" }), { width: 8, height: 1, now: NOW });
-    expect(lines).toEqual(["thinkin…"]);
+    expect(lines).toEqual(["^C stop"]);
+  });
+
+  it("keeps the stop shortcut visible before optional usage on narrow screens", () => {
+    const lines = view(state({ usage: { usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 }, complete: true } }), {
+      width: 30, now: NOW,
+    });
+    expect(lines).toEqual(["thinking  ·  3s  ·  ^C stop"]);
+    expect(view(state({ status: "running-tools" }), { width: 24, now: NOW })).toEqual([
+      "tools  ·  3s  ·  ^C stop",
+    ]);
   });
 
   it("draws nothing between runs", () => {
@@ -63,6 +73,14 @@ describe("view", () => {
     expect(lines.slice(0, 3)).toEqual(["three", "four", "five"]);
   });
 
+  it("keeps newly streamed text visible on a long single line", () => {
+    const lines = view(state({ text: "old context ".repeat(12) + "最新回答👩‍💻" }), {
+      width: 18, now: NOW,
+    });
+    expect(lines[0]).toMatch(/^…/);
+    expect(lines[0]).toContain("最新回答👩‍💻");
+  });
+
   it("names each running tool, its target, and its newest output", () => {
     const lines = view(
       state({
@@ -86,6 +104,25 @@ describe("view", () => {
     expect(lines[0]).not.toContain("old line");
   });
 
+  it("keeps the end of a long tool path and its latest progress", () => {
+    const lines = view(state({ status: "running-tools", running: [{
+      toolCallId: "a", name: "read_file", target: "/long/parent/directory/with/many/segments/src/component.ts",
+      progress: "initial\nall checks passed", startedAt: NOW - 2_000,
+    }] }), { width: 58, now: NOW });
+    expect(lines[0]).toContain("read_file");
+    expect(lines[0]).toContain("component.ts");
+    expect(lines[0]).toContain("all checks passed");
+    expect(lines[0]).not.toContain("initial");
+    expect(lines[0]).not.toContain("parent");
+    const narrow = view(state({ status: "running-tools", running: [{
+      toolCallId: "a", name: "read_file", target: "/parent/path/component.ts",
+      progress: "all checks passed", startedAt: NOW - 2_000,
+    }] }), { width: 24, now: NOW });
+    expect(narrow[0]).toContain("read_file");
+    expect(narrow[0]).toContain("passed");
+    expect(narrow[0]).not.toContain("(…");
+  });
+
   it("summarises the tools it cannot fit", () => {
     const running = ["a", "b", "c", "d", "e"].map((id) => ({
       toolCallId: id,
@@ -106,7 +143,7 @@ describe("view", () => {
     const lines = view(state({ text: "x".repeat(200) }), { width: 40, now: NOW });
 
     expect(lines[0]).toHaveLength(40);
-    expect(lines[0]?.endsWith("…")).toBe(true);
+    expect(lines[0]?.startsWith("…")).toBe(true);
   });
 
   it("flags a total that is missing a turn", () => {
