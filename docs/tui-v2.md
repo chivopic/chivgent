@@ -17,7 +17,7 @@ Compose prompt · Enter adds a line · /send submits · /cancel discards
   │ /send
 ```
 
-Each ordinary Enter inserts another line, including blank lines; readline still supports cursor editing on the current line. `/send` submits **one** multi-line user message, with newlines preserved. `/cancel` or Ctrl+C discards the draft without sending it; `//send` and `//cancel` enter literal command-looking lines. A draft is limited to 200 lines / 64 KiB. This explicit modal behavior avoids guessing whether terminal-specific Shift+Enter sequences mean a newline or submit. It is **not yet** a cursor-editable multi-row composer.
+Each ordinary Enter inserts another line, including blank lines; readline still supports cursor editing on the current line. Pasting a multi-line block in one terminal input chunk preserves its line breaks (including CRLF), with a bounded 64 KiB buffer that refuses oversized pastes rather than silently submitting a partial draft. `/send` submits **one** multi-line user message, with newlines preserved. `/cancel` or Ctrl+C discards the draft without sending it; `//send` and `//cancel` enter literal command-looking lines. A draft is limited to 200 lines / 64 KiB. This explicit modal behavior avoids guessing whether terminal-specific Shift+Enter sequences mean a newline or submit. It is **not yet** a cursor-editable multi-row composer.
 
 ## Answer presentation
 
