@@ -2,7 +2,6 @@ import type { Message, ToolCall } from "../messages.js";
 import { terminalText, fitLine } from "./text.js";
 
 export const DIFF_PAGE_LINES = 28;
-const MAX_DIFF_PAGES = 256;
 
 export function mostRecentSuccessfulPatch(messages: readonly Message[]): string | undefined {
   // Each result follows the assistant call that produced it. Walk backwards,
@@ -46,7 +45,7 @@ export function formatDiffPage(
   color = false,
 ): DiffPage {
   const lines = terminalText(patch).split("\n");
-  const pageCount = Math.min(MAX_DIFF_PAGES, Math.max(1, Math.ceil(lines.length / DIFF_PAGE_LINES)));
+  const pageCount = Math.max(1, Math.ceil(lines.length / DIFF_PAGE_LINES));
   const page = Number.isSafeInteger(requestedPage)
     ? Math.max(1, Math.min(requestedPage, pageCount))
     : 1;
