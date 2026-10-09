@@ -545,6 +545,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     let bytes = 0;
     composing = true;
     composeCancelled = false;
+    tuiInput?.setComposeMode(true);
     menu?.clear();
     dismissedLine = undefined;
     readline.setPrompt("  │ ");
@@ -577,6 +578,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     } finally {
       composing = false;
       composeCancelled = false;
+      tuiInput?.setComposeMode(false);
       readline.setPrompt(REPL_PROMPT);
     }
   };
