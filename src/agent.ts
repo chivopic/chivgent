@@ -12,6 +12,7 @@ import type {
   ToolResultMessage,
 } from "./messages.js";
 import { ToolExecutionError, type Tool, type ToolDefinition, type ToolOutput } from "./tools/tool.js";
+import { isParallelReadTool, MAX_PARALLEL_READS } from "./tools/parallel.js";
 import type { Workspace } from "./workspace.js";
 import type {
   AppliedCompaction,
@@ -226,14 +227,13 @@ export class Agent {
         };
       }
 
-      const toolResults: ToolResultMessage[] = [];
-      for (const toolCall of assistant.toolCalls) {
-        if (isAborted(signal)) {
-          return abortedResult(state);
-        }
-        const result = await this.executeToolCall(toolCall, turn, signal, state);
-        toolResults.push(result);
-        state.messages.push(result);
+      const toolResults = await this.executeToolCalls(
+        assistant.toolCalls, turn, signal, state,
+      );
+      // A read may finish after the user cancels, even when the tool itself
+      // ignores AbortSignal. Never send another model request after that.
+      if (isAborted(signal)) {
+        return abortedResult(state);
       }
       this.emit({ type: "turn_end", turn, message: assistant, toolResults });
     }
@@ -336,6 +336,70 @@ export class Agent {
       }
       seenIds.add(toolCall.id);
     }
+  }
+
+  /**
+   * Run contiguous built-in read groups concurrently, with an exclusive
+   * barrier around every write/shell/extension/unknown call.
+   *
+   * Promise.allSettled is intentional: it drains every started read before
+   * agent_end, so no background events arrive after the session is persisted.
+   * Results are committed in the model's call order, not completion order.
+   */
+  private async executeToolCalls(
+    calls: readonly ToolCall[],
+    turn: number,
+    signal: AbortSignal | undefined,
+    state: RunState,
+  ): Promise<ToolResultMessage[]> {
+    const results: ToolResultMessage[] = [];
+    let next = 0;
+
+    while (next < calls.length) {
+      if (isAborted(signal)) break;
+      const call = calls[next];
+      if (call === undefined) break;
+
+      if (!isParallelReadTool(this.registry.get(call.name))) {
+        const result = await this.executeToolCall(call, turn, signal, state);
+        state.messages.push(result);
+        results.push(result);
+        next += 1;
+        continue;
+      }
+
+      // Stop at the next exclusive call; a write must never overlap a read
+      // and can never be overtaken by a later read.
+      const batch: ToolCall[] = [];
+      while (next < calls.length && batch.length < MAX_PARALLEL_READS) {
+        const candidate = calls[next];
+        if (candidate === undefined ||
+          !isParallelReadTool(this.registry.get(candidate.name))) break;
+        batch.push(candidate);
+        next += 1;
+      }
+
+      const settled = await Promise.allSettled(
+        batch.map((toolCall) => this.executeToolCall(toolCall, turn, signal, state)),
+      );
+      let firstFailure: unknown;
+      let hasFailure = false;
+      for (const outcome of settled) {
+        if (outcome.status === "fulfilled") {
+          results.push(outcome.value);
+          state.messages.push(outcome.value);
+        } else if (!hasFailure) {
+          firstFailure = outcome.reason;
+          hasFailure = true;
+        }
+      }
+      if (hasFailure) {
+        // The caller closes unmatched calls before persisting agent_end.
+        // Successfully completed reads are preserved in their original order.
+        throw firstFailure;
+      }
+    }
+    return results;
   }
 
   private async executeToolCall(
@@ -469,29 +533,29 @@ function closePendingToolCalls(messages: Message[]): void {
     }
 
     let afterTools = index + 1;
-    const completed = new Set<string>();
+    const completed = new Map<string, ToolResultMessage>();
     while (messages[afterTools]?.role === "tool") {
       const message = messages[afterTools];
       if (message?.role === "tool") {
-        completed.add(message.toolCallId);
+        completed.set(message.toolCallId, message);
       }
       afterTools += 1;
     }
 
-    const missing: ToolResultMessage[] = current.toolCalls
-      .filter((call) => !completed.has(call.id))
-      .map((call) => ({
+    // The order of settled parallel reads is not necessarily the order in
+    // which the model requested them. Rebuild in call order, including
+    // explicit failure placeholders for tools that never finished.
+    const normalized: ToolResultMessage[] = current.toolCalls.map(
+      (call) => completed.get(call.id) ?? {
         role: "tool",
         toolCallId: call.id,
         toolName: call.name,
         content: INTERRUPTED_TOOL_RESULT,
         isError: true,
-      }));
-
-    if (missing.length > 0) {
-      messages.splice(afterTools, 0, ...missing);
-    }
-    index = afterTools + missing.length - 1;
+      },
+    );
+    messages.splice(index + 1, afterTools - (index + 1), ...normalized);
+    index += normalized.length;
   }
 }
 
