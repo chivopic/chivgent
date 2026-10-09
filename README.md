@@ -519,6 +519,8 @@ manual so the default test suite never consumes credits.
 
 ## Evals
 
+**Patch edits:** `--allow-writes` now enables an `apply_patch` tool for strict, multi-file edits; see [the patch format guide](docs/apply-patch.md) for its supported subset and rollback limitations.
+
 **Shell safety:** `--allow-shell` runs commands in an offline Docker container and requires a per-command confirmation in interactive mode. Headless sessions deny commands unless explicitly started with `--approve-all-shell`. See [Shell sandbox and approvals](docs/shell-sandbox.md) for restrictions and remaining risks.
 
 
