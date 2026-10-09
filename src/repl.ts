@@ -1,5 +1,7 @@
 import { TuiInput } from "./tui/input.js";
 import { EditorController } from "./tui/editor-input.js";
+import { readLiveGitDiff, type GitDiffMode } from "./tui/git-diff.js";
+import { terminalText } from "./tui/text.js";
 import { PatchReviewController } from "./tui/review.js";
 import { InputMenu, type MenuItem } from "./tui/menu.js";
 import { createInterface, emitKeypressEvents, type Interface } from "node:readline";
@@ -80,6 +82,7 @@ export const BUILT_IN_COMMANDS = [
   "compose",
   "editor",
   "review",
+  "gitdiff",
   "clear",
   "exit",
   "quit",
@@ -97,6 +100,7 @@ const HELP = `Commands:
   /compose   Write a multi-line prompt (/send to submit, /cancel to discard)
   /editor    Open the cursor-editable multiline composer (Ctrl+S sends)
   /review    Browse last applied patch with arrows, q to close
+  /gitdiff [--staged]  Review actual workspace Git changes after explicit approval
   /clear     Start a new transcript in the same session
   /provider  Choose a Provider (↑↓ and Enter in the TUI)
   /model     Show or change the current model: /model MODEL
@@ -176,6 +180,10 @@ export function handleSlashCommand(
 
     case "/review":
       context.write("Use /review in an interactive TUI to browse the most recent successful patch.\n");
+      return "handled";
+
+    case "/gitdiff":
+      context.write("Use /gitdiff [--staged] in an interactive TUI to approve read-only Git diff.\n");
       return "handled";
 
     case "/clear":
@@ -628,8 +636,12 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       .map(message => message.content)
       .filter(message => message.length > 0)
       .slice(-100);
-    const editor = new EditorController(output, resolveDraft,
-      { submitOnEnter: isDefault, history: recent });
+    const editor = new EditorController(output, resolveDraft, {
+      submitOnEnter: isDefault,
+      history: recent,
+      slashCommands: commands.map(item => ({ value: item.value, label: item.label })),
+      mouse: isDefault && options.tui === true && (output as typeof output & { isTTY?: boolean }).isTTY === true,
+    });
     const resized = (): void => { editor.resized(); };
     const closed = (): void => { editor.cancel(); };
     tuiInput.setRawHandler(chunk => { editor.receive(chunk); });
@@ -652,8 +664,8 @@ export async function runRepl(options: ReplOptions): Promise<number> {
   };
 
   /** Read-only patch viewer, safe and separate from the model's tool calls. */
-  const inspectPatch = async (): Promise<void> => {
-    const patch = mostRecentSuccessfulPatch(options.session.messages);
+  const inspectPatch = async (override?: string, label?: string): Promise<void> => {
+    const patch = override ?? mostRecentSuccessfulPatch(options.session.messages);
     if (patch === undefined) {
       write("No successfully applied patch found in this session.\n");
       return;
@@ -667,7 +679,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     const pending = new Promise<void>(resolve => { resolveReview = resolve; });
     const output = options.output as typeof options.output & { columns?: number; rows?: number };
     const review = new PatchReviewController(output, patch, resolveReview,
-      process.env.NO_COLOR === undefined && process.env.TERM !== "dumb");
+      process.env.NO_COLOR === undefined && process.env.TERM !== "dumb", label);
     const resized = (): void => { review.resized(); };
     const closed = (): void => { review.cancel(); };
     tuiInput.setRawHandler(chunk => { review.receive(chunk); });
@@ -680,6 +692,47 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       tuiInput.setRawHandler(undefined);
       output.off("resize", resized);
       readline.off("close", closed);
+    }
+  };
+
+  const inspectLiveGitDiff = async (line: string): Promise<void> => {
+    if (tuiInput === undefined) {
+      write("Live Git review requires interactive --tui.\n");
+      return;
+    }
+    if (line !== "/gitdiff" && line !== "/gitdiff --staged") {
+      write("Usage: /gitdiff [--staged]\n");
+      return;
+    }
+    const mode: GitDiffMode = line.endsWith("--staged") ? "staged" : "working";
+    // Explicit user confirmation before starting any local Git process.
+    const root = terminalText(options.session.cwd);
+    write(`\nRead-only local Git diff (${mode}) in:\n${root}\nNo network, hooks, external diff or file writes. Approve once? [y/N]\n`);
+    tuiInput.acceptLine();
+    tuiInput.setApprovalMode(true);
+    readline.setPrompt("gitdiff> ");
+    let allowed = false;
+    try {
+      readline.prompt();
+      const answer = await readNextLine();
+      allowed = answer?.trim().toLowerCase() === "y";
+    } finally {
+      tuiInput.setApprovalMode(false);
+      readline.setPrompt(REPL_PROMPT);
+    }
+    if (!allowed) {
+      write("Git diff review denied; no process started.\n");
+      return;
+    }
+    try {
+      const diff = await readLiveGitDiff(options.session.cwd, mode);
+      if (diff.trim().length === 0) {
+        write(`No ${mode} tracked Git changes found.\n`);
+        return;
+      }
+      await inspectPatch(diff, `live Git diff (${mode})`);
+    } catch (error: unknown) {
+      write(`${error instanceof Error ? error.message : "Git diff unavailable"}\n`);
     }
   };
 
@@ -721,6 +774,12 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       const fromEditor = line.trim() === "/editor";
       if (line.trim() === "/review") {
         await inspectPatch();
+        if (inputClosed) break;
+        showPrompt();
+        continue;
+      }
+      if (line.trim().startsWith("/gitdiff")) {
+        await inspectLiveGitDiff(line.trim());
         if (inputClosed) break;
         showPrompt();
         continue;
