@@ -262,7 +262,7 @@ describe("Compactor", () => {
     const messages: Message[] = [
       { role: "assistant", content: "", toolCalls: [{
         id: "patch-one", name: "apply_patch",
-        arguments: { patch: "*** Begin Patch\\n*** Add File: src/a.ts\\n+one\\n*** Add File: src/b.ts\\n+two\\n*** End Patch" },
+        arguments: { patch: "*** Begin Patch\n*** Add File: src/a.ts\n+one\n*** Add File: src/b.ts\n+two\n*** End Patch" },
       }] },
       toolResult("patch-one", "apply_patch", "Patch applied"),
     ];
