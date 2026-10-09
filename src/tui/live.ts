@@ -82,6 +82,15 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
 
   return {
     listener: (event: AgentEvent): void => {
+      if (event.type === "plan_update") {
+        painter.clear();
+        const done = event.plan.filter(step => step.status === "completed").length;
+        options.stream.write(`${fitLine(`Plan · ${done}/${event.plan.length} completed`, Math.max(1, options.width() - 1))}\n`);
+        for (const item of event.plan) {
+          const symbol = item.status === "completed" ? "✓" : item.status === "in_progress" ? "›" : "·";
+          options.stream.write(`${fitLine(`  ${symbol} ${terminalText(item.step)}`, Math.max(1, options.width() - 1))}\n`);
+        }
+      }
       if (event.type === "turn_end") {
         // The finished turn moves into the terminal's own scrollback: the
         // region is erased first so the transcript lands where it was, then
