@@ -76,7 +76,7 @@ describe("mouse caret and selected text", () => {
       columns: 80, rows: 24, write: part => out.push(part),
     }, () => {}, { submitOnEnter: true, mouse: true });
     c.begin();
-    c.receive(Buffer.from("one\ntwo"));
+    c.receive(Buffer.from("one\u000ftwo")); // Ctrl+O inserts a line; plain LF submits
     // Simulated DSR cursor is at screen row 12. Caret is on the second input row.
     c.receive(Buffer.from("\u001b[12;6R"));
     // First editable line is at screen row 11, column 3 starts text.
