@@ -533,29 +533,29 @@ function closePendingToolCalls(messages: Message[]): void {
     }
 
     let afterTools = index + 1;
-    const completed = new Set<string>();
+    const completed = new Map<string, ToolResultMessage>();
     while (messages[afterTools]?.role === "tool") {
       const message = messages[afterTools];
       if (message?.role === "tool") {
-        completed.add(message.toolCallId);
+        completed.set(message.toolCallId, message);
       }
       afterTools += 1;
     }
 
-    const missing: ToolResultMessage[] = current.toolCalls
-      .filter((call) => !completed.has(call.id))
-      .map((call) => ({
+    // The order of settled parallel reads is not necessarily the order in
+    // which the model requested them. Rebuild in call order, including
+    // explicit failure placeholders for tools that never finished.
+    const normalized: ToolResultMessage[] = current.toolCalls.map(
+      (call) => completed.get(call.id) ?? {
         role: "tool",
         toolCallId: call.id,
         toolName: call.name,
         content: INTERRUPTED_TOOL_RESULT,
         isError: true,
-      }));
-
-    if (missing.length > 0) {
-      messages.splice(afterTools, 0, ...missing);
-    }
-    index = afterTools + missing.length - 1;
+      },
+    );
+    messages.splice(index + 1, afterTools - (index + 1), ...normalized);
+    index += normalized.length;
   }
 }
 
