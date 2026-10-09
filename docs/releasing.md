@@ -54,7 +54,7 @@ The package must exist on npm before its package settings can be used to configu
    chivgent --version
    ```
 
-5. Create the matching GitHub tag and release, for example `v0.6.0`.
+5. Create the matching GitHub tag and release, for example `vX.Y.Z`.
 
 ## Configure Trusted Publishing
 
