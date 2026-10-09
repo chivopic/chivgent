@@ -1,5 +1,6 @@
 import { TuiInput } from "./tui/input.js";
 import { EditorController } from "./tui/editor-input.js";
+import { PatchReviewController } from "./tui/review.js";
 import { InputMenu, type MenuItem } from "./tui/menu.js";
 import { createInterface, emitKeypressEvents, type Interface } from "node:readline";
 import type { AgentSession } from "./session.js";
@@ -78,6 +79,7 @@ export const BUILT_IN_COMMANDS = [
   "diff",
   "compose",
   "editor",
+  "review",
   "clear",
   "exit",
   "quit",
@@ -94,6 +96,7 @@ const HELP = `Commands:
   /diff [N]  Review the latest successful apply_patch, page N
   /compose   Write a multi-line prompt (/send to submit, /cancel to discard)
   /editor    Open the cursor-editable multiline composer (Ctrl+S sends)
+  /review    Browse last applied patch with arrows, q to close
   /clear     Start a new transcript in the same session
   /provider  Choose a Provider (↑↓ and Enter in the TUI)
   /model     Show or change the current model: /model MODEL
@@ -169,6 +172,10 @@ export function handleSlashCommand(
 
     case "/editor":
       context.write("Use /editor in an interactive TUI to open the multiline editor.\n");
+      return "handled";
+
+    case "/review":
+      context.write("Use /review in an interactive TUI to browse the most recent successful patch.\n");
       return "handled";
 
     case "/clear":
@@ -625,6 +632,38 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     }
   };
 
+  /** Read-only patch viewer, safe and separate from the model's tool calls. */
+  const inspectPatch = async (): Promise<void> => {
+    const patch = mostRecentSuccessfulPatch(options.session.messages);
+    if (patch === undefined) {
+      write("No successfully applied patch found in this session.\n");
+      return;
+    }
+    if (tuiInput === undefined) {
+      write("Interactive patch review requires --tui; use /diff instead.\n");
+      return;
+    }
+    menu?.clear();
+    let resolveReview!: () => void;
+    const pending = new Promise<void>(resolve => { resolveReview = resolve; });
+    const output = options.output as typeof options.output & { columns?: number; rows?: number };
+    const review = new PatchReviewController(output, patch, resolveReview,
+      process.env.NO_COLOR === undefined && process.env.TERM !== "dumb");
+    const resized = (): void => { review.resized(); };
+    const closed = (): void => { review.cancel(); };
+    tuiInput.setRawHandler(chunk => { review.receive(chunk); });
+    output.on("resize", resized);
+    readline.once("close", closed);
+    try {
+      review.begin();
+      await pending;
+    } finally {
+      tuiInput.setRawHandler(undefined);
+      output.off("resize", resized);
+      readline.off("close", closed);
+    }
+  };
+
   const signInAfterProviderSelection = async (): Promise<void> => {
     if (!options.tui || options.signIn === undefined) return;
     let missingKey: boolean;
@@ -658,6 +697,12 @@ export async function runRepl(options: ReplOptions): Promise<number> {
 
       const fromComposer = line.trim() === "/compose";
       const fromEditor = line.trim() === "/editor";
+      if (line.trim() === "/review") {
+        await inspectPatch();
+        if (inputClosed) break;
+        showPrompt();
+        continue;
+      }
       if (fromComposer || fromEditor) {
         const draft = fromEditor ? await collectEditor() : await collectMultiline();
         if (draft === undefined) {
