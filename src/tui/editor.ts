@@ -142,7 +142,7 @@ export interface EditorFrame {
 }
 
 /** Fixed-height viewport; keep caret in frame even on small terminals. */
-export function editorFrame(document: EditorDocument, width: number, height: number): EditorFrame {
+export function editorFrame(document: EditorDocument, width: number, height: number, submitOnEnter = false): EditorFrame {
   const cellWidth = Math.max(8, width - 1);
   const rowLimit = Math.max(1, Math.min(8, height - 5));
   const rows = document.text.split("\n");
@@ -175,7 +175,9 @@ export function editorFrame(document: EditorDocument, width: number, height: num
       caret: Math.min(cellWidth - 1, 2 + Math.max(0, caret - scrollCells) + (scrollCells > 0 ? 1 : 0)),
     };
   });
-  const header = fitLine("┌─ Ctrl+S send · Esc cancel · Enter newline", cellWidth);
+  const header = fitLine(submitOnEnter
+    ? "┌─ Enter send · Ctrl+O newline · Ctrl+R history"
+    : "┌─ Ctrl+S send · Esc cancel · Enter newline", cellWidth);
   const footer = fitLine(
     document.warning || `└─ ${rows.length} lines · ${Buffer.byteLength(document.text, "utf8")} bytes · ↑↓←→ move`,
     cellWidth,
