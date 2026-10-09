@@ -62,6 +62,8 @@ describe("default inline TUI composer in a real terminal", () => {
       expect(prompts).toHaveLength(1);
       screen.input.write("\r"); // load the matched history; do not submit
       await new Promise<void>(resolve => setImmediate(resolve));
+      expect(prompts).toHaveLength(1);
+      screen.input.write("\r"); // a separate submit action
       await vi.waitFor(() => expect(prompts).toEqual(["Refactor API", "Refactor API"]));
       screen.input.write("\u0004");
       expect(await result).toBe(0);
@@ -82,6 +84,9 @@ describe("default inline TUI composer in a real terminal", () => {
       await vi.waitFor(() => expect(screen.bytes().split("Enter send").length).toBeGreaterThan(beforeCancel));
       expect(prompts).toEqual([]);
       screen.input.write("\u0004");
+      await vi.waitFor(() => expect(screen.input.raw).toBe(false)).catch(() => {
+        throw new Error(`Terminal exit diagnostic: ${JSON.stringify(screen.bytes().slice(-1400))}`);
+      });
       expect(await result).toBe(0);
     } finally { screen.input.end(); await result; screen.dispose(); }
   });
