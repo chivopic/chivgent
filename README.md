@@ -519,6 +519,8 @@ manual so the default test suite never consumes credits.
 
 ## Evals
 
+**TUI V3:** Use `/editor` for cursor-editable multiline prompts (arrows, Ctrl+S submit), `/review` for interactive patch paging, and syntax-highlighted terminal code fences. See [TUI V3 guide](docs/tui-v3.md).
+
 **TUI V2:** Interactive sessions support `/compose` for multiline prompts, `/diff [page]` for reviewing the latest successful patch, Markdown/code-block display and one-key Shell approvals. See [TUI V2 guide](docs/tui-v2.md).
 
 **Parallel reads:** Consecutive built-in file reads, listings, and searches now run concurrently (at most 4). Writes, Docker shell commands, and third-party extensions stay exclusive, with ordered results. See [tool scheduling](docs/parallel-read-tools.md).
