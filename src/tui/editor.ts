@@ -32,6 +32,42 @@ export class EditorDocument {
   readonly maxLines = MAX_LINES;
   warning = "";
   private preferredCell?: number;
+  selectionAnchor?: number;
+
+  selectionRange(): { start: number; end: number } | undefined {
+    if (this.selectionAnchor === undefined || this.selectionAnchor === this.cursor) return undefined;
+    return { start: Math.min(this.selectionAnchor, this.cursor), end: Math.max(this.selectionAnchor, this.cursor) };
+  }
+
+  /** Hit test is grapheme-safe and uses display cell positions, not JS string indices. */
+  placeAt(row: number, column: number, extend = false): void {
+    const rows = this.text.split("\n");
+    const safeRow = Math.max(0, Math.min(Math.floor(row), rows.length - 1));
+    const target = rows[safeRow] ?? "";
+    const start = rows.slice(0, safeRow).reduce((total, value) => total + value.length + 1, 0);
+    let offset = 0;
+    for (const grapheme of segmenter.segment(target)) {
+      const end = grapheme.index + grapheme.segment.length;
+      if (displayWidth(target.slice(0, end)) > column) break;
+      offset = end;
+    }
+    if (extend) {
+      this.selectionAnchor ??= this.cursor;
+    } else this.selectionAnchor = undefined;
+    this.cursor = start + offset;
+    this.preferredCell = undefined;
+    this.lastTyping = false;
+  }
+
+  private deleteSelection(): boolean {
+    const range = this.selectionRange();
+    if (range === undefined) return false;
+    this.checkpoint();
+    this.text = this.text.slice(0, range.start) + this.text.slice(range.end);
+    this.cursor = range.start;
+    this.selectionAnchor = undefined;
+    return true;
+  }
   private undoStack: { text: string; cursor: number }[] = [];
   private redoStack: { text: string; cursor: number }[] = [];
   private static readonly MAX_HISTORY = 100;
@@ -51,6 +87,7 @@ export class EditorDocument {
     this.redoStack.push({ text: this.text, cursor: this.cursor });
     this.text = previous.text;
     this.cursor = previous.cursor;
+    this.selectionAnchor = undefined;
     this.lastTyping = false;
     this.preferredCell = undefined;
     this.warning = "";
@@ -62,6 +99,7 @@ export class EditorDocument {
     this.undoStack.push({ text: this.text, cursor: this.cursor });
     this.text = nextState.text;
     this.cursor = nextState.cursor;
+    this.selectionAnchor = undefined;
     this.lastTyping = false;
     this.preferredCell = undefined;
     this.warning = "";
@@ -74,32 +112,45 @@ export class EditorDocument {
     this.checkpoint();
     this.text = normalized;
     this.cursor = normalized.length;
+    this.selectionAnchor = undefined;
     this.preferredCell = undefined;
     return true;
   }
 
   insert(value: string, typing = false): boolean {
     const normalized = terminalText(value).replace(/\r\n?/g, "\n");
-    if (Buffer.byteLength(this.text, "utf8") + Buffer.byteLength(normalized, "utf8") > MAX_BYTES ||
-        this.text.split("\n").length + normalized.split("\n").length - 1 > MAX_LINES) {
+    const rangeBefore = this.selectionRange();
+    const nextText = rangeBefore === undefined
+      ? this.text.slice(0, this.cursor) + normalized + this.text.slice(this.cursor)
+      : this.text.slice(0, rangeBefore.start) + normalized + this.text.slice(rangeBefore.end);
+    if (Buffer.byteLength(nextText, "utf8") > MAX_BYTES ||
+        nextText.split("\n").length > MAX_LINES) {
       this.warning = "Draft limit: 64 KiB / 200 lines";
       return false;
     }
     if (normalized.length === 0) return true;
     this.checkpoint(typing);
-    this.text = this.text.slice(0, this.cursor) + normalized + this.text.slice(this.cursor);
-    this.cursor += normalized.length;
+    const range = this.selectionRange();
+    if (range !== undefined) {
+      this.text = this.text.slice(0, range.start) + normalized + this.text.slice(range.end);
+      this.cursor = range.start + normalized.length;
+      this.selectionAnchor = undefined;
+    } else {
+      this.text = this.text.slice(0, this.cursor) + normalized + this.text.slice(this.cursor);
+    }
+    if (range === undefined) this.cursor += normalized.length;
     this.preferredCell = undefined;
     this.warning = "";
     return true;
   }
 
-  left(): void { this.cursor = previous(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; }
-  right(): void { this.cursor = next(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; }
-  home(): void { this.cursor = lineStart(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; }
-  end(): void { this.cursor = lineEnd(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; }
+  left(): void { this.cursor = previous(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; this.selectionAnchor = undefined; }
+  right(): void { this.cursor = next(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; this.selectionAnchor = undefined; }
+  home(): void { this.cursor = lineStart(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; this.selectionAnchor = undefined; }
+  end(): void { this.cursor = lineEnd(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; this.selectionAnchor = undefined; }
 
   backspace(): void {
+    if (this.deleteSelection()) return;
     if (this.cursor === 0) return;
     const at = previous(this.text, this.cursor);
     this.checkpoint();
@@ -108,6 +159,7 @@ export class EditorDocument {
     this.preferredCell = undefined;
   }
   delete(): void {
+    if (this.deleteSelection()) return;
     if (this.cursor === this.text.length) return;
     this.checkpoint();
     this.text = this.text.slice(0, this.cursor) + this.text.slice(next(this.text, this.cursor));
@@ -115,6 +167,7 @@ export class EditorDocument {
   }
   moveVertical(direction: -1 | 1): void {
     this.lastTyping = false;
+    this.selectionAnchor = undefined;
     const begin = lineStart(this.text, this.cursor);
     const column = this.preferredCell ?? displayWidth(this.text.slice(begin, this.cursor));
     this.preferredCell = column;
@@ -148,9 +201,10 @@ export interface EditorFrame {
 }
 
 /** Fixed-height viewport; keep caret in frame even on small terminals. */
-export function editorFrame(document: EditorDocument, width: number, height: number, submitOnEnter = false): EditorFrame {
+export function editorFrame(document: EditorDocument, width: number, height: number, submitOnEnter = false, suggestions: readonly string[] = [], selectedSuggestion = 0): EditorFrame {
   const cellWidth = Math.max(8, width - 1);
-  const rowLimit = Math.max(1, Math.min(8, height - 5));
+  const displayedSuggestions = suggestions.slice(0, Math.max(0, height - 7));
+  const rowLimit = Math.max(1, Math.min(8, height - 5 - displayedSuggestions.length));
   const rows = document.text.split("\n");
   const position = document.position;
   const first = Math.max(0, Math.min(position.row - rowLimit + 1, rows.length - rowLimit));
@@ -177,19 +231,34 @@ export function editorFrame(document: EditorDocument, width: number, height: num
       display = fitLine(display, inputWidth);
     }
     return {
-      row: fitLine(`│ ${display}`, cellWidth),
+      row: (() => {
+        const baseline = fitLine(`│ ${display}`, cellWidth);
+        const selection = document.selectionRange();
+        if (selection === undefined || display !== original) return baseline;
+        const rowIndex = first + index;
+        const start = rows.slice(0, rowIndex).reduce((sum, row) => sum + row.length + 1, 0);
+        const lo = Math.max(0, selection.start - start);
+        const hi = Math.min(original.length, selection.end - start);
+        if (hi <= lo) return baseline;
+        // ANSI reverse video applies only after width clipping, so it does
+        // not affect terminal columns or permit untrusted escape injection.
+        return `│ ${original.slice(0, lo)}\u001b[7m${original.slice(lo, hi)}\u001b[0m${original.slice(hi)}`;
+      })(),
       caret: Math.min(cellWidth - 1, 2 + Math.max(0, caret - scrollCells) + (scrollCells > 0 ? 1 : 0)),
     };
   });
   const header = fitLine(submitOnEnter
     ? "┌─ Enter send · Ctrl+O newline · Ctrl+R history"
     : "┌─ Ctrl+S send · Esc cancel · Enter newline", cellWidth);
+  const popup = displayedSuggestions.map((item, index) => fitLine(`  ${index === selectedSuggestion ? "›" : " "} /${item}`, cellWidth));
   const footer = fitLine(
-    document.warning || `└─ ${rows.length} lines · ${Buffer.byteLength(document.text, "utf8")} bytes · ↑↓←→ move`,
+    document.warning || (document.selectionRange() === undefined
+      ? `└─ ${rows.length} lines · ${Buffer.byteLength(document.text, "utf8")} bytes · ↑↓←→ move`
+      : `└─ Selected ${document.selectionRange()!.end - document.selectionRange()!.start} code units · type to replace`),
     cellWidth,
   );
   return {
-    lines: [header, ...body.map(item => item.row), footer],
+    lines: [header, ...body.map(item => item.row), ...popup, footer],
     cursorRow: 1 + (position.row - first),
     cursorColumn: body[position.row - first]?.caret ?? 2,
   };

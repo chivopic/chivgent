@@ -23,6 +23,7 @@ export function reviewFrame(
   width: number,
   height: number,
   color = false,
+  label = "applied patch (not live git diff)",
 ): ReviewFrame {
   const cellWidth = Math.max(8, width - 1);
   const pageLines = Math.max(1, Math.min(24, height - 5));
@@ -30,7 +31,7 @@ export function reviewFrame(
   const pageCount = Math.max(1, Math.ceil(all.length / pageLines));
   const selected = Math.max(1, Math.min(page, pageCount));
   const slice = all.slice((selected - 1) * pageLines, selected * pageLines);
-  const head = fitLine(`┌─ Patch review · page ${selected}/${pageCount} · applied patch (not live git diff)`, cellWidth);
+  const head = fitLine(`┌─ Patch review · page ${selected}/${pageCount} · ${label}`, cellWidth);
   const foot = fitLine("└─ ↓/n next · ↑/p previous · q/Esc close", cellWidth);
   return {
     lines: [head, ...slice.map(line => decorated(`│ ${line}`, cellWidth, color)), foot],
@@ -53,6 +54,7 @@ export class PatchReviewController {
     private readonly patch: string,
     private readonly finishCallback: () => void,
     private readonly color = false,
+    private readonly label = "applied patch (not live git diff)",
   ) {
     this.painter = new EditorPainter(output);
   }
@@ -103,6 +105,7 @@ export class PatchReviewController {
       Math.max(8, this.output.columns ?? 80),
       Math.max(6, this.output.rows ?? 24),
       this.color,
+      this.label,
     );
     this.pageCount = frame.pageCount;
     this.page = Math.max(1, Math.min(this.page, this.pageCount));

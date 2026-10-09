@@ -499,6 +499,8 @@ npm install -g "$(npm pack --silent)"
 
 ## Evals
 
+**TUI V5：** 默认输入框现支持斜杠命令补全、鼠标定位与拖选，以及需逐次确认的只读 `/gitdiff [--staged]` 工作区审查。详见 [TUI V5 指南](docs/tui-v5.md)。
+
 **TUI V4：** `--tui` 默认使用可自由编辑的多行输入框：Enter 发送、Ctrl+O 换行、Ctrl+Z/Y 撤销重做、Ctrl+R 搜索历史。详见 [TUI V4 指南](docs/tui-v4.md)。
 
 **TUI V3：** `/editor` 支持光标移动的真正多行输入（Ctrl+S 发送），`/review` 支持交互式翻页审查补丁，代码块具备基础语法高亮。详见 [TUI V3 指南](docs/tui-v3.md)。
