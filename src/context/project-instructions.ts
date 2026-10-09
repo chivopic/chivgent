@@ -19,7 +19,7 @@ export interface ProjectInstructionsProvider {
  * Do not scan the entire repository and accidentally apply a sibling's rules.
  */
 export class ScopedProjectInstructions implements ProjectInstructionsProvider {
-  constructor(private readonly root: string) {}
+  constructor(private readonly root: string, private readonly maxBytes = MAX_TOTAL_BYTES) {}
 
   async load(messages: readonly Message[]): Promise<string | undefined> {
     let realRoot: string;
@@ -56,7 +56,7 @@ export class ScopedProjectInstructions implements ProjectInstructionsProvider {
       return depth(a) - depth(b) || a.localeCompare(b, "en");
     });
 
-    let remaining = MAX_TOTAL_BYTES;
+    let remaining = Math.max(0, Math.min(this.maxBytes, MAX_TOTAL_BYTES));
     const parts: string[] = [];
     for (const directory of ordered) {
       if (remaining === 0) break;
