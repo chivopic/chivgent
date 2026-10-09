@@ -3,7 +3,7 @@ import { PatchError, applyHunks, parsePatch } from "../patch/parse.js";
 import { resolveWritePath } from "./paths.js";
 import { readFullTextFileWithBom } from "./read.js";
 import { writeTextFile } from "./write.js";
-import type { WorkspaceLimits } from "./types.js";
+import type { WorkspaceLimits, PatchResult } from "./types.js";
 
 interface PlannedChange {
   readonly kind: "add" | "update" | "delete";
@@ -11,12 +11,6 @@ interface PlannedChange {
   readonly previous: string | undefined;
   readonly next: string | undefined;
 }
-export interface PatchResult {
-  readonly added: readonly string[];
-  readonly updated: readonly string[];
-  readonly deleted: readonly string[];
-}
-
 function interrupted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
     const error = new Error("Patch interrupted.");
