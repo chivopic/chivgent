@@ -14,7 +14,7 @@ function short(value: string, width: number): string {
 function briefFailure(result: ToolResultMessage): string {
   const lines = result.content.split("\n").filter(line => line.trim().length > 0);
   const status = result.toolName === "bash"
-    ? lines.findLast(line => /(?:Command exited with code|timed out|unavailable)/i.test(line))
+    ? [...lines].reverse().find(line => /(?:Command exited with code|timed out|unavailable)/i.test(line))
     : undefined;
   return short(status ?? lines[0] ?? "failed", 100);
 }
@@ -125,7 +125,7 @@ export function toolTranscript(
     }
     if (!result.isError && result.toolName === "bash") {
       const candidates = result.content.split("\n").filter(line => line.trim().length > 0);
-      const summary = candidates.findLast(line => /(?:tests? passed|passing|test suites|build succeeded|successfully)/i.test(line))
+      const summary = [...candidates].reverse().find(line => /(?:tests? passed|passing|test suites|build succeeded|successfully)/i.test(line))
         ?? candidates.at(-1);
       if (summary !== undefined && summary.trim() !== "(no output)") {
         lines.push(short(`    ↳ ${summary}`, width));
