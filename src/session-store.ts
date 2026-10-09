@@ -23,7 +23,11 @@ export interface SessionHeader {
  * deltas are not persisted: they are reconstructible from `message_end`, and
  * keeping them would make a session file grow with every token.
  */
-export type SessionRecord = SessionHeader | AgentEvent;
+export interface SessionClearRecord {
+  readonly type: "session_clear";
+}
+
+export type SessionRecord = SessionHeader | AgentEvent | SessionClearRecord;
 
 export interface SessionTranscript {
   readonly header: SessionHeader;
@@ -181,7 +185,8 @@ export class FileSessionStore implements SessionStore {
 /**
  * Rebuilds a transcript from a session file. The authoritative message list is
  * the one carried by the last `agent_end`, so a partially written file degrades
- * to the last completed run instead of failing to load.
+ * to the last completed run instead of failing to load. A session_clear record
+ * resets that snapshot even if there is no subsequent run.
  */
 export function parseTranscript(
   contents: string,
@@ -206,6 +211,8 @@ export function parseTranscript(
 
     if (record.type === "session") {
       header = toHeader(record);
+    } else if (record.type === "session_clear") {
+      messages = [];
     } else if (record.type === "agent_start" && "prompt" in record) {
       if (typeof record.prompt === "string") {
         prompts.push(record.prompt);
