@@ -18,6 +18,7 @@ const menuKeys = new Map<string, "up" | "down" | "enter" | "escape" | "tab">([
 export class TuiInput extends PassThrough {
   readonly isTTY: boolean;
   private busy = false;
+  private approvalMode = false;
   private submitted = false;
   private afterCR = false;
   private escapePrefix = Buffer.alloc(0);
@@ -40,6 +41,11 @@ export class TuiInput extends PassThrough {
 
   setBusy(busy: boolean): void {
     this.busy = busy;
+  }
+
+  /** While approving, y/n/Escape answer immediately without Enter. */
+  setApprovalMode(enabled: boolean): void {
+    this.approvalMode = enabled;
   }
 
   setMenuControls(beforeEdit: () => void, menuKey: (key: "up" | "down" | "enter" | "escape" | "tab") => boolean): void {
@@ -78,6 +84,16 @@ export class TuiInput extends PassThrough {
     if (this.afterCR && bytes[0] === 10) bytes = bytes.subarray(1);
     this.afterCR = false;
     if (bytes.length === 0) return;
+    if (this.approvalMode && !this.submitted) {
+      // Single-key approval; ignore extra pasted bytes and always allow Ctrl+C.
+      if (bytes.includes(3)) { this.write("\u0003"); return; }
+      const first = bytes[0];
+      if (first === 121 || first === 89 || first === 110 || first === 78 || first === 27) {
+        this.submitted = true;
+        this.write(first === 121 || first === 89 ? "y\r" : "n\r");
+        return;
+      }
+    }
     if (this.busy || this.submitted) {
       if (bytes.includes(3)) this.write("\u0003");
       return;
