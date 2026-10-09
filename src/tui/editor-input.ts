@@ -15,12 +15,17 @@ export class EditorController {
   private escapeTimer?: NodeJS.Timeout;
   private completed = false;
   private previousCR = false;
+  private searching = false;
+  private searchQuery = "";
+  private searchOffset = 0;
+  readonly exitRequested = { value: false };
   private readonly maxWidth: () => number;
   private readonly maxHeight: () => number;
 
   constructor(
     output: EditorOutput,
     private readonly done: (text: string | undefined) => void,
+    private readonly options: { readonly submitOnEnter?: boolean; readonly history?: readonly string[] } = {},
   ) {
     this.painter = new EditorPainter(output);
     this.maxWidth = () => Math.max(8, output.columns ?? 80);
@@ -44,6 +49,19 @@ export class EditorController {
     this.pending += this.decoder.write(chunk);
     this.parse();
     if (!this.completed) this.draw();
+  }
+
+  private updateSearch(): void {
+    const history = this.options.history ?? [];
+    const matches = [...history].reverse().filter(value =>
+      value.toLowerCase().includes(this.searchQuery.toLowerCase()));
+    if (matches.length === 0) {
+      this.document.warning = `History: no match for ${this.searchQuery}`;
+      return;
+    }
+    this.searchOffset = Math.min(this.searchOffset, matches.length - 1);
+    const match = matches[this.searchOffset] ?? "";
+    this.document.warning = `History ${this.searchOffset + 1}/${matches.length}: ${match.replace(/\n/g, " ↵ ").slice(0, 70)}`;
   }
 
   private parse(): void {
@@ -114,10 +132,56 @@ export class EditorController {
       }
       const char = this.pending[0] ?? "";
       this.pending = this.pending.slice(1);
+      if (this.searching) {
+        if (char === "\r" || char === "\n") {
+          const match = [...(this.options.history ?? [])].reverse().filter(value =>
+            value.toLowerCase().includes(this.searchQuery.toLowerCase()))[this.searchOffset];
+          if (match !== undefined) this.document.loadDraft(match);
+          this.searching = false;
+          this.document.warning = "";
+        } else if (char === "\u0003" || char === "\u001b") {
+          this.searching = false;
+          this.document.warning = "";
+        } else if (char === "\u0012") {
+          this.searchOffset += 1;
+          this.updateSearch();
+        } else if (char === "\u007f" || char === "\b") {
+          this.searchQuery = this.searchQuery.slice(0, -1);
+          this.searchOffset = 0;
+          this.updateSearch();
+        } else if (char >= " ") {
+          this.searchQuery += char;
+          this.searchOffset = 0;
+          this.updateSearch();
+        }
+        continue;
+      }
       switch (char) {
         case "\u0003": // Ctrl+C cancels only this editor, not the REPL.
           this.finish(undefined);
           return;
+        case "\u0004": // Ctrl+D exits an empty default composer.
+          if (this.document.text.length === 0) {
+            this.exitRequested.value = true;
+            this.finish(undefined);
+          }
+          break;
+        case "\u0012": // Ctrl+R: interactive reverse search through user prompts.
+          this.searching = true;
+          this.searchQuery = "";
+          this.searchOffset = 0;
+          this.updateSearch();
+          break;
+        case "\u001a": this.document.undo(); break; // Ctrl+Z
+        case "\u0019": this.document.redo(); break; // Ctrl+Y
+        case "\u000a": // Ctrl+J when emitted by terminals (same byte as LF).
+          if (this.options.submitOnEnter) {
+            this.finish(this.document.text.trim().length > 0 ? this.document.text : undefined);
+            return;
+          }
+          if (!this.previousCR) this.document.insert("\n");
+          this.previousCR = false;
+          break;
         case "\u0013": // Ctrl+S submits once, with no implicit shell action.
           this.finish(this.document.text.trim().length > 0 ? this.document.text : undefined);
           return;
@@ -126,12 +190,12 @@ export class EditorController {
         case "\u0008":
         case "\u007f": this.document.backspace(); break;
         case "\r":
+          if (this.options.submitOnEnter) {
+            this.finish(this.document.text.trim().length > 0 ? this.document.text : undefined);
+            return;
+          }
           this.document.insert("\n");
           this.previousCR = true;
-          break;
-        case "\n":
-          if (!this.previousCR) this.document.insert("\n");
-          this.previousCR = false;
           break;
         case "\t":
           this.document.insert("  ");
