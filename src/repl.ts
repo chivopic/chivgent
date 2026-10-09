@@ -376,8 +376,16 @@ export async function runRepl(options: ReplOptions): Promise<number> {
   const menu = tuiInput === undefined ? undefined : new InputMenu(readline, options.output);
   let dismissedLine: string | undefined;
   let refreshQueued = false;
+  const menuPriority = ["provider", "model", "editor", "review", "help"];
   const commands: readonly MenuItem[] = [...BUILT_IN_COMMANDS, ...(options.extensionCommands ?? []).map((command) => command.name)]
     .filter((name, index, all) => all.indexOf(name) === index)
+    .sort((a, b) => {
+      const rank = (name: string): number => {
+        const index = menuPriority.indexOf(name);
+        return index < 0 ? menuPriority.length : index;
+      };
+      return rank(a) - rank(b);
+    })
     .map((name) => ({ value: name, label: `/${name}${name === "provider" ? "  ·  choose a Provider" : name === "model" ? "  ·  change model" : ""}` }));
   const menuItems = (line: string): readonly MenuItem[] => {
     if (line === "/provider" || line.startsWith("/provider ")) {
