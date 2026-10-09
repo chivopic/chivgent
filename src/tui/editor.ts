@@ -1,4 +1,4 @@
-import { displayWidth, fitLine, fitLineTail, terminalText } from "./text.js";
+import { displayWidth, fitLine, terminalText } from "./text.js";
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const MAX_BYTES = 64 * 1024;
