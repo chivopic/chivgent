@@ -5,14 +5,14 @@ import { WRITE_SYSTEM_PROMPT } from "../src/prompts.js";
 import { assistant, FakeLLMClient } from "./fakes.js";
 
 describe("local CLI session setup", () => {
-  it("only exposes read tools by default", () => {
+  it("exposes read tools and the permission-free plan control by default", () => {
     const session = createLocalSession({
       options: parseCliArgs([], {}),
       cwd: "/workspace",
       llm: new FakeLLMClient([]),
       restored: { resumed: false },
     });
-    expect(session.toolNames).toEqual(["list_files", "search_text", "read_file"]);
+    expect(session.toolNames).toEqual(["list_files", "search_text", "read_file", "update_plan"]);
   });
 
   it("adds write and shell tools only when enabled", () => {
@@ -23,7 +23,7 @@ describe("local CLI session setup", () => {
       restored: { resumed: false },
     });
     expect(session.toolNames).toEqual([
-      "list_files", "search_text", "read_file", "write_file", "edit_file", "apply_patch", "bash",
+      "list_files", "search_text", "read_file", "update_plan", "write_file", "edit_file", "apply_patch", "bash",
     ]);
   });
 
