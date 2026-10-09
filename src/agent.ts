@@ -17,6 +17,7 @@ import type {
   AppliedCompaction,
   ContextManager,
 } from "./context/context-manager.js";
+import type { ProjectInstructionsProvider } from "./context/project-instructions.js";
 
 export interface AgentOptions {
   readonly systemPrompt: string;
@@ -32,6 +33,8 @@ export interface AgentOptions {
    * Decides what the model sees each turn. Omit to send the whole transcript.
    */
   readonly contextManager?: ContextManager;
+  /** Scoped repository guidance, read separately from trusted system prompts. */
+  readonly projectInstructions?: ProjectInstructionsProvider;
 }
 
 export interface AgentRunOptions {
@@ -67,6 +70,7 @@ interface RunState {
   usage?: UsageTotal;
   continuation?: LLMContinuation;
   compaction?: AppliedCompaction;
+  projectInstructionsText?: string;
 }
 
 export class AgentProtocolError extends Error {
@@ -86,6 +90,7 @@ export class Agent {
   private readonly onEvent?: AgentEventListener;
   private readonly streaming: boolean;
   private readonly contextManager?: ContextManager;
+  private readonly projectInstructions?: ProjectInstructionsProvider;
 
   constructor(options: AgentOptions) {
     if (!Number.isSafeInteger(options.maxTurns) || options.maxTurns <= 0) {
@@ -108,6 +113,9 @@ export class Agent {
     this.streaming = options.streaming ?? true;
     if (options.contextManager !== undefined) {
       this.contextManager = options.contextManager;
+    }
+    if (options.projectInstructions !== undefined) {
+      this.projectInstructions = options.projectInstructions;
     }
   }
 
@@ -281,9 +289,19 @@ export class Agent {
     signal: AbortSignal | undefined,
   ): ReturnType<LLMClient["complete"]> {
     const messages = await this.buildContext(state, signal);
+    const projectText = await this.projectInstructions?.load(state.messages);
+    if (projectText !== state.projectInstructionsText) {
+      // A chained Provider holds its own prompt history; discard that chain
+      // when a new scoped AGENTS.md becomes applicable or a document changes.
+      delete state.continuation;
+      state.projectInstructionsText = projectText;
+    }
+    const modelMessages: readonly Message[] = projectText === undefined
+      ? messages
+      : [{ role: "user", content: projectText }, ...messages];
     const request = {
       systemPrompt: this.systemPrompt,
-      messages,
+      messages: modelMessages,
       tools: this.toolDefinitions,
       ...(state.continuation === undefined
         ? {}
