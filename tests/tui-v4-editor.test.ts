@@ -42,7 +42,7 @@ describe("default inline editor key contract", () => {
 
   it("submits on Enter, inserts a multiline newline on Ctrl+O", () => {
     const { controller, results } = create();
-    controller.receive(Buffer.from("first\u000osecond\r"));
+    controller.receive(Buffer.from("first\u000fsecond\r"));
     expect(results).toEqual(["first\nsecond"]);
   });
 
