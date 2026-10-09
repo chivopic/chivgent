@@ -314,6 +314,7 @@ async function main(argv: readonly string[]): Promise<number> {
       return await runRepl({
         session,
         ...(shellApproval === undefined ? {} : { shellApproval }),
+        ...(liveRegion === undefined ? {} : { liveRegion }),
         signIn: providerControl,
         providers: providerControl,
         input: process.stdin,
