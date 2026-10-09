@@ -519,6 +519,8 @@ manual so the default test suite never consumes credits.
 
 ## Evals
 
+**Parallel reads:** Consecutive built-in file reads, listings, and searches now run concurrently (at most 4). Writes, Docker shell commands, and third-party extensions stay exclusive, with ordered results. See [tool scheduling](docs/parallel-read-tools.md).
+
 **Repository guidance:** chivgent supports scoped `AGENTS.md` and `AGENTS.override.md`; see [discovery and compaction behavior](docs/scoped-agents-md.md).
 
 **Patch edits:** `--allow-writes` now enables an `apply_patch` tool for strict, multi-file edits; see [the patch format guide](docs/apply-patch.md) for its supported subset and rollback limitations.
