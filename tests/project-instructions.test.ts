@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -129,6 +129,28 @@ describe("scoped AGENTS.md discovery", () => {
     expect(later?.messages[0]?.content).toContain("Scoped source convention");
     // Provider server-side chaining must be discarded when the guidance changes.
     expect(later).not.toHaveProperty("continuation");
+  });
+
+  it("defers a first write into a nested directory until the model can see its rules", async () => {
+    const cwd = await temp();
+    await mkdir(path.join(cwd, "src"));
+    await writeFile(path.join(cwd, "src/AGENTS.md"), "Read the source before editing.");
+    const llm = new FakeLLMClient([
+      assistant("", [{ id: "write-one", name: "write_file", arguments: { path: "src/a.ts", contents: "unsafe attempt" } }]),
+      assistant("I will inspect the scoped rules first."),
+    ]);
+    const session = createLocalSession({
+      options: parseCliArgs(["--allow-writes"], {}),
+      cwd, llm, restored: { resumed: false },
+    });
+    await session.prompt("Create src/a.ts");
+    expect(session.messages.find(message => message.role === "tool")).toMatchObject({
+      role: "tool",
+      isError: true,
+      content: expect.stringContaining("No files were changed"),
+    });
+    await expect(readFile(path.join(cwd, "src/a.ts"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(llm.requests[1]?.messages[0]?.content).toContain("Read the source before editing.");
   });
 
   it("keeps unchanged guidance across turns without invalidating continuation", async () => {
