@@ -4,6 +4,7 @@ import { callTarget } from "../tools/target.js";
 import { fitLine, terminalText } from "./text.js";
 
 const MAX_DIFF_LINES = 6;
+const MAX_DIFF_SNIPPET_LINES = 4;
 const MAX_DETAIL_LINE = 120;
 
 function short(value: string, width: number): string {
@@ -11,8 +12,11 @@ function short(value: string, width: number): string {
 }
 
 function briefFailure(result: ToolResultMessage): string {
-  const line = result.content.split("\n").find(line => line.trim().length > 0) ?? "failed";
-  return short(line, 100);
+  const lines = result.content.split("\n").filter(line => line.trim().length > 0);
+  const status = result.toolName === "bash"
+    ? lines.findLast(line => /(?:Command exited with code|timed out|unavailable)/i.test(line))
+    : undefined;
+  return short(status ?? lines[0] ?? "failed", 100);
 }
 
 function isReadTool(name: string): boolean {
@@ -65,8 +69,19 @@ function patchDetails(call: ToolCall, width: number): readonly string[] {
       }
     }
     const header = `    ${changes.length} file${changes.length === 1 ? "" : "s"} · +${added}/-${removed}`;
-    return [short(header, width), ...results.slice(0, MAX_DIFF_LINES).map(line => short(line, width)),
-      ...(results.length > MAX_DIFF_LINES ? [short(`    … and ${results.length - MAX_DIFF_LINES} more files`, width)] : [])];
+    const diff = args.patch.split("\n").filter(line => line.startsWith("+") || line.startsWith("-"));
+    const snippet = diff.slice(0, MAX_DIFF_SNIPPET_LINES).map(line => short(`      ${line}`, width));
+    return [
+      short(header, width),
+      ...results.slice(0, MAX_DIFF_LINES).map(line => short(line, width)),
+      ...(results.length > MAX_DIFF_LINES
+        ? [short(`    … and ${results.length - MAX_DIFF_LINES} more files`, width)]
+        : []),
+      ...snippet,
+      ...(diff.length > MAX_DIFF_SNIPPET_LINES
+        ? [short(`      … ${diff.length - MAX_DIFF_SNIPPET_LINES} more diff lines`, width)]
+        : []),
+    ];
   } catch {
     return [];
   }
@@ -107,6 +122,14 @@ export function toolTranscript(
     lines.push(recordLine(call, result, width));
     if (!result.isError && result.toolName === "apply_patch" && call !== undefined) {
       lines.push(...patchDetails(call, width));
+    }
+    if (!result.isError && result.toolName === "bash") {
+      const candidates = result.content.split("\n").filter(line => line.trim().length > 0);
+      const summary = candidates.findLast(line => /(?:tests? passed|passing|test suites|build succeeded|successfully)/i.test(line))
+        ?? candidates.at(-1);
+      if (summary !== undefined && summary.trim() !== "(no output)") {
+        lines.push(short(`    ↳ ${summary}`, width));
+      }
     }
     if (!result.isError && result.toolName === "edit_file" && call?.arguments !== null &&
         typeof call?.arguments === "object" && !Array.isArray(call.arguments)) {
@@ -151,6 +174,7 @@ export function colorizeActivity(lines: readonly string[], enabled: boolean): st
     const code = trimmed.startsWith("!") ? "31"
       : trimmed.startsWith("✓") || trimmed.startsWith("+") ? "32"
       : trimmed.startsWith("~") ? "36"
+      : trimmed.startsWith("-") ? "31"
       : "2";
     return `\u001b[${code}m${line}\u001b[0m`;
   };
