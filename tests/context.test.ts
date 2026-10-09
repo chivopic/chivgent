@@ -270,6 +270,27 @@ describe("Compactor", () => {
     expect(state.modifiedFiles).toEqual(["src/a.ts", "src/b.ts"]);
   });
 
+  it("retains decisions and pending work until completion is explicit", async () => {
+    const previous: CompactionState = {
+      summary: "past work",
+      readFiles: [],
+      modifiedFiles: [],
+      decisions: ["Keep existing API stable"],
+      pendingTasks: ["add tests", "write docs"],
+    };
+    const compactor = new Compactor(summarisingClient(
+      '{"summary":"tests done","decisions":["avoid breaking changes"],"pendingTasks":["review CI"],"completedTasks":["add tests"]}',
+    ));
+    const { state } = await compactor.compact([user("Finished tests and started review")], undefined, previous);
+    expect(state.decisions).toEqual(["Keep existing API stable", "avoid breaking changes"]);
+    expect(state.pendingTasks).toEqual(["write docs", "review CI"]);
+
+    const next = new Compactor(summarisingClient('{"summary":"new turn"}'));
+    const { state: after } = await next.compact([user("Proceed")], undefined, state);
+    expect(after.pendingTasks).toEqual(["write docs", "review CI"]);
+    expect(after.decisions).toEqual(["Keep existing API stable", "avoid breaking changes"]);
+  });
+
   it("retains verified file facts across repeated compactions", async () => {
     const compactor = new Compactor(summarisingClient('{"summary":"new summary"}'));
     const previous: CompactionState = {
