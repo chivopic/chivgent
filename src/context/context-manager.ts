@@ -43,6 +43,8 @@ export interface BuildOptions {
   /** The compaction already in force, so it is not recomputed every turn. */
   readonly previous?: AppliedCompaction;
   readonly signal?: AbortSignal;
+  /** Extra uncompactable project guidance the caller prepends to the request. */
+  readonly prefixMessages?: readonly Message[];
 }
 
 export interface BuiltContext {
@@ -110,7 +112,8 @@ export class ContextManager {
       previous === undefined
         ? messages
         : [summaryMessage(previous.state), ...messages.slice(previous.splitIndex)];
-    const estimatedTokens = this.estimator.estimateMessages(effective);
+    const prefixTokens = this.estimator.estimateMessages(options.prefixMessages ?? []);
+    const estimatedTokens = this.estimator.estimateMessages(effective) + prefixTokens;
 
     if (this.compactor === undefined || estimatedTokens <= this.budget) {
       return {
@@ -137,7 +140,7 @@ export class ContextManager {
     const tail = effective.slice(cut);
     const { state, usage } = await this.compactor.compact(head, options.signal, previous?.state);
     const compactedMessages = [summaryMessage(state), ...tail];
-    const tokensAfter = this.estimator.estimateMessages(compactedMessages);
+    const tokensAfter = this.estimator.estimateMessages(compactedMessages) + prefixTokens;
 
     // Map the cut back onto the full transcript, allowing for the summary
     // message that the previous compaction injected at the front.
