@@ -14,6 +14,8 @@ export interface EvalOptions {
   readonly capabilities: readonly Capability[];
   readonly providerArgs: readonly string[];
   readonly help: boolean;
+  /** Validate and fingerprint the suite without credentials or model calls. */
+  readonly dryRun: boolean;
 }
 
 /**
@@ -32,6 +34,7 @@ export function parseEvalArgs(argv: readonly string[]): EvalOptions {
   let directory = "evals";
   let jsonPath: string | undefined;
   let help = false;
+  let dryRun = false;
 
   const value = (index: number, option: string): string => {
     const next = argv[index + 1];
@@ -45,6 +48,8 @@ export function parseEvalArgs(argv: readonly string[]): EvalOptions {
     const argument = argv[index];
     if (argument === "--help" || argument === "-h") {
       help = true;
+    } else if (argument === "--dry-run") {
+      dryRun = true;
     } else if (argument === "--task") {
       tasks.push(value(index, "--task"));
       index += 1;
@@ -83,5 +88,6 @@ export function parseEvalArgs(argv: readonly string[]): EvalOptions {
     capabilities,
     providerArgs,
     help,
+    dryRun,
   };
 }

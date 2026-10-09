@@ -14,6 +14,7 @@ import { formatFailures, formatTable, toJsonReport } from "./report.js";
 import { MissingCapabilityError, runTask, type TaskResult } from "./runner.js";
 import { loadTasks, TaskError, type Capability, type Task } from "./task.js";
 import { parseEvalArgs, type EvalOptions } from "./parse-args.js";
+import { buildBaselineManifest, describeSuite, gitRevision } from "./baseline.js";
 
 const HELP = `chivgent evals ${VERSION}
 
@@ -21,6 +22,7 @@ Usage:
   npm run eval -- [options]
 
 Options:
+  --dry-run          Validate and fingerprint the suite; no API calls
   --task NAME        Run only this task (repeatable)
   --attempts N       Override the attempts each task declares
   --dir PATH         Task directory (default: evals)
@@ -101,6 +103,32 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 
   const cliOptions = parseCliArgs([...options.providerArgs], process.env);
+  // Capture the exact task definitions and fixture bytes before spending tokens.
+  const suite = await describeSuite(tasks);
+  const baseline = buildBaselineManifest(suite, await gitRevision(), {
+    provider: cliOptions.provider,
+    model: cliOptions.model ?? "unknown",
+    capabilities: options.capabilities,
+    ...(options.attempts === undefined ? {} : { attemptsOverride: options.attempts }),
+    systemPrompts: tasks.map((task) => `${task.name}\n${buildSystemPrompt(task.capabilities)}`),
+  });
+
+  if (options.dryRun) {
+    const preflight = { schemaVersion: 1, kind: "eval-preflight", baseline };
+    const json = `${JSON.stringify(preflight, null, 2)}\n`;
+    process.stdout.write(json);
+    if (options.jsonPath !== undefined) {
+      await writeFile(options.jsonPath, json);
+      process.stderr.write(`Wrote ${options.jsonPath} (no model calls)\n`);
+    }
+    return 0;
+  }
+
+  if (baseline.attemptedTasks.length === 0) {
+    process.stderr.write("No runnable tasks: grant required capabilities with --allow-writes and/or --allow-shell.\n");
+    return 1;
+  }
+
   const llm = await createConfiguredClient(cliOptions);
   if (typeof llm === "string") {
     // The same configuration message the main CLI gives, rather than a run of
@@ -111,7 +139,7 @@ async function main(argv: readonly string[]): Promise<number> {
 
   const startedAt = new Date().toISOString();
   process.stderr.write(
-    `Evaluating ${cliOptions.provider}/${cliOptions.model ?? "?"} on ${tasks.length} task(s).\n\n`,
+    `Evaluating ${cliOptions.provider}/${cliOptions.model ?? "?"} on ${baseline.attemptedTasks.length}/${tasks.length} task(s), suite ${suite.suiteSha256.slice(0, 12)}.\n\n`,
   );
 
   const results: TaskResult[] = [];
@@ -151,6 +179,7 @@ async function main(argv: readonly string[]): Promise<number> {
       model: cliOptions.model ?? "unknown",
       version: VERSION,
       startedAt,
+      baseline,
     });
     await writeFile(options.jsonPath, `${JSON.stringify(report, null, 2)}\n`);
     process.stderr.write(`\nWrote ${options.jsonPath}\n`);

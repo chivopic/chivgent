@@ -37,5 +37,8 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Eval preflight (no API calls)
+        run: npm run eval -- --dry-run --allow-writes --allow-shell
+
       - name: Package dry run
         run: npm pack --dry-run

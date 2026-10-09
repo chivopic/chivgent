@@ -1,0 +1,73 @@
+{
+  "name": "rename-cross-module",
+  "prompt": "Rename the exported function formatPrice to formatAmount throughout this TypeScript project. Update all imports and calls, including the reference inside formatPrices. Keep the formatPrices function name unchanged. Do not change rounding.ts. Use minimal edits, not whole-file rewrites.",
+  "capabilities": [
+    "writes"
+  ],
+  "attempts": 5,
+  "maxTurns": 14,
+  "graders": [
+    {
+      "type": "file-contains",
+      "path": "src/money/format.ts",
+      "text": "function formatAmount("
+    },
+    {
+      "type": "file-contains",
+      "path": "src/money/format.ts",
+      "text": "function formatPrices("
+    },
+    {
+      "type": "file-contains",
+      "path": "src/money/format.ts",
+      "text": "map(formatAmount)"
+    },
+    {
+      "type": "file-excludes",
+      "path": "src/money/format.ts",
+      "text": "function formatPrice("
+    },
+    {
+      "type": "file-contains",
+      "path": "src/cart/checkout.ts",
+      "text": "formatAmount("
+    },
+    {
+      "type": "file-excludes",
+      "path": "src/cart/checkout.ts",
+      "text": "formatPrice"
+    },
+    {
+      "type": "file-contains",
+      "path": "src/receipt.ts",
+      "text": "formatAmount("
+    },
+    {
+      "type": "file-excludes",
+      "path": "src/receipt.ts",
+      "text": "formatPrice"
+    },
+    {
+      "type": "file-contains",
+      "path": "src/index.ts",
+      "text": "formatAmount("
+    },
+    {
+      "type": "file-excludes",
+      "path": "src/index.ts",
+      "text": "formatPrice"
+    },
+    {
+      "type": "file-unchanged",
+      "path": "src/money/rounding.ts"
+    },
+    {
+      "type": "used-tool",
+      "name": "edit_file"
+    },
+    {
+      "type": "not-used-tool",
+      "name": "write_file"
+    }
+  ]
+}

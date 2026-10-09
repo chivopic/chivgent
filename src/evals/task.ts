@@ -81,6 +81,7 @@ const TOOL_NAME_GRADERS = new Set([
   "not-used-tool",
   "tool-succeeded",
   "tool-never-failed",
+  "max-tool-calls",
 ]);
 
 /**

@@ -519,6 +519,9 @@ manual so the default test suite never consumes credits.
 
 ## Evals
 
+For a reproducible suite fingerprint and credential-free validation, see [the eval baseline guide](docs/eval-baseline-guide.md). Run `npm run eval -- --dry-run --allow-writes --allow-shell` before recording model results. Missing token usage is reported as unknown, not zero.
+
+
 The 300-odd unit tests check that the code runs the way it was written. They say
 nothing about whether this is a good agent. `npm run eval` answers that:
 

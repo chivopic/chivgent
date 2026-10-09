@@ -98,6 +98,12 @@ describe("task parsing", () => {
     ).toThrow(/unknown capability/);
   });
 
+  it("rejects an impossible max-tool-calls grader", () => {
+    expect(() => parseTask({ ...valid, graders: [
+      { type: "max-tool-calls", name: "bash", count: 2 },
+    ] }, "/d", "/f")).toThrow(/never grants/);
+  });
+
   it("rejects a nonsensical attempt count", () => {
     expect(() => parseTask({ ...valid, attempts: 0 }, "/d", "/f")).toThrow(/attempts/);
     expect(() => parseTask({ ...valid, attempts: 1000 }, "/d", "/f")).toThrow(/attempts/);
@@ -697,10 +703,10 @@ describe("report", () => {
       startedAt: "2026-09-06T00:00:00.000Z",
     }) as Record<string, any>;
 
-    expect(json.schemaVersion).toBe(1);
+    expect(json.schemaVersion).toBe(2);
     expect(json.tasks[0].passRate).toBe(0.5);
     expect(json.tasks[0].attempts).toHaveLength(2);
-    expect(json.overall).toEqual({ passed: 1, total: 2, totalTokens: 0 });
+    expect(json.overall).toEqual({ passed: 1, total: 2, totalTokens: null, missingUsageAttempts: 2 });
   });
 });
 
@@ -1071,6 +1077,13 @@ describe("eval CLI arguments", () => {
       "--api-key",
       "sk-x",
     ]);
+  });
+
+  it("accepts a credential-free --dry-run", () => {
+    const options = parseEvalArgs(["--dry-run", "--json", "suite.json"]);
+    expect(options.dryRun).toBe(true);
+    expect(options.jsonPath).toBe("suite.json");
+    expect(parseEvalArgs([]).dryRun).toBe(false);
   });
 
   it("grants capabilities explicitly", () => {
