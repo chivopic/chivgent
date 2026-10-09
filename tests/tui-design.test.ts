@@ -123,7 +123,7 @@ describe("TUI activity presentation", () => {
     }, 2_000);
     expect(state.run?.completedTools).toBe(1);
     expect(state.run?.failedTools).toBe(1);
-    expect(view(state, { width: 110, now: 3_000 }).at(-1)).toContain("1 done, 1 failed");
+    expect(view(state, { width: 110, now: 3_000 }).at(-1)).toContain("0 ok, 1 failed");
     expect(view(state, { width: 20, now: 3_000 }).at(-1)).toContain("^C");
   });
 });
