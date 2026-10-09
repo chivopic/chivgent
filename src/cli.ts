@@ -273,6 +273,7 @@ async function main(argv: readonly string[]): Promise<number> {
         width: () => terminalWidth(process.stderr),
         height: () => process.stderr.rows || 24,
         answerStream: process.stdout,
+        markdown: process.stdout.isTTY === true && process.env.TERM !== "dumb",
         color: process.stderr.isTTY === true && process.env.NO_COLOR === undefined && process.env.TERM !== "dumb",
       })
     : undefined;
