@@ -7,6 +7,7 @@ import {
   SESSION_FORMAT_VERSION,
   type SessionHeader,
   type SessionStore,
+  type SessionRecord,
 } from "./session-store.js";
 
 export interface AgentSessionOptions {
@@ -83,6 +84,7 @@ export class AgentSession {
   /** Drops the transcript but keeps the session id and its log. */
   clear(): void {
     this.transcript = [];
+    this.record({ type: "session_clear" });
   }
 
   async prompt(
@@ -126,7 +128,7 @@ export class AgentSession {
     this.record(event);
   }
 
-  private record(event: AgentEvent): void {
+  private record(event: SessionRecord): void {
     if (
       this.store === undefined ||
       !this.headerWritten ||
