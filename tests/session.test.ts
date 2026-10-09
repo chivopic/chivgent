@@ -110,6 +110,34 @@ describe("AgentSession", () => {
     ]);
   });
 
+  it("restores an empty transcript after clear without another prompt", async () => {
+    const home = await temporaryHome();
+    const store = new FileSessionStore(home);
+    const session = createSession(new FakeLLMClient([assistant("Before clear.")]), {
+      store,
+      id: "cleared-session",
+    });
+
+    await session.prompt("Old question");
+    session.clear();
+    await store.flush();
+
+    expect((await store.read("cleared-session"))?.messages).toEqual([]);
+    expect((await store.read("cleared-session"))?.prompts).toEqual(["Old question"]);
+
+    const resumed = createSession(new FakeLLMClient([assistant("Fresh answer.")]), {
+      store,
+      id: "cleared-session",
+      resumed: true,
+      messages: (await store.read("cleared-session"))?.messages,
+    });
+    await resumed.prompt("Fresh question");
+    expect(resumed.messages).toEqual([
+      { role: "user", content: "Fresh question" },
+      { role: "assistant", content: "Fresh answer.", toolCalls: [] },
+    ]);
+  });
+
   it("delivers events to every subscriber and survives a failing one", async () => {
     const llm = new FakeLLMClient([assistant("Answer.")]);
     const session = createSession(llm);
