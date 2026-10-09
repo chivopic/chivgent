@@ -87,7 +87,7 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
         const lines = transcriptLines(options.answerStream === undefined ? event : {
           ...event,
           message: { ...event.message, content: "" },
-        });
+        }, Math.max(1, options.width() - 1));
         if (lines.length > 0) {
           options.stream.write(`${colorizeActivity(lines, options.color === true)}\n`);
         }
