@@ -519,6 +519,8 @@ manual so the default test suite never consumes credits.
 
 ## Evals
 
+**Agent progress plans:** On complex tasks the Agent can use Codex-inspired `update_plan` to publish a validated, tracked checklist without gaining new write or Shell permissions. See [Agent plan tracking](docs/agent-plan-progress.md).
+
 **TUI V5:** The default editor has an inline slash command menu, optional mouse caret/drag support, and explicitly approved `/gitdiff [--staged]` for read-only tracked worktree review. See [TUI V5 guide](docs/tui-v5.md).
 
 **TUI V4:** In `--tui`, the cursor-addressable composer is now the default. Enter submits; Ctrl+O adds a line; Ctrl+Z/Y undo/redo; Ctrl+R searches session history. See [TUI V4 guide](docs/tui-v4.md).
