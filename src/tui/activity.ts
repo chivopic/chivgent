@@ -156,3 +156,15 @@ export function colorizeActivity(lines: readonly string[], enabled: boolean): st
   };
   return safe.map(paint).join("\n");
 }
+
+/**
+ * Review must show the *entire* command. Truncating potentially dangerous
+ * suffixes while still offering "y" would make the approval meaningless.
+ */
+export function commandReviewable(command: string, columns: number): boolean {
+  if (command !== terminalText(command)) return false;
+  const width = Math.max(12, columns - 1);
+  const lines = command.split("\n");
+  return lines.length <= 8 &&
+    lines.every(line => fitLine(`  │ ${line}`, width) === `  │ ${line}`);
+}
