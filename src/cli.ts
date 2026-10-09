@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import process from "node:process";
-import type { AgentOptions } from "./agent.js";
 import {
   helpText,
   parseCliArgs,
@@ -9,23 +8,17 @@ import {
   type CliOptions,
   type Provider,
 } from "./cli-options.js";
-import type { LLMClient } from "./llm.js";
 import { createEventRenderer, createJsonEventWriter } from "./render.js";
 import { welcome } from "./tui/welcome.js";
 import { createLiveRegion, terminalWidth } from "./tui/live.js";
 import { runRepl } from "./repl.js";
 import { AgentSession } from "./session.js";
+import { createLocalSession } from "./cli-runtime.js";
 import {
   defaultSessionHome,
   FileSessionStore,
   type SessionStore,
 } from "./session-store.js";
-import { ListFilesTool } from "./tools/list-files.js";
-import { ReadFileTool } from "./tools/read-file.js";
-import { SearchTextTool } from "./tools/search-text.js";
-import { WriteFileTool } from "./tools/write-file.js";
-import { EditFileTool } from "./tools/edit-file.js";
-import { BashTool } from "./tools/bash.js";
 import { killTrackedChildren } from "./shell/process.js";
 import { resolveShellConfig } from "./shell/config.js";
 import { ShellUnavailableError } from "./shell/types.js";
@@ -46,17 +39,9 @@ import {
 } from "./remote/socket-path.js";
 import { runRemoteRepl } from "./remote/repl.js";
 import type { Message } from "./messages.js";
-import { LocalWorkspace } from "./workspace.js";
 import { createConfiguredClient } from "./providers/client.js";
 import { DeferredLLMClient } from "./providers/deferred-client.js";
 import { InteractiveProvider } from "./providers/interactive.js";
-import {
-  SHELL_SYSTEM_PROMPT,
-  SYSTEM_PROMPT,
-  WRITE_SYSTEM_PROMPT,
-} from "./prompts.js";
-import { ContextManager } from "./context/context-manager.js";
-import { Compactor } from "./context/compaction.js";
 
 const EXIT_INTERRUPTED = 130;
 
@@ -81,21 +66,6 @@ function installShellCleanup(): void {
   }
 }
 
-function buildSystemPrompt(
-  options: CliOptions,
-  contributions: readonly string[] = [],
-): string {
-  const sections = [SYSTEM_PROMPT];
-  if (options.allowWrites) {
-    sections.push(WRITE_SYSTEM_PROMPT);
-  }
-  if (options.allowShell) {
-    sections.push(SHELL_SYSTEM_PROMPT);
-  }
-  sections.push(...contributions);
-  return sections.join("\n");
-}
-
 const BUILT_IN_TOOL_NAMES = [
   "list_files",
   "search_text",
@@ -105,12 +75,6 @@ const BUILT_IN_TOOL_NAMES = [
   "bash",
 ] as const;
 
-/**
- * Resolves trust and loads whatever extensions are allowed.
- *
- * Trust is decided before a single module is imported, because importing is
- * already execution.
- */
 /** Why --tui cannot run here, or undefined when it can. */
 function tuiRefusal(
   options: CliOptions,
@@ -131,6 +95,7 @@ function tuiRefusal(
   return undefined;
 }
 
+/** Check project trust before importing any extension code. */
 async function setupExtensions(
   options: CliOptions,
   cwd: string,
@@ -293,45 +258,12 @@ async function main(argv: readonly string[]): Promise<number> {
     installShellCleanup();
   }
 
-  const readOnlyTools = [
-    new ListFilesTool(),
-    new SearchTextTool(),
-    new ReadFileTool(),
-  ];
-  const contextManager = new ContextManager({
-    contextWindow: options.contextWindow,
-    ...(options.compaction ? { compactor: new Compactor(llm) } : {}),
-    onCompaction: ({ droppedMessages, tokensBefore, tokensAfter }) => {
-      if (!options.quiet) {
-        process.stderr.write(
-          `Compacted ${droppedMessages} earlier messages (~${tokensBefore} -> ~${tokensAfter} tokens).\n`,
-        );
-      }
-    },
-  });
-  const agentOptions: Omit<AgentOptions, "onEvent"> = {
-    systemPrompt: buildSystemPrompt(
-      options,
-      registry?.systemPromptContributions ?? [],
-    ),
-    maxTurns: options.maxTurns,
-    llm,
-    tools: [
-      ...readOnlyTools,
-      ...(options.allowWrites ? [new WriteFileTool(), new EditFileTool()] : []),
-      ...(options.allowShell ? [new BashTool({ cwd })] : []),
-      ...(registry?.registeredTools ?? []).map((entry) => entry.tool),
-    ],
-    workspace: new LocalWorkspace(cwd, { allowWrites: options.allowWrites }),
-    streaming: options.stream,
-    contextManager,
-  };
-  const session = new AgentSession({
-    agent: agentOptions,
+  const session = createLocalSession({
+    options,
     cwd,
-    resumed: restored.resumed,
-    ...(restored.id === undefined ? {} : { id: restored.id }),
-    ...(restored.messages === undefined ? {} : { messages: restored.messages }),
+    llm,
+    ...(registry === undefined ? {} : { extensions: registry }),
+    restored,
     ...(store === undefined ? {} : { store }),
   });
 
