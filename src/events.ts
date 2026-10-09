@@ -5,6 +5,7 @@ import type {
 } from "./messages.js";
 import type { Usage } from "./llm.js";
 import type { UsageTotal } from "./providers/usage.js";
+import type { PlanUpdate } from "./tools/update-plan.js";
 
 /**
  * Terminal state of one Agent run. `aborted` is reported, never thrown, so a
@@ -33,6 +34,7 @@ export type AgentEvent =
   | ToolExecutionStartEvent
   | ToolExecutionUpdateEvent
   | ToolExecutionEndEvent
+  | PlanUpdateEvent
   | TurnEndEvent
   | AgentEndEvent;
 
@@ -104,6 +106,12 @@ export interface ToolExecutionEndEvent {
   readonly toolName: string;
   readonly content: string;
   readonly isError: boolean;
+}
+
+/** An authoritative checklist snapshot from a successful update_plan tool. */
+export interface PlanUpdateEvent extends PlanUpdate {
+  readonly type: "plan_update";
+  readonly turn: number;
 }
 
 export interface TurnEndEvent {
