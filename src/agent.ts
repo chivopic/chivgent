@@ -231,7 +231,7 @@ export class Agent {
         if (isAborted(signal)) {
           return abortedResult(state);
         }
-        const result = await this.executeToolCall(toolCall, turn, signal);
+        const result = await this.executeToolCall(toolCall, turn, signal, state);
         toolResults.push(result);
         state.messages.push(result);
       }
@@ -342,6 +342,7 @@ export class Agent {
     toolCall: ToolCall,
     turn: number,
     signal: AbortSignal | undefined,
+    state: RunState,
   ): Promise<ToolResultMessage> {
     this.emit({
       type: "tool_execution_start",
@@ -361,21 +362,34 @@ export class Agent {
       };
     } else {
       try {
-        output = validateToolOutput(
-          await tool.execute(toolCall.arguments, {
-            workspace: this.workspace,
-            ...(signal === undefined ? {} : { signal }),
-            onUpdate: (content: string) => {
-              this.emit({
-                type: "tool_execution_update",
-                turn,
-                toolCallId: toolCall.id,
-                toolName: toolCall.name,
-                content,
-              });
-            },
-          }),
-        );
+        // A model may issue its very first write into a nested folder whose
+        // AGENTS.md wasn't visible at sampling time. Defer the mutation until
+        // the next LLM request has included those scoped instructions.
+        const unseenGuidance = this.projectInstructions !== undefined &&
+          ["write_file", "edit_file", "apply_patch"].includes(toolCall.name) &&
+          (await this.projectInstructions.load(state.messages)) !== state.projectInstructionsText;
+        if (unseenGuidance) {
+          output = {
+            content: "New scoped AGENTS.md instructions were discovered. No files were changed. Review the new project guidance in the next turn before retrying.",
+            isError: true,
+          };
+        } else {
+          output = validateToolOutput(
+            await tool.execute(toolCall.arguments, {
+              workspace: this.workspace,
+              ...(signal === undefined ? {} : { signal }),
+              onUpdate: (content: string) => {
+                this.emit({
+                  type: "tool_execution_update",
+                  turn,
+                  toolCallId: toolCall.id,
+                  toolName: toolCall.name,
+                  content,
+                });
+              },
+            }),
+          );
+        }
       } catch (error: unknown) {
         if (isAbortError(error) || isAborted(signal)) {
           this.emit({
