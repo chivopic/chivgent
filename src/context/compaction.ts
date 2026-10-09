@@ -32,11 +32,16 @@ export const DEFAULT_FILE_EFFECTS: FileEffectMap = {
 
 const SUMMARY_INSTRUCTIONS = `You are compacting an engineering conversation so it can continue in a smaller context.
 Reply with JSON only, no code fence, matching:
-{"summary": string, "decisions": string[], "pendingTasks": string[]}
+{"summary": string, "decisions": string[], "pendingTasks": string[], "completedTasks": string[]}
 summary: what was asked and what was established, in a few sentences.
 decisions: choices that later work must respect.
 pendingTasks: work that was identified but not finished.
+completedTasks: exact previously pending task strings demonstrably completed in this history; otherwise [] to preserve unfinished work.
 Omit file lists; they are tracked separately.`;
+
+export type ParsedSummary = Pick<CompactionState, "summary" | "decisions" | "pendingTasks"> & {
+  readonly completedTasks?: readonly string[];
+};
 
 export interface CompactorOptions {
   readonly fileEffects?: FileEffectMap;
@@ -65,8 +70,18 @@ export class Compactor {
   ): Promise<{ readonly state: CompactionState; readonly usage?: Usage }> {
     const files = collectFiles(messages, this.fileEffects, previousState);
     const { prose, usage } = await this.summarise(messages, signal);
+    // Keep durable facts from older compactions even when a summarizer
+    // overlooks them. Only an explicit completedTasks entry retires a task.
+    const completed = new Set(prose.completedTasks ?? []);
+    const state: CompactionState = {
+      summary: prose.summary,
+      decisions: [...new Set([...(previousState?.decisions ?? []), ...prose.decisions])].slice(-32),
+      pendingTasks: [...new Set([...(previousState?.pendingTasks ?? []), ...prose.pendingTasks])]
+        .filter((task) => !completed.has(task)).slice(-32),
+      ...files,
+    };
     return {
-      state: { ...prose, ...files },
+      state,
       ...(usage === undefined ? {} : { usage }),
     };
   }
@@ -75,7 +90,7 @@ export class Compactor {
     messages: readonly Message[],
     signal?: AbortSignal,
   ): Promise<{
-    readonly prose: Pick<CompactionState, "summary" | "decisions" | "pendingTasks">;
+    readonly prose: ParsedSummary;
     readonly usage?: Usage;
   }> {
     const response = await this.llm.complete({
@@ -94,7 +109,7 @@ export class Compactor {
 /** Falls back to the raw text when the model does not return usable JSON. */
 export function parseSummary(
   content: string,
-): Pick<CompactionState, "summary" | "decisions" | "pendingTasks"> {
+): ParsedSummary {
   const fallback = {
     summary: content.trim().slice(0, 4_000),
     decisions: [] as readonly string[],
@@ -126,6 +141,7 @@ export function parseSummary(
     summary,
     decisions: stringList(record.decisions),
     pendingTasks: stringList(record.pendingTasks),
+    ...(Array.isArray(record.completedTasks) ? { completedTasks: stringList(record.completedTasks) } : {}),
   };
 }
 
