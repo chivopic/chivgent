@@ -146,7 +146,7 @@ export function handleSlashCommand(
 
     case "/diff": {
       const argument = trimmed.slice("/diff".length).trim();
-      if (argument.length > 0 && !/^[1-9]\\d*$/.test(argument)) {
+      if (argument.length > 0 && !/^[1-9]\d*$/.test(argument)) {
         context.write("Usage: /diff [positive page number]\n");
         return "handled";
       }
@@ -506,6 +506,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       if (signal?.aborted) return false;
       menu?.clear();
       options.liveRegion?.pause();
+      tuiInput?.setApprovalMode(true);
       tuiInput?.setBusy(false);
       try {
         const width = terminalWidth({ columns: (options.output as typeof options.output & { columns?: number }).columns });
@@ -531,6 +532,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         }
       } finally {
         readline.setPrompt(REPL_PROMPT);
+        tuiInput?.setApprovalMode(false);
         tuiInput?.setBusy(true);
         options.liveRegion?.resume();
       }
