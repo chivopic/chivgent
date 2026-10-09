@@ -66,6 +66,8 @@ describe("mouse caret and selected text", () => {
     expect(doc.cursor).toBe(1);
     doc.placeAt(0, 3, true);
     expect(doc.selectionRange()).toEqual({ start: 1, end: 6 });
+    const selection = editorFrame(doc, 50, 16);
+    expect(selection.lines.join("\n")).toContain("\u001b[7m👩‍💻\u001b[0m");
     doc.insert("X");
     expect(doc.text).toBe("aXb\nsecond");
   });
