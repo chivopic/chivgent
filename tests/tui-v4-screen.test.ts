@@ -33,7 +33,7 @@ describe("default inline TUI composer in a real terminal", () => {
     const result = runRepl({ session, ...screen, tui: true, inlineComposer: true, stderr: screen.output });
     try {
       await vi.waitFor(() => expect(screen.bytes()).toContain("Enter send"));
-      screen.input.write("first line\u000osecond line\r");
+      screen.input.write("first line\u000fsecond line\r");
       await vi.waitFor(() => expect(prompts).toEqual(["first line\nsecond line"]));
       await vi.waitFor(() => expect(screen.bytes()).toContain("done"));
       screen.input.write("/session\r");
