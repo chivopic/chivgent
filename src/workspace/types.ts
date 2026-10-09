@@ -97,6 +97,12 @@ export interface WorkspaceLimits {
   readonly maxSearchBytes: number;
 }
 
+export interface PatchResult {
+  readonly added: readonly string[];
+  readonly updated: readonly string[];
+  readonly deleted: readonly string[];
+}
+
 export interface WriteTextFileResult {
   readonly path: string;
   /** True when the write created a file that did not exist before. */
@@ -120,6 +126,8 @@ export interface EditTextFileResult {
 
 export interface Workspace {
   readonly root: string;
+  /** Optional capability: third-party read-only workspaces need not support patches. */
+  applyPatch?(patch: string, signal?: AbortSignal): Promise<PatchResult>;
   readTextFile(
     relativePath: string,
     options?: ReadTextFileOptions,

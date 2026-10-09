@@ -10,6 +10,7 @@ import { AgentSession } from "./session.js";
 import { ShellApprovalGate } from "./shell/approval.js";
 import type { SessionStore } from "./session-store.js";
 import { BashTool } from "./tools/bash.js";
+import { ApplyPatchTool } from "./tools/apply-patch.js";
 import { EditFileTool } from "./tools/edit-file.js";
 import { ListFilesTool } from "./tools/list-files.js";
 import { ReadFileTool } from "./tools/read-file.js";
@@ -59,7 +60,7 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
       new ListFilesTool(),
       new SearchTextTool(),
       new ReadFileTool(),
-      ...(options.allowWrites ? [new WriteFileTool(), new EditFileTool()] : []),
+      ...(options.allowWrites ? [new WriteFileTool(), new EditFileTool(), new ApplyPatchTool()] : []),
       ...(options.allowShell ? [new BashTool({
         cwd,
         approve: (command, signal) => config.shellApproval?.approve(command, signal) ?? Promise.resolve(false),

@@ -23,7 +23,7 @@ describe("local CLI session setup", () => {
       restored: { resumed: false },
     });
     expect(session.toolNames).toEqual([
-      "list_files", "search_text", "read_file", "write_file", "edit_file", "bash",
+      "list_files", "search_text", "read_file", "write_file", "edit_file", "apply_patch", "bash",
     ]);
   });
 

@@ -4,6 +4,7 @@ import { ReadFileTool } from "../tools/read-file.js";
 import { SearchTextTool } from "../tools/search-text.js";
 import { WriteFileTool } from "../tools/write-file.js";
 import { EditFileTool } from "../tools/edit-file.js";
+import { ApplyPatchTool } from "../tools/apply-patch.js";
 import { BashTool } from "../tools/bash.js";
 import type { Capability } from "./task.js";
 import type { ShellOperations } from "../shell/types.js";
@@ -18,7 +19,7 @@ import type { ShellOperations } from "../shell/types.js";
  */
 const ALWAYS = ["list_files", "search_text", "read_file"] as const;
 const BY_CAPABILITY: Record<Capability, readonly string[]> = {
-  writes: ["write_file", "edit_file"],
+  writes: ["write_file", "edit_file", "apply_patch"],
   shell: ["bash"],
 };
 
@@ -42,7 +43,7 @@ export function toolsFor(
     new ReadFileTool(),
   ];
   if (capabilities.includes("writes")) {
-    tools.push(new WriteFileTool(), new EditFileTool());
+    tools.push(new WriteFileTool(), new EditFileTool(), new ApplyPatchTool());
   }
   if (capabilities.includes("shell")) {
     // The CLI has already explicitly granted the shell capability to this

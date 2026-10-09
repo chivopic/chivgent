@@ -14,6 +14,7 @@ import {
   type TextFileSlice,
   type Workspace,
   type WorkspaceLimits,
+  type PatchResult,
   type WriteTextFileResult,
 } from "./workspace/types.js";
 import { boundedPositiveInteger } from "./workspace/text.js";
@@ -21,6 +22,7 @@ import { readTextFile } from "./workspace/read.js";
 import { listFiles } from "./workspace/list.js";
 import { searchText } from "./workspace/search.js";
 import { editTextFile, writeTextFile } from "./workspace/write.js";
+import { applyWorkspacePatch } from "./workspace/patch.js";
 import path from "node:path";
 
 export * from "./workspace/types.js";
@@ -94,6 +96,11 @@ export class LocalWorkspace implements Workspace {
   ): Promise<EditTextFileResult> {
     this.assertWritesEnabled();
     return editTextFile(this.limits, relativePath, options);
+  }
+
+  async applyPatch(patch: string, signal?: AbortSignal): Promise<PatchResult> {
+    this.assertWritesEnabled();
+    return applyWorkspacePatch(this.limits, patch, signal);
   }
 
   private assertWritesEnabled(): void {

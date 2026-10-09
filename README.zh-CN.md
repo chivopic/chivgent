@@ -499,6 +499,8 @@ npm install -g "$(npm pack --silent)"
 
 ## Evals
 
+**批量补丁：** `--allow-writes` 现在可以使用 `apply_patch` 一次修改多个文件，采用严格上下文校验；参见 [补丁格式和限制](docs/apply-patch.md)。
+
 **Shell 安全提示：** `--allow-shell` 现在通过无网络的 Docker 容器执行命令，交互模式会逐条请求确认；非交互模式默认拒绝，除非显式使用 `--approve-all-shell`。限制与风险详见 [Shell 沙箱说明](docs/shell-sandbox.md)。
 
 

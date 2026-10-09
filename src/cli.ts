@@ -73,6 +73,7 @@ const BUILT_IN_TOOL_NAMES = [
   "read_file",
   "write_file",
   "edit_file",
+  "apply_patch",
   "bash",
 ] as const;
 
