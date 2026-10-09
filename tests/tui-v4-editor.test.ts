@@ -72,6 +72,6 @@ describe("default inline editor key contract", () => {
   it("ignores untrusted ANSI output when loading history", () => {
     const { controller, results } = create(["unsafe\u001b[2J secret"]);
     controller.receive(Buffer.from("\u0012unsafe\r\r"));
-    expect(results).toEqual(["unsafe[2J secret"]);
+    expect(results).toEqual(["unsafe secret"]);
   });
 });
