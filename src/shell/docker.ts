@@ -56,17 +56,32 @@ export function dockerShellConfig(cwd: string, options: DockerShellOptions = {})
  * A missing Docker binary or daemon fails the command; there is never a host
  * shell fallback.
  */
+const activeContainers = new Set<string>();
+
+/** Synchronous best-effort cleanup for normal process exit and signal handlers. */
+export function killTrackedDockerContainers(docker = "docker"): void {
+  if (activeContainers.size === 0) return;
+  const names = [...activeContainers];
+  activeContainers.clear();
+  spawnSync(docker, ["rm", "--force", ...names], {
+    stdio: "ignore",
+    timeout: 3_000,
+  });
+}
+
 export function createDockerShellOperations(options: DockerShellOptions = {}): ShellOperations {
   const docker = options.dockerExecutable ?? "docker";
   return {
     async exec(command, cwd, execOptions) {
       const containerName = `chivgent-${randomUUID()}`;
+      activeContainers.add(containerName);
       const runner = createLocalShellOperations({
         resolveConfig: () => dockerShellConfig(cwd, { ...options, containerName }),
       });
       try {
         return await runner.exec(command, cwd, execOptions);
       } finally {
+        activeContainers.delete(containerName);
         // Stopping the docker CLI does not always stop its daemon-managed
         // container. Force-remove by a unique name on every exit path.
         spawnSync(docker, ["rm", "--force", containerName], {
