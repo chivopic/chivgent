@@ -256,6 +256,7 @@ export class Agent {
   private async buildContext(
     state: RunState,
     signal: AbortSignal | undefined,
+    prefixMessages: readonly Message[] = [],
   ): Promise<readonly Message[]> {
     const snapshot = snapshotMessages(state.messages);
     if (this.contextManager === undefined) {
@@ -265,6 +266,7 @@ export class Agent {
     const context = await this.contextManager.build(snapshot, {
       ...(state.compaction === undefined ? {} : { previous: state.compaction }),
       ...(signal === undefined ? {} : { signal }),
+      prefixMessages,
     });
     if (context.compaction === undefined) {
       delete state.compaction;
@@ -288,17 +290,18 @@ export class Agent {
     turn: number,
     signal: AbortSignal | undefined,
   ): ReturnType<LLMClient["complete"]> {
-    const messages = await this.buildContext(state, signal);
     const projectText = await this.projectInstructions?.load(state.messages);
     if (projectText !== state.projectInstructionsText) {
       // A chained Provider holds its own prompt history; discard that chain
       // when a new scoped AGENTS.md becomes applicable or a document changes.
       delete state.continuation;
-      state.projectInstructionsText = projectText;
+      if (projectText === undefined) delete state.projectInstructionsText;
+      else state.projectInstructionsText = projectText;
     }
-    const modelMessages: readonly Message[] = projectText === undefined
-      ? messages
-      : [{ role: "user", content: projectText }, ...messages];
+    const prefixMessages: readonly Message[] = projectText === undefined
+      ? [] : [{ role: "user", content: projectText }];
+    const messages = await this.buildContext(state, signal, prefixMessages);
+    const modelMessages: readonly Message[] = [...prefixMessages, ...messages];
     const request = {
       systemPrompt: this.systemPrompt,
       messages: modelMessages,
