@@ -19,6 +19,7 @@ export class TuiInput extends PassThrough {
   readonly isTTY: boolean;
   private busy = false;
   private approvalMode = false;
+  private rawHandler?: (chunk: Buffer) => void;
   private composeMode = false;
   private pendingCompose: Buffer[] = [];
   private pendingComposeBytes = 0;
@@ -50,6 +51,11 @@ export class TuiInput extends PassThrough {
   /** While approving, y/n/Escape answer immediately without Enter. */
   setApprovalMode(enabled: boolean): void {
     this.approvalMode = enabled;
+  }
+
+  /** Exclusive input for the cursor-addressable editor, never readline. */
+  setRawHandler(handler: ((chunk: Buffer) => void) | undefined): void {
+    this.rawHandler = handler;
   }
 
   /** Preserve pasted multi-line input only while the explicit composer is open. */
@@ -116,6 +122,10 @@ export class TuiInput extends PassThrough {
       this.escapeTimer = undefined;
     }
     if (bytes.length === 0) return;
+    if (this.rawHandler !== undefined) {
+      this.rawHandler(bytes);
+      return;
+    }
     if (this.afterCR && bytes[0] === 10) bytes = bytes.subarray(1);
     this.afterCR = false;
     if (bytes.length === 0) return;
