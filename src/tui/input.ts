@@ -22,6 +22,7 @@ export class TuiInput extends PassThrough {
   private composeMode = false;
   private pendingCompose: Buffer[] = [];
   private pendingComposeBytes = 0;
+  private composeOverflow = false;
   private submitted = false;
   private afterCR = false;
   private escapePrefix = Buffer.alloc(0);
@@ -52,9 +53,12 @@ export class TuiInput extends PassThrough {
   }
 
   /** Preserve pasted multi-line input only while the explicit composer is open. */
+  get composeLimitExceeded(): boolean { return this.composeOverflow; }
+
   setComposeMode(enabled: boolean): void {
     this.composeMode = enabled;
     if (!enabled) {
+      this.composeOverflow = false;
       this.pendingCompose = [];
       this.pendingComposeBytes = 0;
     }
@@ -62,7 +66,10 @@ export class TuiInput extends PassThrough {
 
   private queueCompose(chunk: Buffer): void {
     // Never turn an unbounded paste into an unbounded memory backlog.
-    if (this.pendingComposeBytes + chunk.length > 64 * 1024) return;
+    if (this.pendingComposeBytes + chunk.length > 64 * 1024) {
+      this.composeOverflow = true;
+      return;
+    }
     this.pendingComposeBytes += chunk.length;
     this.pendingCompose.push(Buffer.from(chunk));
   }
