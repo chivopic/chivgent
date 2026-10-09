@@ -499,6 +499,8 @@ npm install -g "$(npm pack --silent)"
 
 ## Evals
 
+**Agent 任务计划：** 复杂任务可通过参考 Codex 的 `update_plan` 更新结构化任务清单，TUI 显示进度，且不会授予额外文件或 Shell 权限。详见 [Agent 计划与进度](docs/agent-plan-progress.md)。
+
 **TUI V5：** 默认输入框现支持斜杠命令补全、鼠标定位与拖选，以及需逐次确认的只读 `/gitdiff [--staged]` 工作区审查。详见 [TUI V5 指南](docs/tui-v5.md)。
 
 **TUI V4：** `--tui` 默认使用可自由编辑的多行输入框：Enter 发送、Ctrl+O 换行、Ctrl+Z/Y 撤销重做、Ctrl+R 搜索历史。详见 [TUI V4 指南](docs/tui-v4.md)。
