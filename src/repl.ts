@@ -292,6 +292,8 @@ export interface ReplOptions {
   readonly session: AgentSession;
   readonly shellApproval?: ShellApprovalGate;
   readonly liveRegion?: Pick<LiveRegion, "pause" | "resume">;
+  /** Injectable read-only Git implementation for terminal integration tests. */
+  readonly gitDiffReader?: typeof readLiveGitDiff;
   readonly input: NodeJS.ReadableStream;
   readonly output: NodeJS.WritableStream;
   readonly stderr: OutputStream;
@@ -725,7 +727,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       return;
     }
     try {
-      const diff = await readLiveGitDiff(options.session.cwd, mode);
+      const diff = await (options.gitDiffReader ?? readLiveGitDiff)(options.session.cwd, mode);
       if (diff.trim().length === 0) {
         write(`No ${mode} tracked Git changes found.\n`);
         return;
