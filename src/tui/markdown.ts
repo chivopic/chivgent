@@ -1,4 +1,5 @@
 import { fitLine, terminalText } from "./text.js";
+import { highlightCodeLine } from "./syntax.js";
 
 /**
  * Small terminal-focused renderer. No HTML, no remote resource fetching,
@@ -8,27 +9,28 @@ import { fitLine, terminalText } from "./text.js";
 export function formatTerminalMarkdown(markdown: string, columns = 80, color = false): string {
   const width = Math.max(1, columns - 1);
   const lines = terminalText(markdown).split("\n");
-  let fenced = false;
+  let fenced: string | undefined;
   const rendered: string[] = [];
 
   for (const line of lines) {
     const fence = /^\s*```([^\s`]*)\s*$/.exec(line);
     if (fence !== null) {
-      if (!fenced) {
+      if (fenced === undefined) {
         const lang = fence[1] ?? "";
+        fenced = lang;
         const header = fitLine(`  ┌─ ${lang || "code"}`, width);
         rendered.push(color ? `\u001b[2m${header}\u001b[0m` : header);
       } else {
+        fenced = undefined;
         const footer = fitLine("  └─", width);
         rendered.push(color ? `\u001b[2m${footer}\u001b[0m` : footer);
       }
-      fenced = !fenced;
       continue;
     }
 
-    if (fenced) {
-      const body = fitLine(`  │ ${line}`, width);
-      rendered.push(color ? `\u001b[36m${body}\u001b[0m` : body);
+    if (fenced !== undefined) {
+      const body = fitLine(line, Math.max(1, width - 4));
+      rendered.push(color ? `\u001b[36m  │ \u001b[0m${highlightCodeLine(body, fenced)}` : `  │ ${body}`);
       continue;
     }
 
