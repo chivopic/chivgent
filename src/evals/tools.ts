@@ -6,6 +6,7 @@ import { WriteFileTool } from "../tools/write-file.js";
 import { EditFileTool } from "../tools/edit-file.js";
 import { BashTool } from "../tools/bash.js";
 import type { Capability } from "./task.js";
+import type { ShellOperations } from "../shell/types.js";
 
 /**
  * What each capability puts in the model's hands.
@@ -33,6 +34,7 @@ export function toolNamesFor(
 export function toolsFor(
   capabilities: readonly Capability[],
   cwd: string,
+  options: { readonly shellOperations?: ShellOperations } = {},
 ): readonly Tool[] {
   const tools: Tool[] = [
     new ListFilesTool(),
@@ -43,7 +45,13 @@ export function toolsFor(
     tools.push(new WriteFileTool(), new EditFileTool());
   }
   if (capabilities.includes("shell")) {
-    tools.push(new BashTool({ cwd }));
+    // The CLI has already explicitly granted the shell capability to this
+    // task; Docker still enforces the host/container boundary.
+    tools.push(new BashTool({
+      cwd,
+      approve: async () => true,
+      ...(options.shellOperations === undefined ? {} : { operations: options.shellOperations }),
+    }));
   }
   return tools;
 }
