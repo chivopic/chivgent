@@ -43,7 +43,7 @@ export class ApplyPatchTool implements Tool {
       });
       // The engine returns canonical file paths; the summary follows the
       // validated patch's original file ordering for readable diff feedback.
-      return { content: `Patch applied (${result.added.length + result.updated.length + result.deleted.length} files):\n${summary.join("\n")}`, isError: false };
+      return { content: `Patch applied (${summary.length} ${summary.length === 1 ? "file" : "files"}):\n${summary.join("\n")}`, isError: false };
     } catch (error: unknown) {
       if (error instanceof PatchError || error instanceof WorkspaceError || error instanceof TypeError) {
         return { content: error.message, isError: true };
