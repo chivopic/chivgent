@@ -71,7 +71,7 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
     workspace: new LocalWorkspace(cwd, { allowWrites: options.allowWrites }),
     streaming: options.stream,
     contextManager,
-    projectInstructions: new ScopedProjectInstructions(cwd),
+    projectInstructions: new ScopedProjectInstructions(cwd, Math.min(16_384, options.contextWindow)),
   };
   return new AgentSession({
     agent,
