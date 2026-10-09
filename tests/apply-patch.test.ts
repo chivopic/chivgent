@@ -145,6 +145,19 @@ describe("apply_patch", () => {
     expect(await readFile(path.join(root, "existing.txt"), "utf8")).toBe("before");
   });
 
+  it("summarizes modified lines and affected files after a successful patch", async () => {
+    const root = await temp();
+    await writeFile(path.join(root, "file.txt"), "before\n");
+    const workspace = new LocalWorkspace(root, { allowWrites: true });
+    const outcome = await new ApplyPatchTool().execute({
+      patch: "*** Begin Patch\n*** Update File: file.txt\n@@\n-before\n+after\n*** End Patch",
+    }, { workspace });
+    expect(outcome).toEqual({
+      content: "Patch applied (1 files):\nM file.txt (+1/-1, 1 hunk(s))",
+      isError: false,
+    });
+  });
+
   it("returns a structured tool error for conflicts, without writing files", async () => {
     const root = await temp();
     await writeFile(path.join(root, "file.txt"), "real\n");
