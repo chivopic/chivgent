@@ -3,7 +3,7 @@ import { Agent, AgentProtocolError } from "../src/agent.js";
 import { ListFilesTool } from "../src/tools/list-files.js";
 import { ReadFileTool } from "../src/tools/read-file.js";
 import { SearchTextTool } from "../src/tools/search-text.js";
-import type { Tool, ToolOutput } from "../src/tools/tool.js";
+import { ToolExecutionError, type Tool, type ToolOutput } from "../src/tools/tool.js";
 import type { Workspace } from "../src/workspace.js";
 import {
   assistant,
@@ -127,6 +127,24 @@ describe("Agent", () => {
       role: "tool",
       isError: true,
       content: "Tool execution failed: fail",
+    });
+  });
+
+  it("returns intentionally public tool errors to the model", async () => {
+    const llm = new FakeLLMClient([
+      assistant("", [{ id: "call-1", name: "validate", arguments: {} }]),
+      assistant("I will use a valid path."),
+    ]);
+    const failingTool = tool("validate", async () => {
+      throw new ToolExecutionError("Path must be relative to the workspace.");
+    });
+
+    await createAgent(llm, [failingTool]).run("Question");
+
+    expect(llm.requests[1]?.messages.at(-1)).toMatchObject({
+      role: "tool",
+      isError: true,
+      content: "Path must be relative to the workspace.",
     });
   });
 
