@@ -519,6 +519,8 @@ manual so the default test suite never consumes credits.
 
 ## Evals
 
+**TUI V5:** The default editor has an inline slash command menu, optional mouse caret/drag support, and explicitly approved `/gitdiff [--staged]` for read-only tracked worktree review. See [TUI V5 guide](docs/tui-v5.md).
+
 **TUI V4:** In `--tui`, the cursor-addressable composer is now the default. Enter submits; Ctrl+O adds a line; Ctrl+Z/Y undo/redo; Ctrl+R searches session history. See [TUI V4 guide](docs/tui-v4.md).
 
 **TUI V3:** Use `/editor` for cursor-editable multiline prompts (arrows, Ctrl+S submit), `/review` for interactive patch paging, and syntax-highlighted terminal code fences. See [TUI V3 guide](docs/tui-v3.md).
