@@ -32,6 +32,46 @@ export class EditorDocument {
   readonly maxLines = MAX_LINES;
   warning = "";
   private preferredCell?: number;
+  private undoStack: { text: string; cursor: number }[] = [];
+  private redoStack: { text: string; cursor: number }[] = [];
+  private static readonly MAX_HISTORY = 100;
+
+  private checkpoint(): void {
+    this.undoStack.push({ text: this.text, cursor: this.cursor });
+    if (this.undoStack.length > EditorDocument.MAX_HISTORY) this.undoStack.shift();
+    this.redoStack = [];
+  }
+
+  undo(): void {
+    const previous = this.undoStack.pop();
+    if (previous === undefined) return;
+    this.redoStack.push({ text: this.text, cursor: this.cursor });
+    this.text = previous.text;
+    this.cursor = previous.cursor;
+    this.preferredCell = undefined;
+    this.warning = "";
+  }
+
+  redo(): void {
+    const nextState = this.redoStack.pop();
+    if (nextState === undefined) return;
+    this.undoStack.push({ text: this.text, cursor: this.cursor });
+    this.text = nextState.text;
+    this.cursor = nextState.cursor;
+    this.preferredCell = undefined;
+    this.warning = "";
+  }
+
+  /** Restore a prior submitted prompt as a fresh editable draft. */
+  loadDraft(value: string): boolean {
+    const normalized = terminalText(value).replace(/\r\n?/g, "\n");
+    if (Buffer.byteLength(normalized, "utf8") > MAX_BYTES || normalized.split("\n").length > MAX_LINES) return false;
+    this.checkpoint();
+    this.text = normalized;
+    this.cursor = normalized.length;
+    this.preferredCell = undefined;
+    return true;
+  }
 
   insert(value: string): boolean {
     const normalized = terminalText(value).replace(/\r\n?/g, "\n");
@@ -40,6 +80,8 @@ export class EditorDocument {
       this.warning = "Draft limit: 64 KiB / 200 lines";
       return false;
     }
+    if (normalized.length === 0) return true;
+    this.checkpoint();
     this.text = this.text.slice(0, this.cursor) + normalized + this.text.slice(this.cursor);
     this.cursor += normalized.length;
     this.preferredCell = undefined;
@@ -55,12 +97,14 @@ export class EditorDocument {
   backspace(): void {
     if (this.cursor === 0) return;
     const at = previous(this.text, this.cursor);
+    this.checkpoint();
     this.text = this.text.slice(0, at) + this.text.slice(this.cursor);
     this.cursor = at;
     this.preferredCell = undefined;
   }
   delete(): void {
     if (this.cursor === this.text.length) return;
+    this.checkpoint();
     this.text = this.text.slice(0, this.cursor) + this.text.slice(next(this.text, this.cursor));
     this.preferredCell = undefined;
   }
