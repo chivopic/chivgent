@@ -442,6 +442,9 @@ export class Agent {
             await tool.execute(toolCall.arguments, {
               workspace: this.workspace,
               ...(signal === undefined ? {} : { signal }),
+              onPlanUpdate: (update) => {
+                this.emit({ type: "plan_update", turn, ...update });
+              },
               onUpdate: (content: string) => {
                 this.emit({
                   type: "tool_execution_update",
