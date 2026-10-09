@@ -11,7 +11,7 @@ import type {
   ToolCall,
   ToolResultMessage,
 } from "./messages.js";
-import type { Tool, ToolDefinition, ToolOutput } from "./tools/tool.js";
+import { ToolExecutionError, type Tool, type ToolDefinition, type ToolOutput } from "./tools/tool.js";
 import type { Workspace } from "./workspace.js";
 import type {
   AppliedCompaction,
@@ -342,7 +342,11 @@ export class Agent {
           throw error;
         }
         output = {
-          content: `Tool execution failed: ${toolCall.name}`,
+          // Only explicitly public messages reach the model. Unexpected errors
+          // may contain file paths, tokens, or other implementation details.
+          content: error instanceof ToolExecutionError
+            ? error.message
+            : `Tool execution failed: ${toolCall.name}`,
           isError: true,
         };
       }
