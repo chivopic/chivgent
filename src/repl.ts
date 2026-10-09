@@ -554,6 +554,10 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       for (;;) {
         readline.prompt();
         const part = await readNextLine();
+        if (tuiInput?.composeLimitExceeded) {
+          write("Draft too large (64 KiB paste buffer). Nothing was sent.\n");
+          return undefined;
+        }
         if (composeCancelled || part === undefined || part.trim() === "/cancel") {
           write("Draft discarded.\n");
           return undefined;
