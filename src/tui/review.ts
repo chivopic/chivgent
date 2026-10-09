@@ -4,9 +4,10 @@ import { EditorPainter, type EditorFrame, type EditorOutput } from "./editor.js"
 function decorated(line: string, width: number, color: boolean): string {
   const safe = fitLine(terminalText(line), width);
   if (!color) return safe;
-  const code = line.startsWith("+") ? "32"
-    : line.startsWith("-") ? "31"
-    : line.startsWith("***") || line.startsWith("@@") ? "36"
+  const source = line.startsWith("│ ") ? line.slice(2) : line;
+  const code = source.startsWith("+") ? "32"
+    : source.startsWith("-") ? "31"
+    : source.startsWith("***") || source.startsWith("@@") ? "36"
     : undefined;
   return code === undefined ? safe : `\u001b[${code}m${safe}\u001b[0m`;
 }
