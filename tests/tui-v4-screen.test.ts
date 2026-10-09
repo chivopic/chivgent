@@ -79,9 +79,11 @@ describe("default inline TUI composer in a real terminal", () => {
     try {
       await vi.waitFor(() => expect(screen.bytes()).toContain("Enter send"));
       screen.input.write("do not send");
-      const beforeCancel = screen.bytes().split("Enter send").length;
+      const beforeCancel = screen.bytes().length;
       screen.input.write("\u001b");
-      await vi.waitFor(() => expect(screen.bytes().split("Enter send").length).toBeGreaterThan(beforeCancel));
+      // Wait for Escape to actually discard the draft, not the intermediate
+      // repaint while it is being disambiguated from an arrow sequence.
+      await vi.waitFor(() => expect(screen.bytes().slice(beforeCancel)).toContain("1 lines · 0 bytes"));
       expect(prompts).toEqual([]);
       screen.input.write("\u0004");
       await vi.waitFor(() => expect(screen.input.raw).toBe(false)).catch(() => {
