@@ -25,7 +25,7 @@ function elapsed(from: number, now: number): string {
 }
 
 function toolHead(tool: RunningTool, now: number, width: number): string {
-  const prefix = `  ${terminalText(tool.name)}`;
+  const prefix = `  ↳ ${terminalText(tool.name)}`;
   const duration = ` (${elapsed(tool.startedAt, now)})`;
   if (displayWidth(prefix) + displayWidth(duration) > width) return fitLine(prefix, width);
   if (tool.target === undefined) return fitLine(`${prefix}${duration}`, width);
@@ -55,7 +55,13 @@ function statusLine(run: NonNullable<ViewState["run"]>, now: number, width: numb
   const tokens = usage !== undefined && usage.usage.totalTokens > 0
     ? `${formatTokens(usage.usage.totalTokens)} tokens${usage.complete ? "" : "+"}`
     : undefined;
+  const completed = run.completedTools ?? 0;
+  const failed = run.failedTools ?? 0;
+  const activity = completed + run.running.length > 0
+    ? `${completed} done${failed > 0 ? `, ${failed} failed` : ""}${run.running.length > 0 ? `, ${run.running.length} running` : ""}`
+    : undefined;
   const candidates = [
+    [status, `turn ${run.turn}/${run.maxTurns}`, ...(activity === undefined ? [] : [activity]), duration, ...(tokens === undefined ? [] : [tokens]), "ctrl+c to stop"],
     [status, `turn ${run.turn}/${run.maxTurns}`, duration, ...(tokens === undefined ? [] : [tokens]), "ctrl+c to stop"],
     [status, `turn ${run.turn}/${run.maxTurns}`, duration, "ctrl+c to stop"],
     [status, `${run.turn}/${run.maxTurns}`, duration, "^C stop"],
