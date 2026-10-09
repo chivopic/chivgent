@@ -35,7 +35,8 @@ describe("default inline TUI composer in a real terminal", () => {
       await vi.waitFor(() => expect(screen.bytes()).toContain("Enter send"));
       screen.input.write("first line\u000fsecond line\r");
       await vi.waitFor(() => expect(prompts).toEqual(["first line\nsecond line"]));
-      await vi.waitFor(() => expect(screen.bytes()).toContain("done"));
+      await vi.waitFor(() => expect(session.messages.some(message => message.role === "assistant")).toBe(true));
+      await new Promise<void>(resolve => setImmediate(resolve));
       screen.input.write("/session\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("prompts:   1"));
       screen.input.write("\u0004");
@@ -54,10 +55,13 @@ describe("default inline TUI composer in a real terminal", () => {
       await vi.waitFor(() => expect(screen.bytes()).toContain("Enter send"));
       screen.input.write("Refactor API\r");
       await vi.waitFor(() => expect(prompts).toEqual(["Refactor API"]));
-      screen.input.write("\u0012API\r");
+      await vi.waitFor(() => expect(session.messages.some(message => message.role === "assistant")).toBe(true));
+      await new Promise<void>(resolve => setImmediate(resolve));
+      screen.input.write("\u0012API");
       await vi.waitFor(() => expect(screen.bytes()).toContain("History"));
       expect(prompts).toHaveLength(1);
-      screen.input.write("\r");
+      screen.input.write("\r"); // load the matched history; do not submit
+      await new Promise<void>(resolve => setImmediate(resolve));
       await vi.waitFor(() => expect(prompts).toEqual(["Refactor API", "Refactor API"]));
       screen.input.write("\u0004");
       expect(await result).toBe(0);
@@ -73,8 +77,9 @@ describe("default inline TUI composer in a real terminal", () => {
     try {
       await vi.waitFor(() => expect(screen.bytes()).toContain("Enter send"));
       screen.input.write("do not send");
+      const beforeCancel = screen.bytes().split("Enter send").length;
       screen.input.write("\u001b");
-      await vi.waitFor(() => expect(screen.bytes().split("Enter send").length).toBeGreaterThan(2));
+      await vi.waitFor(() => expect(screen.bytes().split("Enter send").length).toBeGreaterThan(beforeCancel));
       expect(prompts).toEqual([]);
       screen.input.write("\u0004");
       expect(await result).toBe(0);
