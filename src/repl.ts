@@ -472,8 +472,19 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         write(`\nShell command (Docker, network disabled):\n${command}\nApprove? [y/N]\n`);
         readline.setPrompt("approve> ");
         readline.prompt();
-        const answer = await readNextLine();
-        return answer?.trim().toLowerCase() === "y" && signal?.aborted !== true;
+        // Ctrl+C must unblock the pending line read, not leave the agent
+        // stuck waiting for a reply to an approval that was cancelled.
+        const unblockOnAbort = (): void => {
+          readline.write("\n");
+        };
+        signal?.addEventListener("abort", unblockOnAbort, { once: true });
+        try {
+          if (signal?.aborted) return false;
+          const answer = await readNextLine();
+          return answer?.trim().toLowerCase() === "y" && signal?.aborted !== true;
+        } finally {
+          signal?.removeEventListener("abort", unblockOnAbort);
+        }
       } finally {
         readline.setPrompt(REPL_PROMPT);
         tuiInput?.setBusy(true);
