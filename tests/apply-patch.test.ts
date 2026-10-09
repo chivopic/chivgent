@@ -153,7 +153,7 @@ describe("apply_patch", () => {
       patch: "*** Begin Patch\n*** Update File: file.txt\n@@\n-before\n+after\n*** End Patch",
     }, { workspace });
     expect(outcome).toEqual({
-      content: "Patch applied (1 files):\nM file.txt (+1/-1, 1 hunk(s))",
+      content: "Patch applied (1 file):\nM file.txt (+1/-1, 1 hunk(s))",
       isError: false,
     });
   });
