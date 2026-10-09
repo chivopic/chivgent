@@ -13,6 +13,7 @@ import type {
 } from "./messages.js";
 import { ToolExecutionError, type Tool, type ToolDefinition, type ToolOutput } from "./tools/tool.js";
 import { isParallelReadTool, MAX_PARALLEL_READS } from "./tools/parallel.js";
+import { UpdatePlanTool } from "./tools/update-plan.js";
 import type { Workspace } from "./workspace.js";
 import type {
   AppliedCompaction,
@@ -442,9 +443,11 @@ export class Agent {
             await tool.execute(toolCall.arguments, {
               workspace: this.workspace,
               ...(signal === undefined ? {} : { signal }),
-              onPlanUpdate: (update) => {
-                this.emit({ type: "plan_update", turn, ...update });
-              },
+              ...(tool.constructor === UpdatePlanTool ? {
+                onPlanUpdate: (update: Parameters<NonNullable<import("./tools/tool.js").ToolContext["onPlanUpdate"]>>[0]) => {
+                  this.emit({ type: "plan_update", turn, ...update });
+                },
+              } : {}),
               onUpdate: (content: string) => {
                 this.emit({
                   type: "tool_execution_update",
