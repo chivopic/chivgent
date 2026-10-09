@@ -109,7 +109,7 @@ describe("BashTool", () => {
     const cwd = await temporaryDirectory();
     const updates: string[] = [];
 
-    const result = await new BashTool({ cwd, throttleMs: 0 }).execute(
+    const result = await new BashTool({ cwd, throttleMs: 0, operations: createLocalShellOperations(), approve: async () => true }).execute(
       { command: "echo first; sleep 0.2; echo second" },
       {
         workspace: unusedWorkspace,
@@ -128,7 +128,7 @@ describe("BashTool", () => {
     const cwd = await temporaryDirectory();
     const updates: string[] = [];
 
-    await new BashTool({ cwd, throttleMs: 10_000 }).execute(
+    await new BashTool({ cwd, throttleMs: 10_000, operations: createLocalShellOperations(), approve: async () => true }).execute(
       { command: "for i in 1 2 3 4 5; do echo line $i; done" },
       {
         workspace: unusedWorkspace,
