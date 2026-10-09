@@ -30,6 +30,9 @@ export interface RunState {
   readonly running: readonly RunningTool[];
   readonly usage?: UsageTotal;
   readonly status: RunStatus;
+  /** Per-turn completed/failed counts for a concise progress meter. */
+  readonly completedTools?: number;
+  readonly failedTools?: number;
 }
 
 export type RunStatus = "thinking" | "running-tools";
@@ -54,6 +57,8 @@ function startRun(maxTurns: number, now: number): RunState {
     text: "",
     running: [],
     status: "thinking",
+    completedTools: 0,
+    failedTools: 0,
   };
 }
 
@@ -153,6 +158,8 @@ export function reduce(
           ...run,
           running,
           status: running.length === 0 ? "thinking" : "running-tools",
+          completedTools: (run.completedTools ?? 0) + 1,
+          failedTools: (run.failedTools ?? 0) + (event.isError ? 1 : 0),
         },
       };
     }
@@ -160,7 +167,7 @@ export function reduce(
     case "turn_end":
       // The turn is flushed to scrollback by the caller; what is left alive is
       // only the fact that the run continues.
-      return { run: { ...run, text: "", running: [], status: "thinking" } };
+      return { run: { ...run, text: "", running: [], status: "thinking", completedTools: 0, failedTools: 0 } };
 
     default:
       return state;

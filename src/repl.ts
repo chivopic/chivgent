@@ -5,6 +5,9 @@ import type { AgentSession } from "./session.js";
 import type { OutputStream } from "./render.js";
 import type { RegisteredCommand } from "./extensions/api.js";
 import { formatTokens } from "./providers/usage.js";
+import { approvalPreview, commandReviewable } from "./tui/activity.js";
+import { terminalWidth } from "./tui/live.js";
+import type { LiveRegion } from "./tui/live.js";
 import type { ShellApprovalGate } from "./shell/approval.js";
 
 export const REPL_PROMPT = "› ";
@@ -237,6 +240,7 @@ export interface ReplOptions {
   readonly tui?: boolean;
   readonly session: AgentSession;
   readonly shellApproval?: ShellApprovalGate;
+  readonly liveRegion?: Pick<LiveRegion, "pause" | "resume">;
   readonly input: NodeJS.ReadableStream;
   readonly output: NodeJS.WritableStream;
   readonly stderr: OutputStream;
@@ -467,9 +471,15 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     options.shellApproval.setHandler(async (command, signal) => {
       if (signal?.aborted) return false;
       menu?.clear();
+      options.liveRegion?.pause();
       tuiInput?.setBusy(false);
       try {
-        write(`\nShell command (Docker, network disabled):\n${command}\nApprove? [y/N]\n`);
+        const width = terminalWidth({ columns: (options.output as typeof options.output & { columns?: number }).columns });
+        write(approvalPreview(command, width));
+        if (!commandReviewable(command, width)) {
+          write("  Denied: command cannot be fully reviewed at this width. Ask for a shorter command.\n");
+          return false;
+        }
         readline.setPrompt("approve> ");
         readline.prompt();
         // Ctrl+C must unblock the pending line read, not leave the agent
@@ -488,6 +498,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       } finally {
         readline.setPrompt(REPL_PROMPT);
         tuiInput?.setBusy(true);
+        options.liveRegion?.resume();
       }
     });
   }

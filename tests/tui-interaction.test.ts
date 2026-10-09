@@ -42,7 +42,7 @@ it("shows a compact wordmark without a session id", () => {
   expect(banner).toContain("Start with /provider");
   expect(banner).not.toContain("╭");
   expect(banner).not.toContain("demo");
-  expect(banner.split("\n").filter(Boolean)).toHaveLength(8);
+  expect(banner.split("\n").filter(Boolean)).toHaveLength(6);
   expect(welcome({ version: "test", provider: "openai", model: "gpt-test", cwd: "/project", resumed: false, signedOut: true, width: 80, color: true }))
     .toContain("\u001b[1;36m");
 });

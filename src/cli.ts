@@ -273,6 +273,7 @@ async function main(argv: readonly string[]): Promise<number> {
         width: () => terminalWidth(process.stderr),
         height: () => process.stderr.rows || 24,
         answerStream: process.stdout,
+        color: process.stderr.isTTY === true && process.env.NO_COLOR === undefined && process.env.TERM !== "dumb",
       })
     : undefined;
   session.subscribe(
@@ -314,6 +315,7 @@ async function main(argv: readonly string[]): Promise<number> {
       return await runRepl({
         session,
         ...(shellApproval === undefined ? {} : { shellApproval }),
+        ...(liveRegion === undefined ? {} : { liveRegion }),
         signIn: providerControl,
         providers: providerControl,
         input: process.stdin,

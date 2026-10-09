@@ -1,6 +1,6 @@
 import type { TurnEndEvent } from "../events.js";
 import { formatTokens } from "../providers/usage.js";
-import { callTarget } from "../tools/target.js";
+import { toolTranscript } from "./activity.js";
 import { displayWidth, fitLine, fitLineTail, terminalText } from "./text.js";
 import type { RunningTool, ViewState } from "./state.js";
 
@@ -25,7 +25,7 @@ function elapsed(from: number, now: number): string {
 }
 
 function toolHead(tool: RunningTool, now: number, width: number): string {
-  const prefix = `  ${terminalText(tool.name)}`;
+  const prefix = `  ↳ ${terminalText(tool.name)}`;
   const duration = ` (${elapsed(tool.startedAt, now)})`;
   if (displayWidth(prefix) + displayWidth(duration) > width) return fitLine(prefix, width);
   if (tool.target === undefined) return fitLine(`${prefix}${duration}`, width);
@@ -55,7 +55,18 @@ function statusLine(run: NonNullable<ViewState["run"]>, now: number, width: numb
   const tokens = usage !== undefined && usage.usage.totalTokens > 0
     ? `${formatTokens(usage.usage.totalTokens)} tokens${usage.complete ? "" : "+"}`
     : undefined;
+  const completed = run.completedTools ?? 0;
+  const failed = run.failedTools ?? 0;
+  // Failed calls are already included in completedTools. Display separate
+  // success/failure counts so "1 done, 1 failed" cannot imply two outcomes.
+  const activityParts = [
+    ...(completed > 0 ? [`${Math.max(0, completed - failed)} ok`] : []),
+    ...(failed > 0 ? [`${failed} failed`] : []),
+    ...(run.running.length > 0 ? [`${run.running.length} running`] : []),
+  ];
+  const activity = activityParts.length > 0 ? activityParts.join(", ") : undefined;
   const candidates = [
+    [status, `turn ${run.turn}/${run.maxTurns}`, ...(activity === undefined ? [] : [activity]), duration, ...(tokens === undefined ? [] : [tokens]), "ctrl+c to stop"],
     [status, `turn ${run.turn}/${run.maxTurns}`, duration, ...(tokens === undefined ? [] : [tokens]), "ctrl+c to stop"],
     [status, `turn ${run.turn}/${run.maxTurns}`, duration, "ctrl+c to stop"],
     [status, `${run.turn}/${run.maxTurns}`, duration, "^C stop"],
@@ -116,16 +127,11 @@ export function view(
  * is wanted the state has already been cleared — and because the event carries
  * the authoritative message either way.
  */
-export function transcriptLines(event: TurnEndEvent): readonly string[] {
+export function transcriptLines(event: TurnEndEvent, width = 120): readonly string[] {
   const lines: string[] = [];
   // A result carries no arguments, so the target comes from the call that
   // produced it — the same join by call id the eval runner makes.
-  const calls = new Map(event.message.toolCalls.map((call) => [call.id, call]));
-  for (const result of event.toolResults) {
-    const target = callTarget(calls.get(result.toolCallId)?.arguments);
-    const head = target === undefined ? result.toolName : `${result.toolName} ${target}`;
-    lines.push(`  ${head}${result.isError ? " (failed)" : ""}`);
-  }
+  lines.push(...toolTranscript(event.message.toolCalls, event.toolResults, width));
   if (event.message.content.trim().length > 0) {
     lines.push(event.message.content);
   }

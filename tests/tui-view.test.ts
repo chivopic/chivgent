@@ -190,8 +190,8 @@ describe("transcriptLines", () => {
     // A result carries no arguments, so "which file" is only recoverable
     // through the call id.
     expect(transcriptLines(event)).toEqual([
-      "  read_file src/a.ts",
-      "  read_file missing.ts (failed)",
+      "  ✓ Read src/a.ts",
+      "  ! Read missing.ts — no",
       "Found it.",
     ]);
   });

@@ -5,6 +5,7 @@ import type { OutputStream } from "../render.js";
 import { Painter } from "./paint.js";
 import { EMPTY_STATE, reduce, type ViewState } from "./state.js";
 import { transcriptLines, view } from "./view.js";
+import { colorizeActivity } from "./activity.js";
 
 /** How often the region redraws on its own, so elapsed time advances. */
 const TICK_MS = 1000;
@@ -19,6 +20,8 @@ export interface LiveRegionOptions {
   readonly answerStream?: OutputStream;
   readonly now?: () => number;
   readonly tickMs?: number;
+  /** Color applied only to already-sanitized tool records on a real terminal. */
+  readonly color?: boolean;
 }
 
 export interface LiveRegion {
@@ -27,6 +30,10 @@ export interface LiveRegion {
   stop(): void;
   /** Drops the diff baseline and repaints, for a resize. */
   resized(): void;
+  /** Yield terminal ownership while a modal approval reads input. */
+  pause(): void;
+  /** Restore the live region without discarding accumulated progress. */
+  resume(): void;
 }
 
 /**
@@ -41,8 +48,10 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
   const painter = new Painter({ stream: options.stream });
   let state: ViewState = EMPTY_STATE;
   let timer: NodeJS.Timeout | undefined;
+  let paused = false;
 
   const paint = (): void => {
+    if (paused) return;
     painter.render(view(state, {
       // Leave one cell spare to avoid a terminal's pending autowrap state.
       width: Math.max(1, options.width() - 1),
@@ -78,9 +87,9 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
         const lines = transcriptLines(options.answerStream === undefined ? event : {
           ...event,
           message: { ...event.message, content: "" },
-        });
+        }, Math.max(1, options.width() - 1));
         if (lines.length > 0) {
-          options.stream.write(`${terminalText(lines.join("\n"))}\n`);
+          options.stream.write(`${colorizeActivity(lines, options.color === true)}\n`);
         }
         if (options.answerStream !== undefined && event.message.content.trim().length > 0) {
           options.answerStream.write(`${event.message.content}\n`);
@@ -119,6 +128,23 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
       paint();
     },
 
+    pause: (): void => {
+      if (paused) return;
+      paused = true;
+      stopClock();
+      painter.clear();
+    },
+
+    resume: (): void => {
+      if (!paused) return;
+      paused = false;
+      if (state.run !== undefined) {
+        startClock();
+        painter.invalidate();
+        paint();
+      }
+    },
+
     stop: (): void => {
       stopClock();
       painter.clear();
@@ -126,7 +152,7 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
     },
 
     resized: (): void => {
-      if (state.run === undefined) return;
+      if (state.run === undefined || paused) return;
       painter.invalidate(options.width(), options.height?.());
       paint();
     },

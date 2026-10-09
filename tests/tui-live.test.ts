@@ -49,7 +49,7 @@ describe("createLiveRegion", () => {
     region.listener(turnEnd);
     region.listener({ type: "agent_end", status: "completed", turnCount: 1, messages: [] });
     expect(answers.written()).toBe("the answer\n");
-    expect(terminal.written()).toContain("read_file a.ts");
+    expect(terminal.written()).toContain("✓ Read a.ts");
     expect(terminal.written()).toContain("Completed");
     expect(terminal.written()).not.toContain("the answer");
   });
@@ -90,7 +90,7 @@ describe("createLiveRegion", () => {
 
     const written = output.written();
     const erased = written.indexOf(CLEAR_LINE);
-    const flushed = written.indexOf("  read_file a.ts");
+    const flushed = written.indexOf("  ✓ Read a.ts");
     expect(erased).toBeGreaterThanOrEqual(0);
     expect(flushed).toBeGreaterThan(erased);
     expect(written).toContain("the answer");
