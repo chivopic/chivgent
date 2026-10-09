@@ -98,6 +98,12 @@ describe("task parsing", () => {
     ).toThrow(/unknown capability/);
   });
 
+  it("rejects an impossible max-tool-calls grader", () => {
+    expect(() => parseTask({ ...valid, graders: [
+      { type: "max-tool-calls", name: "bash", count: 2 },
+    ] }, "/d", "/f")).toThrow(/never grants/);
+  });
+
   it("rejects a nonsensical attempt count", () => {
     expect(() => parseTask({ ...valid, attempts: 0 }, "/d", "/f")).toThrow(/attempts/);
     expect(() => parseTask({ ...valid, attempts: 1000 }, "/d", "/f")).toThrow(/attempts/);
