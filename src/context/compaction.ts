@@ -1,5 +1,6 @@
 import type { LLMClient, Usage } from "../llm.js";
 import type { Message, ToolCall } from "../messages.js";
+import { parsePatch } from "../patch/parse.js";
 
 export interface CompactionState {
   readonly summary: string;
@@ -26,7 +27,7 @@ export interface FileEffectMap {
 
 export const DEFAULT_FILE_EFFECTS: FileEffectMap = {
   reads: ["read_file"],
-  mutates: ["write_file", "edit_file"],
+  mutates: ["write_file", "edit_file", "apply_patch"],
 };
 
 const SUMMARY_INSTRUCTIONS = `You are compacting an engineering conversation so it can continue in a smaller context.
@@ -60,8 +61,9 @@ export class Compactor {
   async compact(
     messages: readonly Message[],
     signal?: AbortSignal,
+    previousState?: CompactionState,
   ): Promise<{ readonly state: CompactionState; readonly usage?: Usage }> {
-    const files = collectFiles(messages, this.fileEffects);
+    const files = collectFiles(messages, this.fileEffects, previousState);
     const { prose, usage } = await this.summarise(messages, signal);
     return {
       state: { ...prose, ...files },
@@ -94,7 +96,7 @@ export function parseSummary(
   content: string,
 ): Pick<CompactionState, "summary" | "decisions" | "pendingTasks"> {
   const fallback = {
-    summary: content.trim(),
+    summary: content.trim().slice(0, 4_000),
     decisions: [] as readonly string[],
     pendingTasks: [] as readonly string[],
   };
@@ -118,7 +120,7 @@ export function parseSummary(
   const record = parsed as Record<string, unknown>;
   const summary =
     typeof record.summary === "string" && record.summary.trim().length > 0
-      ? record.summary.trim()
+      ? record.summary.trim().slice(0, 4_000)
       : fallback.summary;
   return {
     summary,
@@ -131,51 +133,59 @@ function stringList(value: unknown): readonly string[] {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value.filter(
-    (entry): entry is string => typeof entry === "string" && entry.length > 0,
-  );
+  return value
+    .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+    .slice(0, 32)
+    .map((entry) => entry.slice(0, 500));
 }
 
 function collectFiles(
   messages: readonly Message[],
   effects: FileEffectMap,
+  previousState?: CompactionState,
 ): Pick<CompactionState, "readFiles" | "modifiedFiles"> {
-  const readFiles = new Set<string>();
-  const modifiedFiles = new Set<string>();
+  const readFiles = new Set(previousState?.readFiles ?? []);
+  const modifiedFiles = new Set(previousState?.modifiedFiles ?? []);
+  const successful = new Set(
+    messages.filter((message) => message.role === "tool" && !message.isError)
+      .map((message) => message.toolCallId),
+  );
 
   for (const message of messages) {
-    if (message.role !== "assistant") {
-      continue;
-    }
+    if (message.role !== "assistant") continue;
     for (const call of message.toolCalls) {
-      const filePath = pathArgument(call);
-      if (filePath === undefined) {
-        continue;
-      }
-      if (effects.mutates.includes(call.name)) {
-        modifiedFiles.add(filePath);
-      } else if (effects.reads.includes(call.name)) {
-        readFiles.add(filePath);
+      // A tool request is not evidence that a modification or read succeeded.
+      if (!successful.has(call.id)) continue;
+      const paths = pathsForCall(call);
+      for (const filePath of paths) {
+        if (effects.mutates.includes(call.name)) {
+          modifiedFiles.add(filePath);
+        } else if (effects.reads.includes(call.name)) {
+          readFiles.add(filePath);
+        }
       }
     }
   }
-
-  // A file that was changed is more relevant as "changed" than as "read".
-  for (const filePath of modifiedFiles) {
-    readFiles.delete(filePath);
-  }
+  for (const filePath of modifiedFiles) readFiles.delete(filePath);
+  // Bound the injected summary: a huge read list would defeat compaction.
   return {
-    readFiles: [...readFiles].sort(),
-    modifiedFiles: [...modifiedFiles].sort(),
+    readFiles: [...readFiles].sort().slice(0, 128),
+    modifiedFiles: [...modifiedFiles].sort().slice(0, 128),
   };
 }
 
-function pathArgument(call: ToolCall): string | undefined {
-  if (typeof call.arguments !== "object" || call.arguments === null) {
-    return undefined;
+function pathsForCall(call: ToolCall): readonly string[] {
+  if (typeof call.arguments !== "object" || call.arguments === null || Array.isArray(call.arguments)) return [];
+  const args = call.arguments as Record<string, unknown>;
+  if (call.name === "apply_patch" && typeof args.patch === "string") {
+    try {
+      return parsePatch(args.patch).map((change) => change.path);
+    } catch {
+      return [];
+    }
   }
-  const value = (call.arguments as Record<string, unknown>).path;
-  return typeof value === "string" && value.length > 0 ? value : undefined;
+  const path = args.path;
+  return typeof path === "string" && path.length > 0 ? [path] : [];
 }
 
 function renderTranscript(messages: readonly Message[]): string {
