@@ -131,7 +131,7 @@ export function editorFrame(document: EditorDocument, width: number, height: num
       caret: Math.min(cellWidth - 1, 2 + Math.max(0, caret - scrollCells) + (scrollCells > 0 ? 1 : 0)),
     };
   });
-  const header = fitLine("┌─ Edit prompt · Enter newline · Ctrl+S send · Esc cancel", cellWidth);
+  const header = fitLine("┌─ Ctrl+S send · Esc cancel · Enter newline", cellWidth);
   const footer = fitLine(
     document.warning || `└─ ${rows.length} lines · ${Buffer.byteLength(document.text, "utf8")} bytes · ↑↓←→ move`,
     cellWidth,
