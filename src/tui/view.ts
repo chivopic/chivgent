@@ -1,6 +1,6 @@
 import type { TurnEndEvent } from "../events.js";
 import { formatTokens } from "../providers/usage.js";
-import { callTarget } from "../tools/target.js";
+import { toolTranscript } from "./activity.js";
 import { displayWidth, fitLine, fitLineTail, terminalText } from "./text.js";
 import type { RunningTool, ViewState } from "./state.js";
 
@@ -120,12 +120,7 @@ export function transcriptLines(event: TurnEndEvent): readonly string[] {
   const lines: string[] = [];
   // A result carries no arguments, so the target comes from the call that
   // produced it — the same join by call id the eval runner makes.
-  const calls = new Map(event.message.toolCalls.map((call) => [call.id, call]));
-  for (const result of event.toolResults) {
-    const target = callTarget(calls.get(result.toolCallId)?.arguments);
-    const head = target === undefined ? result.toolName : `${result.toolName} ${target}`;
-    lines.push(`  ${head}${result.isError ? " (failed)" : ""}`);
-  }
+  lines.push(...toolTranscript(event.message.toolCalls, event.toolResults));
   if (event.message.content.trim().length > 0) {
     lines.push(event.message.content);
   }
