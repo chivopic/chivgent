@@ -144,10 +144,10 @@ export class EditorDocument {
     return true;
   }
 
-  left(): void { this.cursor = previous(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; }
-  right(): void { this.cursor = next(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; }
-  home(): void { this.cursor = lineStart(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; }
-  end(): void { this.cursor = lineEnd(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; }
+  left(): void { this.cursor = previous(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; this.selectionAnchor = undefined; }
+  right(): void { this.cursor = next(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; this.selectionAnchor = undefined; }
+  home(): void { this.cursor = lineStart(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; this.selectionAnchor = undefined; }
+  end(): void { this.cursor = lineEnd(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; this.selectionAnchor = undefined; }
 
   backspace(): void {
     if (this.deleteSelection()) return;
@@ -167,6 +167,7 @@ export class EditorDocument {
   }
   moveVertical(direction: -1 | 1): void {
     this.lastTyping = false;
+    this.selectionAnchor = undefined;
     const begin = lineStart(this.text, this.cursor);
     const column = this.preferredCell ?? displayWidth(this.text.slice(begin, this.cursor));
     this.preferredCell = column;
@@ -230,7 +231,19 @@ export function editorFrame(document: EditorDocument, width: number, height: num
       display = fitLine(display, inputWidth);
     }
     return {
-      row: fitLine(`│ ${display}`, cellWidth),
+      row: (() => {
+        const baseline = fitLine(`│ ${display}`, cellWidth);
+        const selection = document.selectionRange();
+        if (selection === undefined || display !== original) return baseline;
+        const rowIndex = first + index;
+        const start = rows.slice(0, rowIndex).reduce((sum, row) => sum + row.length + 1, 0);
+        const lo = Math.max(0, selection.start - start);
+        const hi = Math.min(original.length, selection.end - start);
+        if (hi <= lo) return baseline;
+        // ANSI reverse video applies only after width clipping, so it does
+        // not affect terminal columns or permit untrusted escape injection.
+        return `│ ${original.slice(0, lo)}\u001b[7m${original.slice(lo, hi)}\u001b[0m${original.slice(hi)}`;
+      })(),
       caret: Math.min(cellWidth - 1, 2 + Math.max(0, caret - scrollCells) + (scrollCells > 0 ? 1 : 0)),
     };
   });
@@ -239,7 +252,9 @@ export function editorFrame(document: EditorDocument, width: number, height: num
     : "┌─ Ctrl+S send · Esc cancel · Enter newline", cellWidth);
   const popup = displayedSuggestions.map((item, index) => fitLine(`  ${index === selectedSuggestion ? "›" : " "} /${item}`, cellWidth));
   const footer = fitLine(
-    document.warning || `└─ ${rows.length} lines · ${Buffer.byteLength(document.text, "utf8")} bytes · ↑↓←→ move`,
+    document.warning || (document.selectionRange() === undefined
+      ? `└─ ${rows.length} lines · ${Buffer.byteLength(document.text, "utf8")} bytes · ↑↓←→ move`
+      : `└─ Selected ${document.selectionRange()!.end - document.selectionRange()!.start} code units · type to replace`),
     cellWidth,
   );
   return {
