@@ -1,4 +1,5 @@
 import type { Workspace } from "../workspace.js";
+import type { PlanUpdate } from "./update-plan.js";
 
 export interface ToolDefinition {
   readonly name: string;
@@ -18,6 +19,8 @@ export interface ToolContext {
    * the output so far, not a delta. Ignoring it is always valid.
    */
   readonly onUpdate?: (content: string) => void;
+  /** Successful control-tool plans reach the event stream, not the filesystem. */
+  readonly onPlanUpdate?: (update: PlanUpdate) => void;
 }
 
 export interface ToolOutput {
