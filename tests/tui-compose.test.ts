@@ -58,7 +58,9 @@ describe("multiline compose REPL", () => {
       screen.input.write("/compose\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("Compose prompt"));
       screen.input.write("first line\rsecond line\r\nthird line\r/send\r");
-      await vi.waitFor(() => expect(prompts).toEqual(["first line\nsecond line\nthird line"]));
+      await vi.waitFor(() => expect(prompts).toEqual(["first line\nsecond line\nthird line"])).catch(() => {
+        throw new Error(`Paste diagnostic: prompts=${JSON.stringify(prompts)} terminal=${JSON.stringify(screen.bytes().slice(-2300))}`);
+      });
       screen.input.write("/exit\r");
       expect(await done).toBe(0);
     } finally { screen.input.end(); await done; screen.dispose(); }
