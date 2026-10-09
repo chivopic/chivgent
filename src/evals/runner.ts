@@ -6,6 +6,7 @@ import type { UsageTotal } from "../providers/usage.js";
 import { LocalWorkspace } from "../workspace.js";
 import { callTarget } from "../tools/target.js";
 import { toolsFor } from "./tools.js";
+import type { ShellOperations } from "../shell/types.js";
 import { createAttemptWorkspace } from "./fixture.js";
 import { createGrader, describeGrader, type AttemptFacts } from "./graders.js";
 import type { Capability, Task } from "./task.js";
@@ -63,6 +64,8 @@ export interface RunnerOptions {
    * leak into one another through it.
    */
   readonly createClient: () => LLMClient;
+  /** Test-only execution override; the default is the Docker sandbox. */
+  readonly shellOperations?: ShellOperations;
   readonly systemPrompt: string;
   readonly capabilities: readonly Capability[];
   readonly attempts?: number;
@@ -104,7 +107,9 @@ async function runAttempt(
       systemPrompt: options.systemPrompt,
       maxTurns: task.maxTurns,
       llm: options.createClient(),
-      tools: toolsFor(task.capabilities, workspace.path),
+      tools: toolsFor(task.capabilities, workspace.path, {
+        ...(options.shellOperations === undefined ? {} : { shellOperations: options.shellOperations }),
+      }),
       workspace: new LocalWorkspace(workspace.path, {
         allowWrites: task.capabilities.includes("writes"),
       }),
