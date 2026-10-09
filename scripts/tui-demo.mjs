@@ -46,7 +46,8 @@ const session = new AgentSession({ cwd: process.cwd(), agent: {
   }],
 } });
 const region = createLiveRegion({ stream: process.stderr, answerStream: process.stdout,
-  width: () => terminalWidth(process.stderr), height: () => process.stderr.rows || 24 });
+  width: () => terminalWidth(process.stderr), height: () => process.stderr.rows || 24,
+  color: process.env.NO_COLOR === undefined && process.env.TERM !== "dumb" });
 session.subscribe(region.listener);
 process.stderr.on('resize', region.resized);
 try {
