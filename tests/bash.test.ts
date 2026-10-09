@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BashTool } from "../src/tools/bash.js";
+import { createLocalShellOperations } from "../src/shell/local.js";
 import type { Workspace } from "../src/workspace.js";
 
 const temporaryDirectories: string[] = [];
@@ -47,7 +48,7 @@ describe("BashTool", () => {
   it("returns the output of a successful command", async () => {
     const cwd = await temporaryDirectory();
 
-    const result = await new BashTool({ cwd }).execute(
+    const result = await new BashTool({ cwd, operations: createLocalShellOperations(), approve: async () => true }).execute(
       { command: "echo hello" },
       { workspace: unusedWorkspace },
     );
@@ -58,7 +59,7 @@ describe("BashTool", () => {
   it("interleaves stderr with stdout", async () => {
     const cwd = await temporaryDirectory();
 
-    const result = await new BashTool({ cwd }).execute(
+    const result = await new BashTool({ cwd, operations: createLocalShellOperations(), approve: async () => true }).execute(
       { command: "echo out; echo err 1>&2" },
       { workspace: unusedWorkspace },
     );
@@ -71,7 +72,7 @@ describe("BashTool", () => {
   it("runs in the configured working directory", async () => {
     const cwd = await temporaryDirectory();
 
-    const result = await new BashTool({ cwd }).execute(
+    const result = await new BashTool({ cwd, operations: createLocalShellOperations(), approve: async () => true }).execute(
       { command: "pwd" },
       { workspace: unusedWorkspace },
     );
@@ -83,7 +84,7 @@ describe("BashTool", () => {
   it("reports a non-zero exit code and still returns the output", async () => {
     const cwd = await temporaryDirectory();
 
-    const result = await new BashTool({ cwd }).execute(
+    const result = await new BashTool({ cwd, operations: createLocalShellOperations(), approve: async () => true }).execute(
       { command: "echo before failing; exit 3" },
       { workspace: unusedWorkspace },
     );
@@ -96,7 +97,7 @@ describe("BashTool", () => {
   it("says so when a command prints nothing", async () => {
     const cwd = await temporaryDirectory();
 
-    const result = await new BashTool({ cwd }).execute(
+    const result = await new BashTool({ cwd, operations: createLocalShellOperations(), approve: async () => true }).execute(
       { command: "true" },
       { workspace: unusedWorkspace },
     );
@@ -142,7 +143,7 @@ describe("BashTool", () => {
   it("times out and keeps what the command already printed", async () => {
     const cwd = await temporaryDirectory();
 
-    const result = await new BashTool({ cwd }).execute(
+    const result = await new BashTool({ cwd, operations: createLocalShellOperations(), approve: async () => true }).execute(
       { command: "echo starting; sleep 30", timeout: 1 },
       { workspace: unusedWorkspace },
     );
@@ -157,7 +158,7 @@ describe("BashTool", () => {
     const pidFile = path.join(cwd, "child.pid");
     const controller = new AbortController();
 
-    const execution = new BashTool({ cwd }).execute(
+    const execution = new BashTool({ cwd, operations: createLocalShellOperations(), approve: async () => true }).execute(
       { command: `sleep 30 & echo $! > ${pidFile}; wait` },
       { workspace: unusedWorkspace, signal: controller.signal },
     );
@@ -189,7 +190,7 @@ describe("BashTool", () => {
     const cwd = await temporaryDirectory();
 
     const result = await new BashTool({
-      cwd,
+      cwd, operations: createLocalShellOperations(), approve: async () => true,
       maxLines: 5,
       maxBytes: 10_000,
       tempDirectory: cwd,
@@ -212,7 +213,7 @@ describe("BashTool", () => {
 
   it("rejects arguments it does not understand", async () => {
     const cwd = await temporaryDirectory();
-    const tool = new BashTool({ cwd });
+    const tool = new BashTool({ cwd, operations: createLocalShellOperations(), approve: async () => true });
 
     for (const value of [
       {},
@@ -230,7 +231,7 @@ describe("BashTool", () => {
   it("rejects a timeout that is not a positive number", async () => {
     const cwd = await temporaryDirectory();
 
-    const result = await new BashTool({ cwd }).execute(
+    const result = await new BashTool({ cwd, operations: createLocalShellOperations(), approve: async () => true }).execute(
       { command: "echo hi", timeout: 0 },
       { workspace: unusedWorkspace },
     );
@@ -243,7 +244,7 @@ describe("BashTool", () => {
     const cwd = await temporaryDirectory();
     const missing = path.join(cwd, "gone");
 
-    const result = await new BashTool({ cwd: missing }).execute(
+    const result = await new BashTool({ cwd: missing, operations: createLocalShellOperations(), approve: async () => true }).execute(
       { command: "echo hi" },
       { workspace: unusedWorkspace },
     );
@@ -269,7 +270,7 @@ describe("BashTool", () => {
     for (let round = 0; round < 5; round += 1) {
       const controller = new AbortController();
       const execution = new BashTool({
-        cwd,
+        cwd, operations: createLocalShellOperations(), approve: async () => true,
         maxLines: 2,
         maxBytes: 100,
         tempDirectory: cwd,
@@ -290,7 +291,7 @@ describe("BashTool", () => {
     const cwd = await temporaryDirectory();
 
     const result = await new BashTool({
-      cwd,
+      cwd, operations: createLocalShellOperations(), approve: async () => true,
       maxLines: 2,
       maxBytes: 10_000,
       tempDirectory: cwd,
