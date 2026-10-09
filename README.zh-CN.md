@@ -499,6 +499,9 @@ npm install -g "$(npm pack --silent)"
 
 ## Evals
 
+**Shell 安全提示：** `--allow-shell` 现在通过无网络的 Docker 容器执行命令，交互模式会逐条请求确认；非交互模式默认拒绝，除非显式使用 `--approve-all-shell`。限制与风险详见 [Shell 沙箱说明](docs/shell-sandbox.md)。
+
+
 评测前请先运行 `npm run eval -- --dry-run --allow-writes --allow-shell`，在不调用模型的情况下校验任务和生成题目指纹。具体方法见 [基线评测指南](docs/eval-baseline-guide.md)。Token 用量缺失会标为未知，而不是 0。
 
 
