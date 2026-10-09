@@ -7,6 +7,7 @@ import type { LLMClient } from "./llm.js";
 import type { Message } from "./messages.js";
 import { SHELL_SYSTEM_PROMPT, SYSTEM_PROMPT, WRITE_SYSTEM_PROMPT } from "./prompts.js";
 import { AgentSession } from "./session.js";
+import { ShellApprovalGate } from "./shell/approval.js";
 import type { SessionStore } from "./session-store.js";
 import { BashTool } from "./tools/bash.js";
 import { EditFileTool } from "./tools/edit-file.js";
@@ -27,6 +28,7 @@ interface LocalSessionConfig {
     readonly resumed: boolean;
   };
   readonly store?: SessionStore;
+  readonly shellApproval?: ShellApprovalGate;
 }
 
 /** Assemble the local agent once; cli.ts handles only process and UI lifecycle. */
@@ -58,7 +60,10 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
       new SearchTextTool(),
       new ReadFileTool(),
       ...(options.allowWrites ? [new WriteFileTool(), new EditFileTool()] : []),
-      ...(options.allowShell ? [new BashTool({ cwd })] : []),
+      ...(options.allowShell ? [new BashTool({
+        cwd,
+        approve: (command, signal) => config.shellApproval?.approve(command, signal) ?? Promise.resolve(false),
+      })] : []),
       ...(extensions?.registeredTools ?? []).map((entry) => entry.tool),
     ],
     workspace: new LocalWorkspace(cwd, { allowWrites: options.allowWrites }),
