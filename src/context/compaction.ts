@@ -147,7 +147,8 @@ function collectFiles(
   const readFiles = new Set(previousState?.readFiles ?? []);
   const modifiedFiles = new Set(previousState?.modifiedFiles ?? []);
   const successful = new Set(
-    messages.filter((message) => message.role === "tool" && !message.isError)
+    messages.filter((message): message is Extract<Message, { role: "tool" }> =>
+      message.role === "tool" && !message.isError)
       .map((message) => message.toolCallId),
   );
 
