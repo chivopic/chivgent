@@ -7,7 +7,7 @@ This release borrows **interaction principles** from OpenAI Codex's open-source 
 1. **Quiet entry:** show product identity, current provider/model, workspace and one obvious next action. Avoid a giant ASCII banner and dense permanent panels.
 2. **Active run:** keep a small live region with the last few answer lines, currently executing tools, elapsed time, turn count, completed/error counts and a visible Ctrl+C escape hatch. When more tools run than fit, show a count rather than scrolling the entire screen.
 3. **Completed work:** render one bounded, scan-friendly record for each tool; group successful adjacent reads into a single line. Errors remain individually visible, including a short sanitized reason.
-4. **Code changes:** a successful `apply_patch` shows file count, added/removed lines and per-file actions; failed patches show an error **without** a misleading success summary. `edit_file` shows the size of the changed selection. This is a **change summary**, not a complete colorized diff viewer.
+4. **Code changes:** a successful `apply_patch` shows file count, added/removed lines, per-file actions and up to four `+/-` code snippets; failed patches show an error **without** a misleading success summary. `edit_file` shows the size of the changed selection. This is a **change summary**, not a complete colorized diff viewer.
 5. **Approval:** shell execution is a modal transition. Pause the status painter, show sandbox/network context and the complete exact command, then ask for affirmative `y`. Enter/anything else denies. If the entire command cannot be displayed or contains terminal controls, **refuse** approval rather than hiding a suffix.
 6. **Accessibility / safety:** narrow terminals favor a visible cancellation shortcut over stats; strip control characters before applying any ANSI activity coloring; respect `NO_COLOR` and `TERM=dumb`. Rendered answers remain on stdout without styling while chrome and activity go to stderr. This is not a fullscreen alternate-screen application.
 
@@ -29,7 +29,11 @@ This release borrows **interaction principles** from OpenAI Codex's open-source 
     ~ src/a.ts (+1/-1)
     + src/b.ts (new file, +1)
     - src/deprecated.ts (deleted)
+      -old
+      +new
+      +export const b = true;
   ✓ Shell npm test
+    ↳ 42 tests passed
 
 Completed · 3 turn(s) · 11s
 ```
