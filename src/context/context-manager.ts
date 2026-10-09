@@ -135,7 +135,7 @@ export class ContextManager {
 
     const head = effective.slice(0, cut);
     const tail = effective.slice(cut);
-    const { state, usage } = await this.compactor.compact(head, options.signal);
+    const { state, usage } = await this.compactor.compact(head, options.signal, previous?.state);
     const compactedMessages = [summaryMessage(state), ...tail];
     const tokensAfter = this.estimator.estimateMessages(compactedMessages);
 
