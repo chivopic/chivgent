@@ -5,6 +5,7 @@ import type { OutputStream } from "../render.js";
 import { Painter } from "./paint.js";
 import { EMPTY_STATE, reduce, type ViewState } from "./state.js";
 import { transcriptLines, view } from "./view.js";
+import { colorizeActivity } from "./activity.js";
 
 /** How often the region redraws on its own, so elapsed time advances. */
 const TICK_MS = 1000;
@@ -19,6 +20,8 @@ export interface LiveRegionOptions {
   readonly answerStream?: OutputStream;
   readonly now?: () => number;
   readonly tickMs?: number;
+  /** Color applied only to already-sanitized tool records on a real terminal. */
+  readonly color?: boolean;
 }
 
 export interface LiveRegion {
@@ -86,7 +89,7 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
           message: { ...event.message, content: "" },
         });
         if (lines.length > 0) {
-          options.stream.write(`${terminalText(lines.join("\n"))}\n`);
+          options.stream.write(`${colorizeActivity(lines, options.color === true)}\n`);
         }
         if (options.answerStream !== undefined && event.message.content.trim().length > 0) {
           options.answerStream.write(`${event.message.content}\n`);
