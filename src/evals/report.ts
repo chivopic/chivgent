@@ -1,11 +1,13 @@
 import type { TaskResult } from "./runner.js";
 import { formatTokens } from "../providers/usage.js";
+import type { BaselineManifest } from "./baseline.js";
 
 export interface ReportMeta {
   readonly provider: string;
   readonly model: string;
   readonly version: string;
   readonly startedAt: string;
+  readonly baseline?: BaselineManifest;
 }
 
 function median(values: readonly number[]): number {
@@ -34,16 +36,11 @@ function medianTokens(result: TaskResult): string {
   return totals.length === 0 ? "-" : formatTokens(median(totals));
 }
 
-function totalTokens(results: readonly TaskResult[]): number {
-  return results.reduce(
-    (sum, result) =>
-      sum +
-      result.attempts.reduce(
-        (inner, attempt) => inner + (attempt.usage?.usage.totalTokens ?? 0),
-        0,
-      ),
-    0,
-  );
+function measuredTokens(results: readonly TaskResult[]): { total: number | null; missing: number } {
+  const attempts = results.flatMap((result) => result.attempts);
+  const missing = attempts.filter((attempt) => attempt.usage === undefined || !attempt.usage.complete).length;
+  const sum = attempts.reduce((total, attempt) => total + (attempt.usage?.usage.totalTokens ?? 0), 0);
+  return { total: missing > 0 ? null : sum, missing };
 }
 
 function pad(value: string, width: number): string {
@@ -92,10 +89,10 @@ export function formatTable(results: readonly TaskResult[]): string {
   const passed = results.reduce((total, result) => total + result.passed, 0);
   const total = results.reduce((sum, result) => sum + result.total, 0);
   const percent = total === 0 ? 0 : Math.round((passed / total) * 100);
-  const spent = totalTokens(results);
+  const tokens = measuredTokens(results);
   lines.push("");
   lines.push(
-    `overall  ${passed}/${total} (${percent}%)${spent === 0 ? "" : `  ${formatTokens(spent)} tokens`}`,
+    `overall  ${passed}/${total} (${percent}%)${tokens.total === null ? `  token usage unavailable/incomplete (${tokens.missing} attempt(s))` : `  ${formatTokens(tokens.total)} tokens`}`,
   );
   return `${lines.join("\n")}\n`;
 }
@@ -124,7 +121,7 @@ export function toJsonReport(
   meta: ReportMeta,
 ): object {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     ...meta,
     tasks: results.map((result) => ({
       name: result.task,
@@ -132,10 +129,8 @@ export function toJsonReport(
       total: result.total,
       passRate: result.total === 0 ? 0 : result.passed / result.total,
       meanTurns: mean(result.attempts.map((attempt) => attempt.turnCount)),
-      totalTokens: result.attempts.reduce(
-        (sum, attempt) => sum + (attempt.usage?.usage.totalTokens ?? 0),
-        0,
-      ),
+      totalTokens: measuredTokens([result]).total,
+      missingUsageAttempts: measuredTokens([result]).missing,
       medianDurationMs: median(
         result.attempts.map((attempt) => attempt.durationMs),
       ),
@@ -154,7 +149,8 @@ export function toJsonReport(
     overall: {
       passed: results.reduce((total, result) => total + result.passed, 0),
       total: results.reduce((sum, result) => sum + result.total, 0),
-      totalTokens: totalTokens(results),
+      totalTokens: measuredTokens(results).total,
+      missingUsageAttempts: measuredTokens(results).missing,
     },
   };
 }
