@@ -499,6 +499,8 @@ npm install -g "$(npm pack --silent)"
 
 ## Evals
 
+**并行只读工具：** 内置文件读取、目录列举与搜索最多同时执行 4 个；写入、Shell 与第三方扩展保持独占，模型接收的工具结果顺序不变。详见 [工具调度说明](docs/parallel-read-tools.md)。
+
 **项目规则：** 支持分目录加载 `AGENTS.md` 与 `AGENTS.override.md`，详细作用域与上下文压缩说明见 [项目指令文档](docs/scoped-agents-md.md)。
 
 **批量补丁：** `--allow-writes` 现在可以使用 `apply_patch` 一次修改多个文件，采用严格上下文校验；参见 [补丁格式和限制](docs/apply-patch.md)。
