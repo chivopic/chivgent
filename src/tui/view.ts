@@ -57,9 +57,14 @@ function statusLine(run: NonNullable<ViewState["run"]>, now: number, width: numb
     : undefined;
   const completed = run.completedTools ?? 0;
   const failed = run.failedTools ?? 0;
-  const activity = completed + run.running.length > 0
-    ? `${completed} done${failed > 0 ? `, ${failed} failed` : ""}${run.running.length > 0 ? `, ${run.running.length} running` : ""}`
-    : undefined;
+  // Failed calls are already included in completedTools. Display separate
+  // success/failure counts so "1 done, 1 failed" cannot imply two outcomes.
+  const activityParts = [
+    ...(completed > 0 ? [`${Math.max(0, completed - failed)} ok`] : []),
+    ...(failed > 0 ? [`${failed} failed`] : []),
+    ...(run.running.length > 0 ? [`${run.running.length} running`] : []),
+  ];
+  const activity = activityParts.length > 0 ? activityParts.join(", ") : undefined;
   const candidates = [
     [status, `turn ${run.turn}/${run.maxTurns}`, ...(activity === undefined ? [] : [activity]), duration, ...(tokens === undefined ? [] : [tokens]), "ctrl+c to stop"],
     [status, `turn ${run.turn}/${run.maxTurns}`, duration, ...(tokens === undefined ? [] : [tokens]), "ctrl+c to stop"],
