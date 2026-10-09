@@ -499,6 +499,8 @@ npm install -g "$(npm pack --silent)"
 
 ## Evals
 
+**TUI V2：** 支持 `/compose` 多行输入、`/diff [页码]` 查看完整补丁、Markdown/代码块显示以及单键 Shell 审批。详见 [TUI V2 指南](docs/tui-v2.md)。
+
 **并行只读工具：** 内置文件读取、目录列举与搜索最多同时执行 4 个；写入、Shell 与第三方扩展保持独占，模型接收的工具结果顺序不变。详见 [工具调度说明](docs/parallel-read-tools.md)。
 
 **项目规则：** 支持分目录加载 `AGENTS.md` 与 `AGENTS.override.md`，详细作用域与上下文压缩说明见 [项目指令文档](docs/scoped-agents-md.md)。

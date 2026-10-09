@@ -18,6 +18,11 @@ const menuKeys = new Map<string, "up" | "down" | "enter" | "escape" | "tab">([
 export class TuiInput extends PassThrough {
   readonly isTTY: boolean;
   private busy = false;
+  private approvalMode = false;
+  private composeMode = false;
+  private pendingCompose: Buffer[] = [];
+  private pendingComposeBytes = 0;
+  private composeOverflow = false;
   private submitted = false;
   private afterCR = false;
   private escapePrefix = Buffer.alloc(0);
@@ -42,6 +47,33 @@ export class TuiInput extends PassThrough {
     this.busy = busy;
   }
 
+  /** While approving, y/n/Escape answer immediately without Enter. */
+  setApprovalMode(enabled: boolean): void {
+    this.approvalMode = enabled;
+  }
+
+  /** Preserve pasted multi-line input only while the explicit composer is open. */
+  get composeLimitExceeded(): boolean { return this.composeOverflow; }
+
+  setComposeMode(enabled: boolean): void {
+    this.composeMode = enabled;
+    if (!enabled) {
+      this.composeOverflow = false;
+      this.pendingCompose = [];
+      this.pendingComposeBytes = 0;
+    }
+  }
+
+  private queueCompose(chunk: Buffer): void {
+    // Never turn an unbounded paste into an unbounded memory backlog.
+    if (this.pendingComposeBytes + chunk.length > 64 * 1024) {
+      this.composeOverflow = true;
+      return;
+    }
+    this.pendingComposeBytes += chunk.length;
+    this.pendingCompose.push(Buffer.from(chunk));
+  }
+
   setMenuControls(beforeEdit: () => void, menuKey: (key: "up" | "down" | "enter" | "escape" | "tab") => boolean): void {
     this.beforeEdit = beforeEdit;
     this.menuKey = menuKey;
@@ -50,6 +82,15 @@ export class TuiInput extends PassThrough {
   /** Called only when the REPL is ready to read its next line. */
   acceptLine(): void {
     this.submitted = false;
+    if (this.composeMode && this.pendingCompose.length > 0) {
+      const chunks = this.pendingCompose;
+      this.pendingCompose = [];
+      this.pendingComposeBytes = 0;
+      queueMicrotask(() => {
+        if (!this.composeMode) return;
+        for (const chunk of chunks) this.receive(chunk);
+      });
+    }
   }
 
   markSubmitted(): void {
@@ -78,8 +119,24 @@ export class TuiInput extends PassThrough {
     if (this.afterCR && bytes[0] === 10) bytes = bytes.subarray(1);
     this.afterCR = false;
     if (bytes.length === 0) return;
+    if (this.approvalMode && !this.submitted) {
+      // Single-key approval; ignore extra pasted bytes and always allow Ctrl+C.
+      if (bytes.includes(3)) { this.write("\u0003"); return; }
+      const first = bytes[0];
+      if (first === 121 || first === 89 || first === 110 || first === 78 || first === 27) {
+        this.submitted = true;
+        this.write(first === 121 || first === 89 ? "y\r" : "n\r");
+        return;
+      }
+    }
     if (this.busy || this.submitted) {
-      if (bytes.includes(3)) this.write("\u0003");
+      if (bytes.includes(3)) {
+        this.pendingCompose = [];
+        this.pendingComposeBytes = 0;
+        this.write("\u0003");
+      } else if (this.submitted && this.composeMode && !this.busy) {
+        this.queueCompose(bytes);
+      }
       return;
     }
 
@@ -127,6 +184,14 @@ export class TuiInput extends PassThrough {
           this.submitted = true;
           this.afterCR = byte === 13 && offset + 1 === bytes.length;
           forward(part);
+          if (this.composeMode && offset + size < bytes.length) {
+            // Treat CRLF as one newline even when the remainder will be
+            // replayed on the next readline iteration.
+            const remainder = bytes.subarray(offset + size);
+            const withoutLF = byte === 13 && remainder[0] === 10
+              ? remainder.subarray(1) : remainder;
+            if (withoutLF.length > 0) this.queueCompose(withoutLF);
+          }
           return;
         }
         forward(part);

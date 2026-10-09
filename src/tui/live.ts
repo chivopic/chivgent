@@ -6,6 +6,7 @@ import { Painter } from "./paint.js";
 import { EMPTY_STATE, reduce, type ViewState } from "./state.js";
 import { transcriptLines, view } from "./view.js";
 import { colorizeActivity } from "./activity.js";
+import { formatTerminalMarkdown } from "./markdown.js";
 
 /** How often the region redraws on its own, so elapsed time advances. */
 const TICK_MS = 1000;
@@ -22,6 +23,8 @@ export interface LiveRegionOptions {
   readonly tickMs?: number;
   /** Color applied only to already-sanitized tool records on a real terminal. */
   readonly color?: boolean;
+  /** Format interactive answers, never change piped or machine-readable output. */
+  readonly markdown?: boolean;
 }
 
 export interface LiveRegion {
@@ -92,7 +95,7 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
           options.stream.write(`${colorizeActivity(lines, options.color === true)}\n`);
         }
         if (options.answerStream !== undefined && event.message.content.trim().length > 0) {
-          options.answerStream.write(`${event.message.content}\n`);
+          options.answerStream.write(`${options.markdown ? formatTerminalMarkdown(event.message.content, options.width(), options.color === true) : event.message.content}\n`);
         }
       }
 
@@ -107,7 +110,8 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
         painter.clear();
         // Cancellation can end a streamed turn before turn_end arrives.
         if (previous.run?.text) {
-          (options.answerStream ?? options.stream).write(`${terminalText(previous.run.text)}\n`);
+          const partial = terminalText(previous.run.text);
+          (options.answerStream ?? options.stream).write(`${options.markdown ? formatTerminalMarkdown(partial, options.width(), options.color === true) : partial}\n`);
         }
         const label = event.status === "completed" ? "Completed"
           : event.status === "aborted" ? "Stopped"

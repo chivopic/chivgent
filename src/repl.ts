@@ -7,6 +7,7 @@ import type { RegisteredCommand } from "./extensions/api.js";
 import { formatTokens } from "./providers/usage.js";
 import { approvalPreview, commandReviewable } from "./tui/activity.js";
 import { terminalWidth } from "./tui/live.js";
+import { formatDiffPage, mostRecentSuccessfulPatch } from "./tui/diff.js";
 import type { LiveRegion } from "./tui/live.js";
 import type { ShellApprovalGate } from "./shell/approval.js";
 
@@ -37,6 +38,8 @@ export interface SlashCommandContext {
   /** Present when this session can store a key; absent for a signed-in remote. */
   readonly signIn?: SignIn;
   readonly providers?: ProviderControl;
+  readonly width?: number;
+  readonly color?: boolean;
 }
 
 export interface ProviderSelection {
@@ -71,6 +74,8 @@ export const BUILT_IN_COMMANDS = [
   "help",
   "session",
   "tools",
+  "diff",
+  "compose",
   "clear",
   "exit",
   "quit",
@@ -84,6 +89,8 @@ const HELP = `Commands:
   /help      Show this help
   /session   Show the current session id, workspace, and size
   /tools     List the tools available to the model
+  /diff [N]  Review the latest successful apply_patch, page N
+  /compose   Write a multi-line prompt (/send to submit, /cancel to discard)
   /clear     Start a new transcript in the same session
   /provider  Choose a Provider (↑↓ and Enter in the TUI)
   /model     Show or change the current model: /model MODEL
@@ -135,6 +142,26 @@ export function handleSlashCommand(
       context.write(
         `${context.session.toolNames.map((name) => `  ${name}`).join("\n")}\n`,
       );
+      return "handled";
+
+    case "/diff": {
+      const argument = trimmed.slice("/diff".length).trim();
+      if (argument.length > 0 && !/^[1-9]\d*$/.test(argument)) {
+        context.write("Usage: /diff [positive page number]\n");
+        return "handled";
+      }
+      const patch = mostRecentSuccessfulPatch(context.session.messages);
+      if (patch === undefined) {
+        context.write("No successfully applied patch found in this session.\n");
+        return "handled";
+      }
+      const page = argument.length === 0 ? 1 : Number(argument);
+      context.write(formatDiffPage(patch, page, context.width ?? 80, context.color === true).text);
+      return "handled";
+    }
+
+    case "/compose":
+      context.write("Use /compose at the interactive prompt to enter multi-line mode.\n");
       return "handled";
 
     case "/clear":
@@ -370,6 +397,8 @@ export async function runRepl(options: ReplOptions): Promise<number> {
   let promptVisible = false;
   let inputClosed = false;
   let signingIn = false;
+  let composing = false;
+  let composeCancelled = false;
   let interrupted = false;
   if (tuiInput !== undefined) {
     tuiInput.setMenuControls(() => {
@@ -439,6 +468,11 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     }
   });
   readline.on("SIGINT", () => {
+    if (composing) {
+      composeCancelled = true;
+      readline.write("\r");
+      return;
+    }
     if (controller === undefined) {
       if (options.tui) {
         // Erase wrapped drafts before removing the prompt on close.
@@ -472,6 +506,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       if (signal?.aborted) return false;
       menu?.clear();
       options.liveRegion?.pause();
+      tuiInput?.setApprovalMode(true);
       tuiInput?.setBusy(false);
       try {
         const width = terminalWidth({ columns: (options.output as typeof options.output & { columns?: number }).columns });
@@ -497,11 +532,60 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         }
       } finally {
         readline.setPrompt(REPL_PROMPT);
+        tuiInput?.setApprovalMode(false);
         tuiInput?.setBusy(true);
         options.liveRegion?.resume();
       }
     });
   }
+
+  /** Modal composer retains readline editing, Unicode and native history. */
+  const collectMultiline = async (): Promise<string | undefined> => {
+    const parts: string[] = [];
+    let bytes = 0;
+    composing = true;
+    composeCancelled = false;
+    tuiInput?.setComposeMode(true);
+    menu?.clear();
+    dismissedLine = undefined;
+    readline.setPrompt("  │ ");
+    write("\nCompose prompt · Enter adds a line · /send submits · /cancel discards\n");
+    try {
+      for (;;) {
+        readline.prompt();
+        const part = await readNextLine();
+        if (tuiInput?.composeLimitExceeded) {
+          write("Draft too large (64 KiB paste buffer). Nothing was sent.\n");
+          return undefined;
+        }
+        if (composeCancelled || part === undefined || part.trim() === "/cancel") {
+          write("Draft discarded.\n");
+          return undefined;
+        }
+        if (part.trim() === "/send") {
+          const message = parts.join("\n");
+          if (message.trim().length === 0) {
+            write("Empty draft discarded.\n");
+            return undefined;
+          }
+          write(`Submitted ${parts.length} lines.\n`);
+          return message;
+        }
+        bytes += Buffer.byteLength(part, "utf8") + 1;
+        if (parts.length >= 200 || bytes > 64 * 1024) {
+          write("Draft too large (200 lines / 64 KiB). Nothing was sent.\n");
+          return undefined;
+        }
+        // //send and //cancel are literal lines instead of commands.
+        parts.push(part.startsWith("//send") || part.startsWith("//cancel") ? part.slice(1) : part);
+      }
+    } finally {
+      composing = false;
+      composeCancelled = false;
+      tuiInput?.setComposeMode(false);
+      readline.setPrompt(REPL_PROMPT);
+    }
+  };
 
   const signInAfterProviderSelection = async (): Promise<void> => {
     if (!options.tui || options.signIn === undefined) return;
@@ -525,7 +609,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
 
   try {
     for (;;) {
-      const line = await readNextLine();
+      let line = await readNextLine();
       if (line === undefined) {
         break;
       }
@@ -534,9 +618,21 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         continue;
       }
 
-      const outcome = handleSlashCommand(line, {
+      const fromComposer = line.trim() === "/compose";
+      if (fromComposer) {
+        const draft = await collectMultiline();
+        if (draft === undefined) {
+          if (inputClosed) break;
+          showPrompt();
+          continue;
+        }
+        line = draft;
+      }
+      const outcome = fromComposer ? "not-a-command" : handleSlashCommand(line, {
         session: options.session,
         write,
+        width: terminalWidth({ columns: (options.output as typeof options.output & { columns?: number }).columns }),
+        color: options.tui === true && process.env.NO_COLOR === undefined && process.env.TERM !== "dumb",
         ...(options.sessionFile === undefined
           ? {}
           : { sessionFile: options.sessionFile }),

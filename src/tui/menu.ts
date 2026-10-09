@@ -27,7 +27,7 @@ export class InputMenu {
     this.items = items;
     this.selected = preserveSelection ? Math.max(0, items.findIndex((item) => item.value === previous)) : 0;
     if (items.length === 0) return;
-    const height = Math.min(items.length, 12, Math.max(0, (this.output.rows ?? 24) - 2));
+    const height = Math.min(items.length, 16, Math.max(0, (this.output.rows ?? 24) - 2));
     if (height === 0) return;
     if (height > this.reserved) {
       const extra = height - this.reserved;
