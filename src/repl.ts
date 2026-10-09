@@ -635,6 +635,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     tuiInput.setRawHandler(chunk => { editor.receive(chunk); });
     output.on("resize", resized);
     readline.once("close", closed);
+    options.input.once("end", closed);
     try {
       editor.begin();
       const result = await pending;
@@ -645,6 +646,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       tuiInput.setRawHandler(undefined);
       output.off("resize", resized);
       readline.off("close", closed);
+      options.input.off("end", closed);
       composing = false;
     }
   };
