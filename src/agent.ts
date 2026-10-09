@@ -126,7 +126,7 @@ export class Agent {
     // Older logs or crashed executions can end with an assistant tool call
     // without a corresponding tool result. Repair those pairs before sending
     // any new user message to a Provider.
-    const history = structuredClone(options.history ?? []);
+    const history = structuredClone([...(options.history ?? [])]);
     closePendingToolCalls(history);
     const state: RunState = {
       messages: [
