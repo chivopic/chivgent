@@ -37,6 +37,10 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Docker sandbox smoke test
+        if: matrix.node-version == 22
+        run: node scripts/docker-smoke.mjs
+
       - name: Eval preflight (no API calls)
         run: npm run eval -- --dry-run --allow-writes --allow-shell
 
