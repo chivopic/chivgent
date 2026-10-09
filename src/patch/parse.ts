@@ -2,6 +2,8 @@
 export interface PatchHunk {
   readonly oldLines: readonly string[];
   readonly newLines: readonly string[];
+  readonly added: number;
+  readonly removed: number;
 }
 export type PatchChange =
   | { readonly kind: "add"; readonly path: string; readonly lines: readonly string[] }
@@ -64,6 +66,8 @@ export function parsePatch(patch: string): readonly PatchChange[] {
         cursor += 1;
         const oldLines: string[] = [];
         const newLines: string[] = [];
+        let added = 0;
+        let removed = 0;
         while (cursor < lines.length && lines[cursor] !== "@@" && !(lines[cursor] ?? "").startsWith("*** ")) {
           const line = lines[cursor] ?? "";
           const prefix = line.slice(0, 1);
@@ -72,12 +76,14 @@ export function parsePatch(patch: string): readonly PatchChange[] {
           }
           if (prefix !== "+") oldLines.push(line.slice(1));
           if (prefix !== "-") newLines.push(line.slice(1));
+          if (prefix === "+") added += 1;
+          if (prefix === "-") removed += 1;
           cursor += 1;
         }
         if (oldLines.length === 0 || (oldLines.join("\n") === newLines.join("\n"))) {
           throw new PatchError(`Hunk for ${file} must replace anchored text with a change.`);
         }
-        hunks.push({ oldLines, newLines });
+        hunks.push({ oldLines, newLines, added, removed });
       }
       if (hunks.length === 0) throw new PatchError(`Update File ${file} requires at least one @@ hunk.`);
       changes.push({ kind: "update", path: file, hunks });
