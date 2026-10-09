@@ -20,6 +20,7 @@ import {
   type SessionStore,
 } from "./session-store.js";
 import { killTrackedChildren } from "./shell/process.js";
+import { killTrackedDockerContainers } from "./shell/docker.js";
 import { ShellApprovalGate } from "./shell/approval.js";
 import { decideTrust } from "./extensions/decide-trust.js";
 import { discoverExtensions } from "./extensions/discover.js";
@@ -55,6 +56,7 @@ const EXIT_INTERRUPTED = 130;
 function installShellCleanup(): void {
   const cleanup = (): void => {
     killTrackedChildren();
+    killTrackedDockerContainers();
   };
   process.on("exit", cleanup);
   for (const signal of ["SIGTERM", "SIGHUP"] as const) {
