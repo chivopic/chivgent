@@ -137,3 +137,22 @@ export function approvalPreview(command: string, columns: number): string {
   ];
   return `\n${lines.map(line => short(line, width)).join("\n")}\n`;
 }
+
+/**
+ * Apply theme colors *after* sanitizing untrusted tool text. Keep this outside
+ * the pure layout model, so the Painter's line diffing and terminal widths
+ * are never based on escape sequences supplied by a tool.
+ */
+export function colorizeActivity(lines: readonly string[], enabled: boolean): string {
+  const safe = lines.map(line => terminalText(line));
+  if (!enabled) return safe.join("\n");
+  const paint = (line: string): string => {
+    const trimmed = line.trimStart();
+    const code = trimmed.startsWith("!") ? "31"
+      : trimmed.startsWith("✓") || trimmed.startsWith("+") ? "32"
+      : trimmed.startsWith("~") ? "36"
+      : "2";
+    return `\u001b[${code}m${line}\u001b[0m`;
+  };
+  return safe.map(paint).join("\n");
+}
