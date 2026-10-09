@@ -20,8 +20,7 @@ import {
   type SessionStore,
 } from "./session-store.js";
 import { killTrackedChildren } from "./shell/process.js";
-import { resolveShellConfig } from "./shell/config.js";
-import { ShellUnavailableError } from "./shell/types.js";
+import { ShellApprovalGate } from "./shell/approval.js";
 import { decideTrust } from "./extensions/decide-trust.js";
 import { discoverExtensions } from "./extensions/discover.js";
 import { loadExtensions } from "./extensions/loader.js";
@@ -246,22 +245,17 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 
   if (options.allowShell) {
-    try {
-      resolveShellConfig();
-    } catch (error: unknown) {
-      if (error instanceof ShellUnavailableError) {
-        process.stderr.write(`${error.message}\n`);
-        return 1;
-      }
-      throw error;
-    }
     installShellCleanup();
   }
+  const shellApproval = options.allowShell
+    ? new ShellApprovalGate(options.approveAllShell)
+    : undefined;
 
   const session = createLocalSession({
     options,
     cwd,
     llm,
+    ...(shellApproval === undefined ? {} : { shellApproval }),
     ...(registry === undefined ? {} : { extensions: registry }),
     restored,
     ...(store === undefined ? {} : { store }),
@@ -316,6 +310,7 @@ async function main(argv: readonly string[]): Promise<number> {
     try {
       return await runRepl({
         session,
+        ...(shellApproval === undefined ? {} : { shellApproval }),
         signIn: providerControl,
         providers: providerControl,
         input: process.stdin,
