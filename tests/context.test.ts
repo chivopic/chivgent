@@ -248,7 +248,7 @@ describe("Compactor", () => {
     const compactor = new Compactor(summarisingClient('{"summary":"attempt failed"}'));
     const messages: Message[] = [
       assistantWithCall("edit_file", "src/broken.ts", "fail"),
-      { ...toolResult("fail", "edit_file", "no match"), isError: true },
+      { role: "tool", toolCallId: "fail", toolName: "edit_file", content: "no match", isError: true },
       assistantWithCall("read_file", "src/verified.ts", "ok"),
       toolResult("ok", "read_file", "contents"),
     ];
