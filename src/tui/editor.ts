@@ -35,8 +35,11 @@ export class EditorDocument {
   private undoStack: { text: string; cursor: number }[] = [];
   private redoStack: { text: string; cursor: number }[] = [];
   private static readonly MAX_HISTORY = 100;
+  private lastTyping = false;
 
-  private checkpoint(): void {
+  private checkpoint(typing = false): void {
+    if (typing && this.lastTyping) return;
+    this.lastTyping = typing;
     this.undoStack.push({ text: this.text, cursor: this.cursor });
     if (this.undoStack.length > EditorDocument.MAX_HISTORY) this.undoStack.shift();
     this.redoStack = [];
@@ -48,6 +51,7 @@ export class EditorDocument {
     this.redoStack.push({ text: this.text, cursor: this.cursor });
     this.text = previous.text;
     this.cursor = previous.cursor;
+    this.lastTyping = false;
     this.preferredCell = undefined;
     this.warning = "";
   }
@@ -58,6 +62,7 @@ export class EditorDocument {
     this.undoStack.push({ text: this.text, cursor: this.cursor });
     this.text = nextState.text;
     this.cursor = nextState.cursor;
+    this.lastTyping = false;
     this.preferredCell = undefined;
     this.warning = "";
   }
@@ -73,7 +78,7 @@ export class EditorDocument {
     return true;
   }
 
-  insert(value: string): boolean {
+  insert(value: string, typing = false): boolean {
     const normalized = terminalText(value).replace(/\r\n?/g, "\n");
     if (Buffer.byteLength(this.text, "utf8") + Buffer.byteLength(normalized, "utf8") > MAX_BYTES ||
         this.text.split("\n").length + normalized.split("\n").length - 1 > MAX_LINES) {
@@ -81,7 +86,7 @@ export class EditorDocument {
       return false;
     }
     if (normalized.length === 0) return true;
-    this.checkpoint();
+    this.checkpoint(typing);
     this.text = this.text.slice(0, this.cursor) + normalized + this.text.slice(this.cursor);
     this.cursor += normalized.length;
     this.preferredCell = undefined;
@@ -89,10 +94,10 @@ export class EditorDocument {
     return true;
   }
 
-  left(): void { this.cursor = previous(this.text, this.cursor); this.preferredCell = undefined; }
-  right(): void { this.cursor = next(this.text, this.cursor); this.preferredCell = undefined; }
-  home(): void { this.cursor = lineStart(this.text, this.cursor); this.preferredCell = undefined; }
-  end(): void { this.cursor = lineEnd(this.text, this.cursor); this.preferredCell = undefined; }
+  left(): void { this.cursor = previous(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; }
+  right(): void { this.cursor = next(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; }
+  home(): void { this.cursor = lineStart(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; }
+  end(): void { this.cursor = lineEnd(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; }
 
   backspace(): void {
     if (this.cursor === 0) return;
@@ -109,6 +114,7 @@ export class EditorDocument {
     this.preferredCell = undefined;
   }
   moveVertical(direction: -1 | 1): void {
+    this.lastTyping = false;
     const begin = lineStart(this.text, this.cursor);
     const column = this.preferredCell ?? displayWidth(this.text.slice(begin, this.cursor));
     this.preferredCell = column;
