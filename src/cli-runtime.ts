@@ -17,6 +17,7 @@ import { ListFilesTool } from "./tools/list-files.js";
 import { ReadFileTool } from "./tools/read-file.js";
 import { SearchTextTool } from "./tools/search-text.js";
 import { WriteFileTool } from "./tools/write-file.js";
+import { UpdatePlanTool } from "./tools/update-plan.js";
 import { LocalWorkspace } from "./workspace.js";
 
 interface LocalSessionConfig {
@@ -61,6 +62,7 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
       new ListFilesTool(),
       new SearchTextTool(),
       new ReadFileTool(),
+      new UpdatePlanTool(),
       ...(options.allowWrites ? [new WriteFileTool(), new EditFileTool(), new ApplyPatchTool()] : []),
       ...(options.allowShell ? [new BashTool({
         cwd,
