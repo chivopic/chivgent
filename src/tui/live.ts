@@ -27,6 +27,10 @@ export interface LiveRegion {
   stop(): void;
   /** Drops the diff baseline and repaints, for a resize. */
   resized(): void;
+  /** Yield terminal ownership while a modal approval reads input. */
+  pause(): void;
+  /** Restore the live region without discarding accumulated progress. */
+  resume(): void;
 }
 
 /**
@@ -41,8 +45,10 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
   const painter = new Painter({ stream: options.stream });
   let state: ViewState = EMPTY_STATE;
   let timer: NodeJS.Timeout | undefined;
+  let paused = false;
 
   const paint = (): void => {
+    if (paused) return;
     painter.render(view(state, {
       // Leave one cell spare to avoid a terminal's pending autowrap state.
       width: Math.max(1, options.width() - 1),
@@ -119,6 +125,23 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
       paint();
     },
 
+    pause: (): void => {
+      if (paused) return;
+      paused = true;
+      stopClock();
+      painter.clear();
+    },
+
+    resume: (): void => {
+      if (!paused) return;
+      paused = false;
+      if (state.run !== undefined) {
+        startClock();
+        painter.invalidate();
+        paint();
+      }
+    },
+
     stop: (): void => {
       stopClock();
       painter.clear();
@@ -126,7 +149,7 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
     },
 
     resized: (): void => {
-      if (state.run === undefined) return;
+      if (state.run === undefined || paused) return;
       painter.invalidate(options.width(), options.height?.());
       paint();
     },
