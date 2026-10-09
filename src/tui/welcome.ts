@@ -12,32 +12,44 @@ export interface WelcomeOptions {
   readonly color?: boolean;
 }
 
-const glyphs: Record<string, readonly string[]> = {
-  C: ["█▀▀", "█  ", "█▄▄"], H: ["█ █", "█▀█", "█ █"], I: ["█", "█", "█"],
-  V: ["█ █", "█ █", " ▀ "], G: ["█▀▀", "█ ▄", "█▄█"], E: ["█▀▀", "█▀ ", "█▄▄"],
-  N: ["█▄█", "█▀█", "█ █"], T: ["▀█▀", " █ ", " █ "],
-};
-const wordmark = [0, 1, 2].map((row) => [..."CHIVGENT"].map((letter) => glyphs[letter]?.[row] ?? "").join(" "));
+const COLOR = "\u001b[1;36m";
+const DIM = "\u001b[2m";
+const RESET = "\u001b[0m";
 
+/**
+ * Calm first frame, inspired by the hierarchy of mature coding CLIs:
+ * recognizable product, model and workspace, one next action, then shortcuts.
+ * It never takes the alternate screen or steals scrollback.
+ */
 export function welcome(options: WelcomeOptions): string {
   const width = Math.max(1, options.width - 1);
-  const brand = width >= 38 ? wordmark.map((row) => `  ${row}`) : ["  ◆ chivgent"];
+  const wide = width >= 42;
+  const brand = wide
+    ? "  ◆ chivgent"
+    : "  ◆ chivgent";
+  const start = options.setupIssue === "model"
+    ? "Set a model with /model MODEL"
+    : options.setupIssue === "base-url"
+      ? "Set the API URL with /endpoint URL"
+      : options.signedOut
+        ? "Start with /provider → choose a Provider"
+        : "Ready. Describe a task to begin.";
+  const model = `${options.provider}  ·  ${options.model}`;
   const lines = [
-    ...brand,
-    `  v${options.version}${options.resumed ? "  ·  continued session" : ""}`,
-    `  ${options.provider} / ${options.model}`,
-    `  ${fitLineTail(options.cwd, width - 2)}`,
-    options.setupIssue === "model"
-      ? "  Set a model with /model MODEL"
-      : options.setupIssue === "base-url"
-        ? "  Set the API URL with /endpoint URL"
-        : options.signedOut
-          ? "  Start with /provider → choose a Provider"
-          : "  Ready. Type a task or use /provider to switch.",
-    "  / commands  ·  ↑↓ select  ·  Ctrl+C exit",
+    brand,
+    `  v${options.version}${options.resumed ? "  ·  resumed session" : ""}`,
+    "",
+    `  ${fitLine(model, Math.max(1, width - 2))}`,
+    `  ${fitLineTail(options.cwd, Math.max(1, width - 2))}`,
+    "",
+    `  ${start}`,
+    `  / commands  ·  Tab complete  ·  Ctrl+C stop/exit`,
   ];
   return `\n${lines.map((line, index) => {
     const fitted = fitLine(line, width);
-    return options.color && index < brand.length ? `\u001b[1;36m${fitted}\u001b[0m` : fitted;
+    if (!options.color || fitted.length === 0) return fitted;
+    if (index === 0) return `${COLOR}${fitted}${RESET}`;
+    if (index === 1 || index === 4 || index === 7) return `${DIM}${fitted}${RESET}`;
+    return fitted;
   }).join("\n")}\n\n`;
 }
