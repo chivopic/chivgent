@@ -185,7 +185,12 @@ export class TuiInput extends PassThrough {
           this.afterCR = byte === 13 && offset + 1 === bytes.length;
           forward(part);
           if (this.composeMode && offset + size < bytes.length) {
-            this.queueCompose(bytes.subarray(offset + size));
+            // Treat CRLF as one newline even when the remainder will be
+            // replayed on the next readline iteration.
+            const remainder = bytes.subarray(offset + size);
+            const withoutLF = byte === 13 && remainder[0] === 10
+              ? remainder.subarray(1) : remainder;
+            if (withoutLF.length > 0) this.queueCompose(withoutLF);
           }
           return;
         }
