@@ -1,4 +1,6 @@
 import { realpathSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { createLocalShellOperations } from "./local.js";
 import type { ShellConfig } from "./config.js";
 import type { ShellOperations } from "./types.js";
@@ -13,6 +15,7 @@ export const DEFAULT_SHELL_IMAGE = "node:22-alpine";
 export interface DockerShellOptions {
   readonly image?: string;
   readonly dockerExecutable?: string;
+  readonly containerName?: string;
 }
 
 export function dockerShellConfig(cwd: string, options: DockerShellOptions = {}): ShellConfig {
@@ -29,7 +32,8 @@ export function dockerShellConfig(cwd: string, options: DockerShellOptions = {})
   return {
     shell: docker,
     args: [
-      "run", "--rm", "--interactive",
+      "run", "--rm",
+      ...(options.containerName === undefined ? [] : ["--name", options.containerName]),
       "--network", "none",
       "--read-only",
       "--cap-drop", "ALL",
@@ -53,7 +57,23 @@ export function dockerShellConfig(cwd: string, options: DockerShellOptions = {})
  * shell fallback.
  */
 export function createDockerShellOperations(options: DockerShellOptions = {}): ShellOperations {
-  return createLocalShellOperations({
-    resolveConfig: (cwd) => dockerShellConfig(cwd, options),
-  });
+  const docker = options.dockerExecutable ?? "docker";
+  return {
+    async exec(command, cwd, execOptions) {
+      const containerName = `chivgent-${randomUUID()}`;
+      const runner = createLocalShellOperations({
+        resolveConfig: () => dockerShellConfig(cwd, { ...options, containerName }),
+      });
+      try {
+        return await runner.exec(command, cwd, execOptions);
+      } finally {
+        // Stopping the docker CLI does not always stop its daemon-managed
+        // container. Force-remove by a unique name on every exit path.
+        spawnSync(docker, ["rm", "--force", containerName], {
+          stdio: "ignore",
+          timeout: 3_000,
+        });
+      }
+    },
+  };
 }
