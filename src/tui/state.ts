@@ -1,4 +1,5 @@
 import type { AgentEvent } from "../events.js";
+import type { PlanUpdate } from "../tools/update-plan.js";
 import { addUsage, type UsageTotal } from "../providers/usage.js";
 import { callTarget } from "../tools/target.js";
 
@@ -29,6 +30,7 @@ export interface RunState {
   /** Tools running right now, in the order they started. */
   readonly running: readonly RunningTool[];
   readonly usage?: UsageTotal;
+  readonly plan?: PlanUpdate;
   readonly status: RunStatus;
   /** Per-turn completed/failed counts for a concise progress meter. */
   readonly completedTools?: number;
@@ -91,6 +93,12 @@ export function reduce(
   }
 
   switch (event.type) {
+    case "plan_update":
+      return { run: { ...run, plan: {
+        plan: structuredClone(event.plan),
+        ...(event.explanation === undefined ? {} : { explanation: event.explanation }),
+      } } };
+
     case "turn_start":
       return { run: { ...run, turn: event.turn, status: "thinking" } };
 
