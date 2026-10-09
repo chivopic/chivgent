@@ -32,14 +32,61 @@ export class EditorDocument {
   readonly maxLines = MAX_LINES;
   warning = "";
   private preferredCell?: number;
+  private undoStack: { text: string; cursor: number }[] = [];
+  private redoStack: { text: string; cursor: number }[] = [];
+  private static readonly MAX_HISTORY = 100;
+  private lastTyping = false;
 
-  insert(value: string): boolean {
+  private checkpoint(typing = false): void {
+    if (typing && this.lastTyping) return;
+    this.lastTyping = typing;
+    this.undoStack.push({ text: this.text, cursor: this.cursor });
+    if (this.undoStack.length > EditorDocument.MAX_HISTORY) this.undoStack.shift();
+    this.redoStack = [];
+  }
+
+  undo(): void {
+    const previous = this.undoStack.pop();
+    if (previous === undefined) return;
+    this.redoStack.push({ text: this.text, cursor: this.cursor });
+    this.text = previous.text;
+    this.cursor = previous.cursor;
+    this.lastTyping = false;
+    this.preferredCell = undefined;
+    this.warning = "";
+  }
+
+  redo(): void {
+    const nextState = this.redoStack.pop();
+    if (nextState === undefined) return;
+    this.undoStack.push({ text: this.text, cursor: this.cursor });
+    this.text = nextState.text;
+    this.cursor = nextState.cursor;
+    this.lastTyping = false;
+    this.preferredCell = undefined;
+    this.warning = "";
+  }
+
+  /** Restore a prior submitted prompt as a fresh editable draft. */
+  loadDraft(value: string): boolean {
+    const normalized = terminalText(value).replace(/\r\n?/g, "\n");
+    if (Buffer.byteLength(normalized, "utf8") > MAX_BYTES || normalized.split("\n").length > MAX_LINES) return false;
+    this.checkpoint();
+    this.text = normalized;
+    this.cursor = normalized.length;
+    this.preferredCell = undefined;
+    return true;
+  }
+
+  insert(value: string, typing = false): boolean {
     const normalized = terminalText(value).replace(/\r\n?/g, "\n");
     if (Buffer.byteLength(this.text, "utf8") + Buffer.byteLength(normalized, "utf8") > MAX_BYTES ||
         this.text.split("\n").length + normalized.split("\n").length - 1 > MAX_LINES) {
       this.warning = "Draft limit: 64 KiB / 200 lines";
       return false;
     }
+    if (normalized.length === 0) return true;
+    this.checkpoint(typing);
     this.text = this.text.slice(0, this.cursor) + normalized + this.text.slice(this.cursor);
     this.cursor += normalized.length;
     this.preferredCell = undefined;
@@ -47,24 +94,27 @@ export class EditorDocument {
     return true;
   }
 
-  left(): void { this.cursor = previous(this.text, this.cursor); this.preferredCell = undefined; }
-  right(): void { this.cursor = next(this.text, this.cursor); this.preferredCell = undefined; }
-  home(): void { this.cursor = lineStart(this.text, this.cursor); this.preferredCell = undefined; }
-  end(): void { this.cursor = lineEnd(this.text, this.cursor); this.preferredCell = undefined; }
+  left(): void { this.cursor = previous(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; }
+  right(): void { this.cursor = next(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; }
+  home(): void { this.cursor = lineStart(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; }
+  end(): void { this.cursor = lineEnd(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; }
 
   backspace(): void {
     if (this.cursor === 0) return;
     const at = previous(this.text, this.cursor);
+    this.checkpoint();
     this.text = this.text.slice(0, at) + this.text.slice(this.cursor);
     this.cursor = at;
     this.preferredCell = undefined;
   }
   delete(): void {
     if (this.cursor === this.text.length) return;
+    this.checkpoint();
     this.text = this.text.slice(0, this.cursor) + this.text.slice(next(this.text, this.cursor));
     this.preferredCell = undefined;
   }
   moveVertical(direction: -1 | 1): void {
+    this.lastTyping = false;
     const begin = lineStart(this.text, this.cursor);
     const column = this.preferredCell ?? displayWidth(this.text.slice(begin, this.cursor));
     this.preferredCell = column;
@@ -98,7 +148,7 @@ export interface EditorFrame {
 }
 
 /** Fixed-height viewport; keep caret in frame even on small terminals. */
-export function editorFrame(document: EditorDocument, width: number, height: number): EditorFrame {
+export function editorFrame(document: EditorDocument, width: number, height: number, submitOnEnter = false): EditorFrame {
   const cellWidth = Math.max(8, width - 1);
   const rowLimit = Math.max(1, Math.min(8, height - 5));
   const rows = document.text.split("\n");
@@ -131,7 +181,9 @@ export function editorFrame(document: EditorDocument, width: number, height: num
       caret: Math.min(cellWidth - 1, 2 + Math.max(0, caret - scrollCells) + (scrollCells > 0 ? 1 : 0)),
     };
   });
-  const header = fitLine("┌─ Ctrl+S send · Esc cancel · Enter newline", cellWidth);
+  const header = fitLine(submitOnEnter
+    ? "┌─ Enter send · Ctrl+O newline · Ctrl+R history"
+    : "┌─ Ctrl+S send · Esc cancel · Enter newline", cellWidth);
   const footer = fitLine(
     document.warning || `└─ ${rows.length} lines · ${Buffer.byteLength(document.text, "utf8")} bytes · ↑↓←→ move`,
     cellWidth,

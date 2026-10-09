@@ -325,6 +325,7 @@ async function main(argv: readonly string[]): Promise<number> {
         // which would otherwise prefix the first event with escape codes.
         output: options.json || options.tui ? process.stderr : process.stdout,
         tui: options.tui,
+        inlineComposer: options.tui,
         stderr: process.stderr,
         banner: options.tui ? welcome({
           version: VERSION,

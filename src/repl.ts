@@ -279,6 +279,8 @@ function describeSession(context: SlashCommandContext): string {
 
 export interface ReplOptions {
   readonly tui?: boolean;
+  /** Opt in to cursor-editable composer as the primary interactive input. */
+  readonly inlineComposer?: boolean;
   readonly session: AgentSession;
   readonly shellApproval?: ShellApprovalGate;
   readonly liveRegion?: Pick<LiveRegion, "pause" | "resume">;
@@ -474,7 +476,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     tuiInput.on("keypress", queueRefresh);
   }
   const showPrompt = (): void => {
-    if (inputClosed) return;
+    if (inputClosed || options.inlineComposer) return;
     promptVisible = true;
     readline.prompt();
   };
@@ -610,7 +612,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
   };
 
   /** Cursor-editable modal, with exclusive keyboard and paint ownership. */
-  const collectEditor = async (): Promise<string | undefined> => {
+  const collectEditor = async (isDefault = false): Promise<string | undefined> => {
     if (tuiInput === undefined) {
       write("The cursor editor requires --tui. Use /compose here instead.\n");
       return undefined;
@@ -621,21 +623,30 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     let resolveDraft!: (draft: string | undefined) => void;
     const pending = new Promise<string | undefined>(resolve => { resolveDraft = resolve; });
     const output = options.output as typeof options.output & { columns?: number; rows?: number };
-    const editor = new EditorController(output, resolveDraft);
+    const recent = options.session.messages
+      .filter((message): message is Extract<(typeof options.session.messages)[number], { role: "user" }> => message.role === "user")
+      .map(message => message.content)
+      .filter(message => message.length > 0)
+      .slice(-100);
+    const editor = new EditorController(output, resolveDraft,
+      { submitOnEnter: isDefault, history: recent });
     const resized = (): void => { editor.resized(); };
     const closed = (): void => { editor.cancel(); };
     tuiInput.setRawHandler(chunk => { editor.receive(chunk); });
     output.on("resize", resized);
     readline.once("close", closed);
+    options.input.once("end", closed);
     try {
       editor.begin();
       const result = await pending;
-      write(result === undefined ? "Draft discarded.\n" : "Draft submitted.\n");
+      if (editor.exitRequested.value) readline.close();
+      if (!isDefault) write(result === undefined ? "Draft discarded.\n" : "Draft submitted.\n");
       return result;
     } finally {
       tuiInput.setRawHandler(undefined);
       output.off("resize", resized);
       readline.off("close", closed);
+      options.input.off("end", closed);
       composing = false;
     }
   };
@@ -694,9 +705,12 @@ export async function runRepl(options: ReplOptions): Promise<number> {
 
   try {
     for (;;) {
-      let line = await readNextLine();
+      let line = options.inlineComposer && tuiInput !== undefined
+        ? await collectEditor(true)
+        : await readNextLine();
       if (line === undefined) {
-        break;
+        if (inputClosed) break;
+        continue;
       }
       if (line.trim().length === 0) {
         showPrompt();
