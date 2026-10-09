@@ -1,4 +1,5 @@
 import { TuiInput } from "./tui/input.js";
+import { EditorController } from "./tui/editor-input.js";
 import { InputMenu, type MenuItem } from "./tui/menu.js";
 import { createInterface, emitKeypressEvents, type Interface } from "node:readline";
 import type { AgentSession } from "./session.js";
@@ -76,6 +77,7 @@ export const BUILT_IN_COMMANDS = [
   "tools",
   "diff",
   "compose",
+  "editor",
   "clear",
   "exit",
   "quit",
@@ -91,6 +93,7 @@ const HELP = `Commands:
   /tools     List the tools available to the model
   /diff [N]  Review the latest successful apply_patch, page N
   /compose   Write a multi-line prompt (/send to submit, /cancel to discard)
+  /editor    Open the cursor-editable multiline composer (Ctrl+S sends)
   /clear     Start a new transcript in the same session
   /provider  Choose a Provider (↑↓ and Enter in the TUI)
   /model     Show or change the current model: /model MODEL
@@ -162,6 +165,10 @@ export function handleSlashCommand(
 
     case "/compose":
       context.write("Use /compose at the interactive prompt to enter multi-line mode.\n");
+      return "handled";
+
+    case "/editor":
+      context.write("Use /editor in an interactive TUI to open the multiline editor.\n");
       return "handled";
 
     case "/clear":
@@ -587,6 +594,37 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     }
   };
 
+  /** Cursor-editable modal, with exclusive keyboard and paint ownership. */
+  const collectEditor = async (): Promise<string | undefined> => {
+    if (tuiInput === undefined) {
+      write("The cursor editor requires --tui. Use /compose here instead.\n");
+      return undefined;
+    }
+    menu?.clear();
+    dismissedLine = undefined;
+    composing = true;
+    let resolveDraft!: (draft: string | undefined) => void;
+    const pending = new Promise<string | undefined>(resolve => { resolveDraft = resolve; });
+    const output = options.output as typeof options.output & { columns?: number; rows?: number };
+    const editor = new EditorController(output, resolveDraft);
+    const resized = (): void => { editor.resized(); };
+    const closed = (): void => { editor.cancel(); };
+    tuiInput.setRawHandler(chunk => { editor.receive(chunk); });
+    output.on("resize", resized);
+    readline.once("close", closed);
+    try {
+      editor.begin();
+      const result = await pending;
+      write(result === undefined ? "Draft discarded.\n" : "Draft submitted.\n");
+      return result;
+    } finally {
+      tuiInput.setRawHandler(undefined);
+      output.off("resize", resized);
+      readline.off("close", closed);
+      composing = false;
+    }
+  };
+
   const signInAfterProviderSelection = async (): Promise<void> => {
     if (!options.tui || options.signIn === undefined) return;
     let missingKey: boolean;
@@ -619,8 +657,9 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       }
 
       const fromComposer = line.trim() === "/compose";
-      if (fromComposer) {
-        const draft = await collectMultiline();
+      const fromEditor = line.trim() === "/editor";
+      if (fromComposer || fromEditor) {
+        const draft = fromEditor ? await collectEditor() : await collectMultiline();
         if (draft === undefined) {
           if (inputClosed) break;
           showPrompt();
@@ -628,7 +667,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         }
         line = draft;
       }
-      const outcome = fromComposer ? "not-a-command" : handleSlashCommand(line, {
+      const outcome = fromComposer || fromEditor ? "not-a-command" : handleSlashCommand(line, {
         session: options.session,
         write,
         width: terminalWidth({ columns: (options.output as typeof options.output & { columns?: number }).columns }),
