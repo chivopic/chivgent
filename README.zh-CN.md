@@ -499,6 +499,9 @@ npm install -g "$(npm pack --silent)"
 
 ## Evals
 
+评测前请先运行 `npm run eval -- --dry-run --allow-writes --allow-shell`，在不调用模型的情况下校验任务和生成题目指纹。具体方法见 [基线评测指南](docs/eval-baseline-guide.md)。Token 用量缺失会标为未知，而不是 0。
+
+
 三百多个单元测试验证的是"代码是否按我写的那样运行"，它们对"这是不是一个好用的 Agent"
 一无所知。`npm run eval` 回答后一个问题：
 
