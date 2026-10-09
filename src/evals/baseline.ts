@@ -124,7 +124,7 @@ export async function describeSuite(tasks: readonly Task[]): Promise<SuiteManife
 export async function gitRevision(cwd: string = process.cwd()): Promise<{ revision: string | null; dirty: boolean | null }> {
   try {
     const revision = (await exec("git", ["rev-parse", "HEAD"], { cwd, timeout: 3000 })).stdout.trim();
-    const status = (await exec("git", ["status", "--porcelain", "--untracked-files=no"], { cwd, timeout: 3000 })).stdout;
+    const status = (await exec("git", ["status", "--porcelain"], { cwd, timeout: 3000 })).stdout;
     return { revision, dirty: status.trim().length > 0 };
   } catch {
     return { revision: null, dirty: null };
