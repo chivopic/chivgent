@@ -211,7 +211,7 @@ export class EditorController {
           break;
         default:
           this.previousCR = false;
-          if (char >= " " && char !== "\u007f") this.document.insert(char);
+          if (char >= " " && char !== "\u007f") this.document.insert(char, true);
       }
     }
   }
