@@ -35,6 +35,9 @@ describe("TUI activity presentation", () => {
       "    ~ src/a.ts (+1/-1)",
       "    + src/b.ts (new file, +1)",
       "    - src/deprecated.ts (deleted)",
+      "      -old",
+      "      +new",
+      "      +export const b = true;",
     ]);
   });
 
@@ -48,6 +51,23 @@ describe("TUI activity presentation", () => {
     expect(summary[0]).toContain("! Patched");
     expect(summary[0]).toContain("context not found");
     expect(summary.join("\n")).not.toContain("3 files");
+  });
+
+  it("highlights a useful final shell result without printing the whole test log", () => {
+    const calls = [{ id: "shell-1", name: "bash", arguments: { command: "npm test" } }];
+    const result = [{
+      role: "tool" as const, toolCallId: "shell-1", toolName: "bash",
+      content: "setup\nwarning text\n42 tests passed\n", isError: false,
+    }];
+    expect(toolTranscript(calls, result)).toEqual([
+      "  ✓ Shell npm test",
+      "    ↳ 42 tests passed",
+    ]);
+    expect(toolTranscript(calls, [{
+      ...result[0]!, content: "stacktrace\nCommand exited with code 1", isError: true,
+    }])).toEqual([
+      "  ! Shell npm test — Command exited with code 1",
+    ]);
   });
 
   it("groups consecutive successful reads but exposes failures individually", () => {
