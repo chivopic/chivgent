@@ -491,8 +491,7 @@ npm run release:check
 构建一个可以在本地安装的 tarball：
 
 ```bash
-npm pack
-npm install -g ./chivgent-0.6.0.tgz
+npm install -g "$(npm pack --silent)"
 ```
 
 测试使用脚本化或 Mock LLM Client。真实 API Smoke Test 需要手工执行，因此默认
