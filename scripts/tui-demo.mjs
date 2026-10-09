@@ -51,6 +51,7 @@ session.subscribe(region.listener);
 process.stderr.on('resize', region.resized);
 try {
   await runRepl({ session, input: process.stdin, output: process.stderr, stderr: process.stderr, tui: true,
+    liveRegion: region,
     banner: welcome({ version: 'demo', provider: 'offline', model: 'stub', cwd: session.cwd,
       sessionId: session.id, resumed: false, signedOut: false, width: terminalWidth(process.stderr) }),
   });
