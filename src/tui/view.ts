@@ -122,11 +122,11 @@ export function view(
  * is wanted the state has already been cleared — and because the event carries
  * the authoritative message either way.
  */
-export function transcriptLines(event: TurnEndEvent): readonly string[] {
+export function transcriptLines(event: TurnEndEvent, width = 120): readonly string[] {
   const lines: string[] = [];
   // A result carries no arguments, so the target comes from the call that
   // produced it — the same join by call id the eval runner makes.
-  lines.push(...toolTranscript(event.message.toolCalls, event.toolResults));
+  lines.push(...toolTranscript(event.message.toolCalls, event.toolResults, width));
   if (event.message.content.trim().length > 0) {
     lines.push(event.message.content);
   }
