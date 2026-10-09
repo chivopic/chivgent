@@ -48,6 +48,22 @@ describe("multiline compose REPL", () => {
     } finally { screen.input.end(); await done; screen.dispose(); }
   });
 
+  it("preserves a multi-line paste delivered as one terminal chunk", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const screen = terminalHarness(80, 24);
+    const prompts: string[] = [];
+    const session = sessionWithPrompts(prompts);
+    const done = runRepl({ session, ...screen, stderr: screen.output, tui: true });
+    try {
+      screen.input.write("/compose\r");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("Compose prompt"));
+      screen.input.write("first line\rsecond line\r\nthird line\r/send\r");
+      await vi.waitFor(() => expect(prompts).toEqual(["first line\nsecond line\nthird line"]));
+      screen.input.write("/exit\r");
+      expect(await done).toBe(0);
+    } finally { screen.input.end(); await done; screen.dispose(); }
+  });
+
   it("discards a compose draft without any provider request", async () => {
     vi.stubEnv("TERM", "xterm-256color");
     const screen = terminalHarness(80, 24);
