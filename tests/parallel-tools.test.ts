@@ -66,6 +66,7 @@ describe("parallel built-in read tool scheduling", () => {
     const first = deferred();
     const second = deferred();
     const bothStarted = deferred();
+    const secondFinished = deferred();
     const started: string[] = [];
     const finished: string[] = [];
     const workspace = makeWorkspace(async file => {
@@ -73,6 +74,7 @@ describe("parallel built-in read tool scheduling", () => {
       if (started.length === 2) bothStarted.resolve();
       await (file === "first.ts" ? first.promise : second.promise);
       finished.push(file);
+      if (file === "second.ts") secondFinished.resolve();
       return slice(file);
     });
     const llm = new FakeLLMClient([
@@ -85,7 +87,7 @@ describe("parallel built-in read tool scheduling", () => {
     expect(started).toEqual(["first.ts", "second.ts"]);
 
     second.resolve();
-    await Promise.resolve();
+    await awaitGate(secondFinished.promise);
     first.resolve();
     const result = await run;
 
