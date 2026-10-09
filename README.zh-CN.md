@@ -499,6 +499,8 @@ npm install -g "$(npm pack --silent)"
 
 ## Evals
 
+**TUI V3：** `/editor` 支持光标移动的真正多行输入（Ctrl+S 发送），`/review` 支持交互式翻页审查补丁，代码块具备基础语法高亮。详见 [TUI V3 指南](docs/tui-v3.md)。
+
 **TUI V2：** 支持 `/compose` 多行输入、`/diff [页码]` 查看完整补丁、Markdown/代码块显示以及单键 Shell 审批。详见 [TUI V2 指南](docs/tui-v2.md)。
 
 **并行只读工具：** 内置文件读取、目录列举与搜索最多同时执行 4 个；写入、Shell 与第三方扩展保持独占，模型接收的工具结果顺序不变。详见 [工具调度说明](docs/parallel-read-tools.md)。
