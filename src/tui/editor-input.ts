@@ -1,5 +1,6 @@
 import { StringDecoder } from "node:string_decoder";
-import { EditorDocument, EditorPainter, editorFrame, type EditorOutput } from "./editor.js";
+import { EditorDocument, EditorPainter, editorFrame, type EditorOutput, type EditorFrame } from "./editor.js";
+import { slashSuggestions, type SlashSuggestion } from "./slash.js";
 
 /**
  * Key parser for the modal editor. The active TuiInput raw hook gives this
@@ -15,6 +16,11 @@ export class EditorController {
   private escapeTimer?: NodeJS.Timeout;
   private completed = false;
   private previousCR = false;
+  private completionIndex = 0;
+  private dismissedCommand?: string;
+  private lastFrame?: EditorFrame;
+  private originRow?: number;
+  private mouseDragging = false;
   private searching = false;
   private searchQuery = "";
   private searchOffset = 0;
@@ -23,9 +29,9 @@ export class EditorController {
   private readonly maxHeight: () => number;
 
   constructor(
-    output: EditorOutput,
+    private readonly output: EditorOutput,
     private readonly done: (text: string | undefined) => void,
-    private readonly options: { readonly submitOnEnter?: boolean; readonly history?: readonly string[] } = {},
+    private readonly options: { readonly submitOnEnter?: boolean; readonly history?: readonly string[]; readonly slashCommands?: readonly SlashSuggestion[]; readonly mouse?: boolean } = {},
   ) {
     this.painter = new EditorPainter(output);
     this.maxWidth = () => Math.max(8, output.columns ?? 80);
@@ -33,7 +39,51 @@ export class EditorController {
   }
 
   begin(): void {
+    if (this.options.mouse) this.painterMouse(true);
     this.draw();
+  }
+
+  private painterMouse(enabled: boolean): void {
+    // Opt-in only while editor owns the terminal; restore normal selection on exit.
+    this.outputWrite(enabled ? "\u001b[?1000h\u001b[?1002h\u001b[?1006h" : "\u001b[?1006l\u001b[?1002l\u001b[?1000l");
+  }
+
+  private outputWrite(chunk: string): void { this.output.write(chunk); }
+
+  private suggestions(): readonly SlashSuggestion[] {
+    if (this.dismissedCommand === this.document.text) return [];
+    return slashSuggestions(this.document.text, this.document.cursor, this.options.slashCommands ?? []);
+  }
+
+  private insertSelectedCompletion(): boolean {
+    const matches = this.suggestions();
+    const match = matches[this.completionIndex % matches.length];
+    if (match === undefined) return false;
+    this.document.loadDraft(`/${match.value}`);
+    this.dismissedCommand = this.document.text;
+    this.completionIndex = 0;
+    return true;
+  }
+
+  private processMouse(sequence: string): void {
+    const answer = /^\u001b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(sequence);
+    if (answer === null) return;
+    const button = Number(answer[1]);
+    if (button === 64 || button === 65) {
+      // Only wheel gestures are acted upon if cursor location is unknown.
+      for (let i = 0; i < 3; i += 1) this.document.moveVertical(button === 64 ? -1 : 1);
+      return;
+    }
+    if (button === 0 && answer[4] === "m") { this.mouseDragging = false; return; }
+    if (button !== 0 && button !== 32) return;
+    if (button === 32 && !this.mouseDragging) return;
+    if (this.originRow === undefined || this.lastFrame === undefined) return;
+    const relative = Number(answer[3]) - 1 - this.originRow;
+    if (relative < 1 || relative >= this.lastFrame.lines.length - 1) return;
+    const docFirst = this.document.position.row - (this.lastFrame.cursorRow - 1);
+    const targetRow = docFirst + relative - 1;
+    this.document.placeAt(targetRow, Math.max(0, Number(answer[2]) - 3), button === 32);
+    this.mouseDragging = true;
   }
 
   resized(): void {
@@ -104,9 +154,24 @@ export class EditorController {
         continue;
       }
       if (this.pending[0] === "\u001b") {
+        const dsr = /^\u001b\[(\d+);(\d+)R/.exec(this.pending);
+        if (dsr !== null) {
+          if (this.lastFrame !== undefined) this.originRow = Number(dsr[1]) - 1 - this.lastFrame.cursorRow;
+          this.pending = this.pending.slice(dsr[0].length);
+          continue;
+        }
+        const mouse = /^\u001b\[<\d+;\d+;\d+[Mm]/.exec(this.pending);
+        if (mouse !== null) {
+          this.processMouse(mouse[0]);
+          this.pending = this.pending.slice(mouse[0].length);
+          continue;
+        }
         const matched = Object.keys(escapes).find(sequence => this.pending.startsWith(sequence));
         if (matched !== undefined) {
-          escapes[matched]?.();
+          if (this.suggestions().length > 0 && (matched === "\u001b[A" || matched === "\u001b[B")) {
+            const matches = this.suggestions();
+            this.completionIndex = (this.completionIndex + (matched === "\u001b[B" ? 1 : -1) + matches.length) % matches.length;
+          } else escapes[matched]?.();
           this.pending = this.pending.slice(matched.length);
           continue;
         }
@@ -121,6 +186,10 @@ export class EditorController {
                   this.searching = false;
                   this.pending = "";
                   this.document.warning = "";
+                  this.draw();
+                } else if (this.suggestions().length > 0) {
+                  this.dismissedCommand = this.document.text;
+                  this.pending = "";
                   this.draw();
                 } else this.finish(undefined);
               }
@@ -198,6 +267,10 @@ export class EditorController {
         case "\u0008":
         case "\u007f": this.document.backspace(); break;
         case "\r":
+          if (this.suggestions().length > 0 && !this.suggestions().some(item => `/${item.value}` === this.document.text)) {
+            this.insertSelectedCompletion();
+            break;
+          }
           if (this.options.submitOnEnter) {
             this.finish(this.document.text.trim().length > 0 ? this.document.text : undefined);
             return;
@@ -206,18 +279,29 @@ export class EditorController {
           this.previousCR = true;
           break;
         case "\t":
+          if (this.insertSelectedCompletion()) break;
           this.document.insert("  ");
           this.previousCR = false;
           break;
         default:
           this.previousCR = false;
-          if (char >= " " && char !== "\u007f") this.document.insert(char, true);
+          if (char >= " " && char !== "\u007f") {
+            this.document.insert(char, true);
+            this.dismissedCommand = undefined;
+            this.completionIndex = 0;
+          }
       }
     }
   }
 
   private draw(): void {
-    this.painter.render(editorFrame(this.document, this.maxWidth(), this.maxHeight(), this.options.submitOnEnter === true));
+    const matches = this.suggestions();
+    this.completionIndex = matches.length > 0 ? Math.min(this.completionIndex, matches.length - 1) : 0;
+    const frame = editorFrame(this.document, this.maxWidth(), this.maxHeight(), this.options.submitOnEnter === true,
+      matches.map(item => item.value), this.completionIndex);
+    this.lastFrame = frame;
+    this.painter.render(frame);
+    if (this.options.mouse) this.outputWrite("\u001b[6n");
   }
 
   cancel(): void {
@@ -230,6 +314,7 @@ export class EditorController {
     if (this.escapeTimer !== undefined) clearTimeout(this.escapeTimer);
     this.escapeTimer = undefined;
     this.painter.finish();
+    if (this.options.mouse) this.painterMouse(false);
     this.done(value);
   }
 }
