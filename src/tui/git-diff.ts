@@ -38,7 +38,7 @@ export async function readLiveGitDiff(workspace: string, mode: GitDiffMode): Pro
     });
     return terminalText(stdout);
   } catch (error: unknown) {
-    const typed = error as NodeJS.ErrnoException;
+    const typed = error as NodeJS.ErrnoException & { killed?: boolean };
     if (typed.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
       throw new Error("Git diff exceeds the 256 KiB review limit.");
     }
