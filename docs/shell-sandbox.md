@@ -22,7 +22,7 @@ Each command starts a new container with:
 
 Execution is still powerful **inside the project**: shell commands can delete files there or print project secrets to the model. Docker isolation is not proof against vulnerabilities in Docker, kernel features or the VM, and this mechanism does not isolate `write_file`, `edit_file`, or explicitly trusted extension JavaScript. The project is mounted read-write when bash is enabled; do not use this mode on untrusted repositories containing valuable files or credentials. Work on disposable copies and keep sensitive directories outside the workspace.
 
-A Docker image is a development environment, not the host macOS environment. Some host-only tools will be unavailable. CI tests assert the construction of security flags and use explicit fake/local shell runners; **the CI does not prove actual Docker isolation on macOS**. Run a manual end-to-end smoke test on your machine with Docker Desktop before relying on it.
+A Docker image is a development environment, not the host macOS environment. Some host-only tools will be unavailable. CI tests assert the security flags and run a real Docker smoke test on Linux for workspace writes, container environment isolation, and blocked outbound networking. This does **not** establish complete sandbox security or prove macOS Docker Desktop behavior. Run a manual end-to-end smoke test on your Mac before relying on it. Forced process termination (for example SIGKILL) can bypass best-effort cleanup; inspect Docker for orphan containers if needed.
 
 ## Example
 
