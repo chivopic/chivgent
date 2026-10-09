@@ -8,6 +8,7 @@ import { callTarget } from "../tools/target.js";
 import { toolsFor } from "./tools.js";
 import type { ShellOperations } from "../shell/types.js";
 import { createAttemptWorkspace } from "./fixture.js";
+import { ScopedProjectInstructions } from "../context/project-instructions.js";
 import { createGrader, describeGrader, type AttemptFacts } from "./graders.js";
 import type { Capability, Task } from "./task.js";
 
@@ -114,6 +115,7 @@ async function runAttempt(
         allowWrites: task.capabilities.includes("writes"),
       }),
       streaming: false,
+      projectInstructions: new ScopedProjectInstructions(workspace.path),
       onEvent: (event) => events.push(event),
     });
 

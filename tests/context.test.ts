@@ -176,6 +176,22 @@ describe("ContextManager", () => {
     expect(second.messages.at(-1)).toEqual(user("newer"));
   });
 
+  it("budgets static repository instruction messages before compacting", async () => {
+    const client = summarisingClient('{"summary":"scoped"}');
+    const manager = new ContextManager({
+      contextWindow: 2_000, reserveTokens: 500, keepRecentTokens: 250,
+      compactor: new Compactor(client),
+    });
+    const messages = [user("x".repeat(1_000)), user("recent")];
+    const without = await manager.build(messages);
+    expect(without.compacted).toBe(false);
+    const withGuidance = await manager.build(messages, {
+      prefixMessages: [user("guide".repeat(2_000))],
+    });
+    expect(withGuidance.compacted).toBe(true);
+    expect(client.calls).toBe(1);
+  });
+
   it("reports what it dropped", async () => {
     const events: number[] = [];
     const manager = new ContextManager({
@@ -218,7 +234,9 @@ describe("Compactor", () => {
     const compactor = new Compactor(summarisingClient('{"summary":"s"}'));
     const messages: Message[] = [
       assistantWithCall("read_file", "src/a.ts", "1"),
+      toolResult("1", "read_file", "original"),
       assistantWithCall("write_file", "src/a.ts", "2"),
+      toolResult("2", "write_file", "updated"),
     ];
 
     const { state } = await compactor.compact(messages);
@@ -226,6 +244,70 @@ describe("Compactor", () => {
     expect(state.readFiles).toEqual([]);
     expect(state.modifiedFiles).toEqual(["src/a.ts"]);
   });
+  it("does not claim a failed edit changed a file", async () => {
+    const compactor = new Compactor(summarisingClient('{"summary":"attempt failed"}'));
+    const messages: Message[] = [
+      assistantWithCall("edit_file", "src/broken.ts", "fail"),
+      { role: "tool", toolCallId: "fail", toolName: "edit_file", content: "no match", isError: true },
+      assistantWithCall("read_file", "src/verified.ts", "ok"),
+      toolResult("ok", "read_file", "contents"),
+    ];
+    const { state } = await compactor.compact(messages);
+    expect(state.modifiedFiles).toEqual([]);
+    expect(state.readFiles).toEqual(["src/verified.ts"]);
+  });
+
+  it("tracks changed paths from a successful multi-file apply_patch", async () => {
+    const compactor = new Compactor(summarisingClient('{"summary":"patched"}'));
+    const messages: Message[] = [
+      { role: "assistant", content: "", toolCalls: [{
+        id: "patch-one", name: "apply_patch",
+        arguments: { patch: "*** Begin Patch\n*** Add File: src/a.ts\n+one\n*** Add File: src/b.ts\n+two\n*** End Patch" },
+      }] },
+      toolResult("patch-one", "apply_patch", "Patch applied"),
+    ];
+    const { state } = await compactor.compact(messages);
+    expect(state.modifiedFiles).toEqual(["src/a.ts", "src/b.ts"]);
+  });
+
+  it("retains decisions and pending work until completion is explicit", async () => {
+    const previous: CompactionState = {
+      summary: "past work",
+      readFiles: [],
+      modifiedFiles: [],
+      decisions: ["Keep existing API stable"],
+      pendingTasks: ["add tests", "write docs"],
+    };
+    const compactor = new Compactor(summarisingClient(
+      '{"summary":"tests done","decisions":["avoid breaking changes"],"pendingTasks":["review CI"],"completedTasks":["add tests"]}',
+    ));
+    const { state } = await compactor.compact([user("Finished tests and started review")], undefined, previous);
+    expect(state.decisions).toEqual(["Keep existing API stable", "avoid breaking changes"]);
+    expect(state.pendingTasks).toEqual(["write docs", "review CI"]);
+
+    const next = new Compactor(summarisingClient('{"summary":"new turn"}'));
+    const { state: after } = await next.compact([user("Proceed")], undefined, state);
+    expect(after.pendingTasks).toEqual(["write docs", "review CI"]);
+    expect(after.decisions).toEqual(["Keep existing API stable", "avoid breaking changes"]);
+  });
+
+  it("retains verified file facts across repeated compactions", async () => {
+    const compactor = new Compactor(summarisingClient('{"summary":"new summary"}'));
+    const previous: CompactionState = {
+      summary: "previous",
+      readFiles: ["src/old-read.ts"],
+      modifiedFiles: ["src/old-edit.ts"],
+      decisions: [],
+      pendingTasks: [],
+    };
+    const { state } = await compactor.compact([
+      assistantWithCall("read_file", "src/new.ts", "new"),
+      toolResult("new", "read_file", "contents"),
+    ], undefined, previous);
+    expect(state.readFiles).toEqual(["src/new.ts", "src/old-read.ts"]);
+    expect(state.modifiedFiles).toEqual(["src/old-edit.ts"]);
+  });
+
 });
 
 describe("parseSummary", () => {

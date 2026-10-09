@@ -2,6 +2,7 @@ import type { AgentOptions } from "./agent.js";
 import type { CliOptions } from "./cli-options.js";
 import { ContextManager } from "./context/context-manager.js";
 import { Compactor } from "./context/compaction.js";
+import { ScopedProjectInstructions } from "./context/project-instructions.js";
 import type { ExtensionRegistry } from "./extensions/registry.js";
 import type { LLMClient } from "./llm.js";
 import type { Message } from "./messages.js";
@@ -70,6 +71,7 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
     workspace: new LocalWorkspace(cwd, { allowWrites: options.allowWrites }),
     streaming: options.stream,
     contextManager,
+    projectInstructions: new ScopedProjectInstructions(cwd, Math.min(16_384, options.contextWindow)),
   };
   return new AgentSession({
     agent,

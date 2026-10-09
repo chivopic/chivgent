@@ -17,6 +17,7 @@ import type {
   AppliedCompaction,
   ContextManager,
 } from "./context/context-manager.js";
+import type { ProjectInstructionsProvider } from "./context/project-instructions.js";
 
 export interface AgentOptions {
   readonly systemPrompt: string;
@@ -32,6 +33,8 @@ export interface AgentOptions {
    * Decides what the model sees each turn. Omit to send the whole transcript.
    */
   readonly contextManager?: ContextManager;
+  /** Scoped repository guidance, read separately from trusted system prompts. */
+  readonly projectInstructions?: ProjectInstructionsProvider;
 }
 
 export interface AgentRunOptions {
@@ -67,6 +70,7 @@ interface RunState {
   usage?: UsageTotal;
   continuation?: LLMContinuation;
   compaction?: AppliedCompaction;
+  projectInstructionsText?: string;
 }
 
 export class AgentProtocolError extends Error {
@@ -86,6 +90,7 @@ export class Agent {
   private readonly onEvent?: AgentEventListener;
   private readonly streaming: boolean;
   private readonly contextManager?: ContextManager;
+  private readonly projectInstructions?: ProjectInstructionsProvider;
 
   constructor(options: AgentOptions) {
     if (!Number.isSafeInteger(options.maxTurns) || options.maxTurns <= 0) {
@@ -108,6 +113,9 @@ export class Agent {
     this.streaming = options.streaming ?? true;
     if (options.contextManager !== undefined) {
       this.contextManager = options.contextManager;
+    }
+    if (options.projectInstructions !== undefined) {
+      this.projectInstructions = options.projectInstructions;
     }
   }
 
@@ -223,7 +231,7 @@ export class Agent {
         if (isAborted(signal)) {
           return abortedResult(state);
         }
-        const result = await this.executeToolCall(toolCall, turn, signal);
+        const result = await this.executeToolCall(toolCall, turn, signal, state);
         toolResults.push(result);
         state.messages.push(result);
       }
@@ -248,6 +256,7 @@ export class Agent {
   private async buildContext(
     state: RunState,
     signal: AbortSignal | undefined,
+    prefixMessages: readonly Message[] = [],
   ): Promise<readonly Message[]> {
     const snapshot = snapshotMessages(state.messages);
     if (this.contextManager === undefined) {
@@ -257,6 +266,7 @@ export class Agent {
     const context = await this.contextManager.build(snapshot, {
       ...(state.compaction === undefined ? {} : { previous: state.compaction }),
       ...(signal === undefined ? {} : { signal }),
+      prefixMessages,
     });
     if (context.compaction === undefined) {
       delete state.compaction;
@@ -280,10 +290,21 @@ export class Agent {
     turn: number,
     signal: AbortSignal | undefined,
   ): ReturnType<LLMClient["complete"]> {
-    const messages = await this.buildContext(state, signal);
+    const projectText = await this.projectInstructions?.load(state.messages);
+    if (projectText !== state.projectInstructionsText) {
+      // A chained Provider holds its own prompt history; discard that chain
+      // when a new scoped AGENTS.md becomes applicable or a document changes.
+      delete state.continuation;
+      if (projectText === undefined) delete state.projectInstructionsText;
+      else state.projectInstructionsText = projectText;
+    }
+    const prefixMessages: readonly Message[] = projectText === undefined
+      ? [] : [{ role: "user", content: projectText }];
+    const messages = await this.buildContext(state, signal, prefixMessages);
+    const modelMessages: readonly Message[] = [...prefixMessages, ...messages];
     const request = {
       systemPrompt: this.systemPrompt,
-      messages,
+      messages: modelMessages,
       tools: this.toolDefinitions,
       ...(state.continuation === undefined
         ? {}
@@ -321,6 +342,7 @@ export class Agent {
     toolCall: ToolCall,
     turn: number,
     signal: AbortSignal | undefined,
+    state: RunState,
   ): Promise<ToolResultMessage> {
     this.emit({
       type: "tool_execution_start",
@@ -340,21 +362,34 @@ export class Agent {
       };
     } else {
       try {
-        output = validateToolOutput(
-          await tool.execute(toolCall.arguments, {
-            workspace: this.workspace,
-            ...(signal === undefined ? {} : { signal }),
-            onUpdate: (content: string) => {
-              this.emit({
-                type: "tool_execution_update",
-                turn,
-                toolCallId: toolCall.id,
-                toolName: toolCall.name,
-                content,
-              });
-            },
-          }),
-        );
+        // A model may issue its very first write into a nested folder whose
+        // AGENTS.md wasn't visible at sampling time. Defer the mutation until
+        // the next LLM request has included those scoped instructions.
+        const unseenGuidance = this.projectInstructions !== undefined &&
+          ["write_file", "edit_file", "apply_patch"].includes(toolCall.name) &&
+          (await this.projectInstructions.load(state.messages)) !== state.projectInstructionsText;
+        if (unseenGuidance) {
+          output = {
+            content: "New scoped AGENTS.md instructions were discovered. No files were changed. Review the new project guidance in the next turn before retrying.",
+            isError: true,
+          };
+        } else {
+          output = validateToolOutput(
+            await tool.execute(toolCall.arguments, {
+              workspace: this.workspace,
+              ...(signal === undefined ? {} : { signal }),
+              onUpdate: (content: string) => {
+                this.emit({
+                  type: "tool_execution_update",
+                  turn,
+                  toolCallId: toolCall.id,
+                  toolName: toolCall.name,
+                  content,
+                });
+              },
+            }),
+          );
+        }
       } catch (error: unknown) {
         if (isAbortError(error) || isAborted(signal)) {
           this.emit({
