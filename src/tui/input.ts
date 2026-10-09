@@ -19,6 +19,9 @@ export class TuiInput extends PassThrough {
   readonly isTTY: boolean;
   private busy = false;
   private approvalMode = false;
+  private composeMode = false;
+  private pendingCompose: Buffer[] = [];
+  private pendingComposeBytes = 0;
   private submitted = false;
   private afterCR = false;
   private escapePrefix = Buffer.alloc(0);
@@ -48,6 +51,22 @@ export class TuiInput extends PassThrough {
     this.approvalMode = enabled;
   }
 
+  /** Preserve pasted multi-line input only while the explicit composer is open. */
+  setComposeMode(enabled: boolean): void {
+    this.composeMode = enabled;
+    if (!enabled) {
+      this.pendingCompose = [];
+      this.pendingComposeBytes = 0;
+    }
+  }
+
+  private queueCompose(chunk: Buffer): void {
+    // Never turn an unbounded paste into an unbounded memory backlog.
+    if (this.pendingComposeBytes + chunk.length > 64 * 1024) return;
+    this.pendingComposeBytes += chunk.length;
+    this.pendingCompose.push(Buffer.from(chunk));
+  }
+
   setMenuControls(beforeEdit: () => void, menuKey: (key: "up" | "down" | "enter" | "escape" | "tab") => boolean): void {
     this.beforeEdit = beforeEdit;
     this.menuKey = menuKey;
@@ -56,6 +75,15 @@ export class TuiInput extends PassThrough {
   /** Called only when the REPL is ready to read its next line. */
   acceptLine(): void {
     this.submitted = false;
+    if (this.composeMode && this.pendingCompose.length > 0) {
+      const chunks = this.pendingCompose;
+      this.pendingCompose = [];
+      this.pendingComposeBytes = 0;
+      queueMicrotask(() => {
+        if (!this.composeMode) return;
+        for (const chunk of chunks) this.receive(chunk);
+      });
+    }
   }
 
   markSubmitted(): void {
@@ -95,7 +123,13 @@ export class TuiInput extends PassThrough {
       }
     }
     if (this.busy || this.submitted) {
-      if (bytes.includes(3)) this.write("\u0003");
+      if (bytes.includes(3)) {
+        this.pendingCompose = [];
+        this.pendingComposeBytes = 0;
+        this.write("\u0003");
+      } else if (this.submitted && this.composeMode && !this.busy) {
+        this.queueCompose(bytes);
+      }
       return;
     }
 
@@ -143,6 +177,9 @@ export class TuiInput extends PassThrough {
           this.submitted = true;
           this.afterCR = byte === 13 && offset + 1 === bytes.length;
           forward(part);
+          if (this.composeMode && offset + size < bytes.length) {
+            this.queueCompose(bytes.subarray(offset + size));
+          }
           return;
         }
         forward(part);
