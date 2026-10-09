@@ -116,7 +116,14 @@ export class EditorController {
           // arrows and bracketed-paste delimiters.
           if (this.pending.length < 16) {
             this.escapeTimer = setTimeout(() => {
-              if (this.pending === "\u001b") this.finish(undefined);
+              if (this.pending === "\u001b") {
+                if (this.searching) {
+                  this.searching = false;
+                  this.pending = "";
+                  this.document.warning = "";
+                  this.draw();
+                } else this.finish(undefined);
+              }
               else {
                 this.pending = "";
                 this.draw();
@@ -182,6 +189,7 @@ export class EditorController {
           if (!this.previousCR) this.document.insert("\n");
           this.previousCR = false;
           break;
+        case "\u000f": this.document.insert("\n"); break; // Ctrl+O: newline when Enter submits.
         case "\u0013": // Ctrl+S submits once, with no implicit shell action.
           this.finish(this.document.text.trim().length > 0 ? this.document.text : undefined);
           return;
@@ -209,7 +217,7 @@ export class EditorController {
   }
 
   private draw(): void {
-    this.painter.render(editorFrame(this.document, this.maxWidth(), this.maxHeight()));
+    this.painter.render(editorFrame(this.document, this.maxWidth(), this.maxHeight(), this.options.submitOnEnter === true));
   }
 
   cancel(): void {
