@@ -14,7 +14,7 @@ chivgent loads repository-specific coding conventions as **untrusted, lower-prio
 
 This is **not** an exact Codex implementation. Codex may discover a project root using `.git` and has configurable fallback filenames. chivgent's current implementation explicitly limits discovery to its configured workspace root and supports only the two standard filenames.
 
-**Important limitation:** If a model's **first operation** inside an unknown nested directory is a write, the directory's AGENTS.md is loaded for the **next** model request; it cannot retroactively constrain that first operation. For reliable nested guidance, read/list the relevant folder before editing. A future tool-approval hook can enforce that at execution time.
+**First-write guard:** If the model's first operation in a nested directory is a `write_file`, `edit_file` or `apply_patch` and it discovers previously unseen scoped guidance, chivgent **rejects that tool call before any write**. The next model request contains the newly discovered instructions; the agent can retry after reviewing them. Shell commands and third-party extension tools cannot be mapped safely to affected file paths and are not covered by this guard. For these tools, inspect the relevant directory first.
 
 ## Context compaction correctness
 
