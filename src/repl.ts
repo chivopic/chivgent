@@ -5,7 +5,7 @@ import type { AgentSession } from "./session.js";
 import type { OutputStream } from "./render.js";
 import type { RegisteredCommand } from "./extensions/api.js";
 import { formatTokens } from "./providers/usage.js";
-import { approvalPreview } from "./tui/activity.js";
+import { approvalPreview, commandReviewable } from "./tui/activity.js";
 import { terminalWidth } from "./tui/live.js";
 import type { LiveRegion } from "./tui/live.js";
 import type { ShellApprovalGate } from "./shell/approval.js";
@@ -474,7 +474,12 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       options.liveRegion?.pause();
       tuiInput?.setBusy(false);
       try {
-        write(approvalPreview(command, terminalWidth(options.output)));
+        const width = terminalWidth({ columns: (options.output as typeof options.output & { columns?: number }).columns });
+        write(approvalPreview(command, width));
+        if (!commandReviewable(command, width)) {
+          write("  Denied: command cannot be fully reviewed at this width. Ask for a shorter command.\n");
+          return false;
+        }
         readline.setPrompt("approve> ");
         readline.prompt();
         // Ctrl+C must unblock the pending line read, not leave the agent
