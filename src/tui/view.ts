@@ -107,6 +107,13 @@ export function view(
     lines.push(fitLineTail(line, options.width));
   }
 
+  if (run.plan !== undefined) {
+    const steps = run.plan.plan;
+    const done = steps.filter(step => step.status === "completed").length;
+    const active = steps.find(step => step.status === "in_progress");
+    lines.push(fitLine(`  Plan ${done}/${steps.length}${active === undefined ? "" : ` · ${terminalText(active.step)}`}`, options.width));
+  }
+
   for (const tool of run.running.slice(0, MAX_LISTED_TOOLS)) {
     lines.push(describeTool(tool, options.now, options.width));
   }
