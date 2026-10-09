@@ -40,6 +40,7 @@ export class AgentSession {
   private transcript: readonly Message[];
   private headerWritten: boolean;
   private promptCount = 0;
+  private promptInProgress = false;
   private usageTotal: UsageTotal | undefined;
 
   constructor(options: AgentSessionOptions) {
@@ -83,6 +84,9 @@ export class AgentSession {
 
   /** Drops the transcript but keeps the session id and its log. */
   clear(): void {
+    if (this.promptInProgress) {
+      throw new Error("Cannot clear a session while a prompt is running.");
+    }
     this.transcript = [];
     this.record({ type: "session_clear" });
   }
@@ -91,20 +95,27 @@ export class AgentSession {
     text: string,
     options: { readonly signal?: AbortSignal } = {},
   ): Promise<AgentRunResult> {
-    await this.writeHeader();
-    this.promptCount += 1;
-
-    const result = await this.agent.run(text, {
-      history: this.transcript,
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
-    this.transcript = result.messages;
-    this.usageTotal = addUsage(this.usageTotal, result.usage?.usage);
-    if (result.usage?.complete === false) {
-      this.usageTotal = { usage: this.usageTotal.usage, complete: false };
+    if (this.promptInProgress) {
+      throw new Error("This session is already running a prompt.");
     }
-    await this.flush();
-    return result;
+    this.promptInProgress = true;
+
+    try {
+      await this.writeHeader();
+      this.promptCount += 1;
+      try {
+        return await this.agent.run(text, {
+          history: this.transcript,
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        });
+      } finally {
+        // A Provider error still emits agent_end; flush that authoritative
+        // snapshot so a restart restores the same transcript as this process.
+        await this.flush();
+      }
+    } finally {
+      this.promptInProgress = false;
+    }
   }
 
   header(): SessionHeader {
@@ -118,6 +129,19 @@ export class AgentSession {
   }
 
   private dispatch(event: AgentEvent): void {
+    // agent_end is authoritative even for an error (where agent.run throws).
+    // Keep in-memory state and the persisted event snapshot identical.
+    if (event.type === "agent_end") {
+      this.transcript = structuredClone(event.messages);
+      this.usageTotal = addUsage(this.usageTotal, event.usage?.usage);
+      if (event.usage?.complete === false) {
+        this.usageTotal = {
+          usage: this.usageTotal.usage,
+          complete: false,
+        };
+      }
+    }
+
     for (const listener of this.listeners) {
       try {
         listener(event);

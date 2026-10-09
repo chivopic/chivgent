@@ -224,6 +224,71 @@ describe("AgentSession", () => {
     expect(headers).toHaveLength(1);
   });
 
+  it("keeps the error-ending transcript in memory and on disk for the next prompt", async () => {
+    const home = await temporaryHome();
+    const store = new FileSessionStore(home);
+    class FailsSecondRequest extends FakeLLMClient {
+      private requestsSeen = 0;
+
+      override async complete(request: Parameters<FakeLLMClient["complete"]>[0]) {
+        this.requestsSeen += 1;
+        if (this.requestsSeen === 2) {
+          throw new Error("Provider temporarily unavailable");
+        }
+        return super.complete(request);
+      }
+    }
+    const llm = new FailsSecondRequest([
+      assistant("", [{ id: "tool-1", name: "echo", arguments: {} }]),
+      assistant("Recovered answer."),
+    ]);
+    const session = createSession(llm, { store, id: "error-recovery" });
+
+    await expect(session.prompt("Original prompt")).rejects.toThrow("temporarily unavailable");
+    const persisted = await store.read("error-recovery");
+    expect(persisted?.messages).toEqual(session.messages);
+    expect(session.messages.map(message => message.role)).toEqual([
+      "user", "assistant", "tool",
+    ]);
+
+    await session.prompt("Follow-up prompt");
+    expect(llm.requests[1]?.messages).toEqual([
+      ...persisted!.messages,
+      { role: "user", content: "Follow-up prompt" },
+    ]);
+    expect((await store.read("error-recovery"))?.messages).toEqual(session.messages);
+  });
+
+  it("rejects overlapping prompts and clearing while a prompt is running", async () => {
+    let notifyStart: (() => void) | undefined;
+    let unblock: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => { notifyStart = resolve; });
+    const blocked = new Promise<void>((resolve) => { unblock = resolve; });
+    class GatedModel extends FakeLLMClient {
+      override async complete(request: Parameters<FakeLLMClient["complete"]>[0]) {
+        notifyStart?.();
+        await blocked;
+        return super.complete(request);
+      }
+    }
+
+    const llm = new GatedModel([assistant("Answer."), assistant("Next answer.")]);
+    const session = createSession(llm);
+    const pending = session.prompt("First");
+    await started;
+
+    await expect(session.prompt("Second")).rejects.toThrow(/already running/);
+    expect(() => session.clear()).toThrow(/while a prompt is running/);
+    unblock?.();
+    await expect(pending).resolves.toMatchObject({ status: "completed" });
+    await session.prompt("Second");
+    expect(llm.requests[1]?.messages).toEqual([
+      { role: "user", content: "First" },
+      { role: "assistant", content: "Answer.", toolCalls: [] },
+      { role: "user", content: "Second" },
+    ]);
+  });
+
   it("keeps Agent results successful when persistence is unavailable", async () => {
     let appendCalls = 0;
     const unavailableStore: SessionStore = {

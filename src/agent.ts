@@ -123,9 +123,14 @@ export class Agent {
       throw new TypeError("User input must not be empty.");
     }
 
+    // Older logs or crashed executions can end with an assistant tool call
+    // without a corresponding tool result. Repair those pairs before sending
+    // any new user message to a Provider.
+    const history = structuredClone([...(options.history ?? [])]);
+    closePendingToolCalls(history);
     const state: RunState = {
       messages: [
-        ...structuredClone(options.history ?? []),
+        ...history,
         { role: "user", content: userInput },
       ],
       seenToolCallIds: new Set<string>(),
@@ -141,9 +146,17 @@ export class Agent {
 
     try {
       const result = await this.loop(state, signal);
+      if (result.status === "aborted") {
+        closePendingToolCalls(state.messages);
+        this.emitEnd("aborted", state);
+        return abortedResult(state);
+      }
       this.emitEnd(result.status, state);
       return result;
     } catch (error: unknown) {
+      // A failed/aborted tool may leave other calls in the same assistant
+      // message unanswered. Every call needs a result for future replay.
+      closePendingToolCalls(state.messages);
       if (isAbortError(error) || isAborted(signal)) {
         this.emitEnd("aborted", state);
         return abortedResult(state);
@@ -173,6 +186,11 @@ export class Agent {
 
       const response = await this.requestAssistantMessage(state, turn, signal);
       state.usage = addUsage(state.usage, response.usage);
+      // A Provider might ignore AbortSignal and resolve successfully anyway.
+      // Do not commit that answer as a completed turn after cancellation.
+      if (isAborted(signal)) {
+        return abortedResult(state);
+      }
       const assistant = validateAndCloneAssistantMessage(response.message);
       this.assertUniqueToolCallIds(assistant.toolCalls, state.seenToolCallIds);
       state.messages.push(assistant);
@@ -338,7 +356,15 @@ export class Agent {
           }),
         );
       } catch (error: unknown) {
-        if (isAbortError(error)) {
+        if (isAbortError(error) || isAborted(signal)) {
+          this.emit({
+            type: "tool_execution_end",
+            turn,
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            content: INTERRUPTED_TOOL_RESULT,
+            isError: true,
+          });
           throw error;
         }
         output = {
@@ -387,6 +413,50 @@ export class Agent {
       ...(state.usage === undefined ? {} : { usage: state.usage }),
       ...(error === undefined ? {} : { error }),
     });
+  }
+}
+
+const INTERRUPTED_TOOL_RESULT = "Tool execution interrupted before completion.";
+
+/**
+ * Ensure every function call has a corresponding output before history is
+ * replayed. The synthetic failure is deliberately explicit: we did not run
+ * the unfinished tool, and must never imply that its side effects happened.
+ *
+ * Also handles historical logs with an interrupted assistant call followed by
+ * a user message, inserting the missing output *before* that user message.
+ */
+function closePendingToolCalls(messages: Message[]): void {
+  for (let index = 0; index < messages.length; index += 1) {
+    const current = messages[index];
+    if (current?.role !== "assistant" || current.toolCalls.length === 0) {
+      continue;
+    }
+
+    let afterTools = index + 1;
+    const completed = new Set<string>();
+    while (messages[afterTools]?.role === "tool") {
+      const message = messages[afterTools];
+      if (message?.role === "tool") {
+        completed.add(message.toolCallId);
+      }
+      afterTools += 1;
+    }
+
+    const missing: ToolResultMessage[] = current.toolCalls
+      .filter((call) => !completed.has(call.id))
+      .map((call) => ({
+        role: "tool",
+        toolCallId: call.id,
+        toolName: call.name,
+        content: INTERRUPTED_TOOL_RESULT,
+        isError: true,
+      }));
+
+    if (missing.length > 0) {
+      messages.splice(afterTools, 0, ...missing);
+    }
+    index = afterTools + missing.length - 1;
   }
 }
 
