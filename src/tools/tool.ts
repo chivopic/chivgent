@@ -25,6 +25,14 @@ export interface ToolOutput {
   readonly isError: boolean;
 }
 
+/** An intentional, user-safe failure message from a tool (including extensions). */
+export class ToolExecutionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ToolExecutionError";
+  }
+}
+
 export interface Tool extends ToolDefinition {
   execute(
     argumentsValue: unknown,
