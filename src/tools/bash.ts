@@ -1,8 +1,11 @@
 import type { Tool, ToolContext, ToolOutput } from "./tool.js";
-import { createLocalShellOperations, validateTimeoutSeconds } from "../shell/local.js";
+import { validateTimeoutSeconds } from "../shell/local.js";
+import { createDockerShellOperations } from "../shell/docker.js";
+import type { ShellApproval } from "../shell/approval.js";
 import { OutputAccumulator } from "../shell/output.js";
 import { formatSize, type TruncationResult } from "../shell/truncate.js";
 import {
+  ShellAbortError,
   ShellTimeoutError,
   ShellUnavailableError,
   type ShellOperations,
@@ -38,6 +41,8 @@ export interface BashToolOptions {
   readonly cwd: string;
   /** Swap in a container or SSH backend without touching the tool. */
   readonly operations?: ShellOperations;
+  /** A human decision (or explicit session-wide approval). Absent means deny. */
+  readonly approve?: ShellApproval;
   readonly maxLines?: number;
   readonly maxBytes?: number;
   readonly tempDirectory?: string;
@@ -52,6 +57,7 @@ export class BashTool implements Tool {
 
   private readonly cwd: string;
   private readonly operations: ShellOperations;
+  private readonly approve: ShellApproval | undefined;
   private readonly maxLines?: number;
   private readonly maxBytes?: number;
   private readonly tempDirectory?: string;
@@ -59,7 +65,8 @@ export class BashTool implements Tool {
 
   constructor(options: BashToolOptions) {
     this.cwd = options.cwd;
-    this.operations = options.operations ?? createLocalShellOperations();
+    this.operations = options.operations ?? createDockerShellOperations();
+    this.approve = options.approve;
     if (options.maxLines !== undefined) {
       this.maxLines = options.maxLines;
     }
@@ -91,6 +98,26 @@ export class BashTool implements Tool {
           'Invalid arguments. Expected {"command":"npm test","timeout":120} with a non-empty command.',
         isError: true,
       };
+    }
+
+    if (context.signal?.aborted) {
+      throw new ShellAbortError();
+    }
+    // Approval is required even if the caller already exposed the bash tool.
+    // Non-interactive/remote callers have no implicit approval channel.
+    if (this.approve === undefined) {
+      return { content: "Shell command denied: explicit approval is required.", isError: true };
+    }
+    let approved: boolean;
+    try {
+      approved = await this.approve(parsed.command, context.signal);
+    } catch (error: unknown) {
+      if (isAbortError(error) || context.signal?.aborted) throw new ShellAbortError();
+      return { content: "Shell command denied: approval failed.", isError: true };
+    }
+    if (context.signal?.aborted) throw new ShellAbortError();
+    if (!approved) {
+      return { content: "Shell command denied by user.", isError: true };
     }
 
     const output = new OutputAccumulator({

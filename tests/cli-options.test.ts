@@ -189,6 +189,15 @@ describe("--allow-shell", () => {
     expect(parseCliArgs(["question"], {}).allowShell).toBe(false);
   });
 
+  it("rejects approve-all without shell access", () => {
+    expect(() => parseCliArgs(["--approve-all-shell"], {})).toThrow(/requires --allow-shell/);
+  });
+
+  it("accepts explicit preapproval only with shell access", () => {
+    expect(parseCliArgs(["--allow-shell", "--approve-all-shell"], {}).approveAllShell).toBe(true);
+    expect(parseCliArgs(["--allow-shell"], {}).approveAllShell).toBe(false);
+  });
+
   it("turns the shell on and raises the turn limit", () => {
     const options = parseCliArgs(["--allow-shell", "question"], {});
 

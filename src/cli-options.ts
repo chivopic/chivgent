@@ -56,6 +56,8 @@ export interface CliOptions {
    * can do everything the write tools can and is not bound by the workspace.
    */
   readonly allowShell: boolean;
+  /** Explicitly approve every command in this session; Docker isolation still applies. */
+  readonly approveAllShell: boolean;
   /** Draw a live status region above the prompt. Interactive terminals only. */
   readonly tui: boolean;
   /** Load extensions from the user and (once trusted) the project directory. */
@@ -100,6 +102,7 @@ export function parseCliArgs(
   let listSessions = false;
   let allowWrites = false;
   let allowShell = false;
+  let approveAllShell = false;
   let tui = false;
   let extensions = true;
   let serve = false;
@@ -159,6 +162,8 @@ export function parseCliArgs(
       allowWrites = true;
     } else if (argument === "--allow-shell") {
       allowShell = true;
+    } else if (argument === "--approve-all-shell") {
+      approveAllShell = true;
     } else if (argument === "--serve") {
       serve = true;
     } else if (argument === "--connect") {
@@ -189,6 +194,10 @@ export function parseCliArgs(
     }
   }
 
+  if (approveAllShell && !allowShell) {
+    throw new TypeError("--approve-all-shell requires --allow-shell.");
+  }
+
   const definition = registry.get(provider);
   const model =
     requestedModel ||
@@ -216,6 +225,7 @@ export function parseCliArgs(
     listSessions,
     allowWrites,
     allowShell,
+    approveAllShell,
     tui,
     extensions,
     serve,
@@ -254,8 +264,10 @@ Options:
   --resume ID      Resume a specific session
   --sessions       List recorded sessions and exit
   --allow-writes   Let the agent create and change files (default: read-only)
-  --allow-shell    Let the agent run shell commands. This implies write access:
-                   a shell is not bound by the workspace. Unix only.
+  --allow-shell    Expose bash inside an offline Docker container (Docker required).
+                   Interactive commands require individual confirmation.
+  --approve-all-shell  Explicitly approve all Docker shell commands this session;
+                   use only with --allow-shell when individual prompts are unavailable.
   --serve          Expose this session on a local socket and keep running
   --connect TARGET Attach to a served session, by id or socket path
   --servers        List the servers still answering, then exit

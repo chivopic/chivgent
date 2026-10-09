@@ -37,7 +37,7 @@ export function validateTimeoutSeconds(value: number): number {
 
 export interface LocalShellOptions {
   /** Resolved once per command so a shell installed mid-session is picked up. */
-  readonly resolveConfig?: () => ShellConfig;
+  readonly resolveConfig?: (cwd: string) => ShellConfig;
 }
 
 /** Runs commands as child processes of this one. */
@@ -62,7 +62,7 @@ export function createLocalShellOperations(
         );
       }
 
-      const config = resolveConfig();
+      const config = resolveConfig(cwd);
       // detached makes the child a process group leader, which is what lets a
       // cancel kill its descendants too.
       const child = spawn(config.shell, [...config.args, command], {

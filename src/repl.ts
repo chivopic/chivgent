@@ -5,6 +5,7 @@ import type { AgentSession } from "./session.js";
 import type { OutputStream } from "./render.js";
 import type { RegisteredCommand } from "./extensions/api.js";
 import { formatTokens } from "./providers/usage.js";
+import type { ShellApprovalGate } from "./shell/approval.js";
 
 export const REPL_PROMPT = "› ";
 
@@ -235,6 +236,7 @@ function describeSession(context: SlashCommandContext): string {
 export interface ReplOptions {
   readonly tui?: boolean;
   readonly session: AgentSession;
+  readonly shellApproval?: ShellApprovalGate;
   readonly input: NodeJS.ReadableStream;
   readonly output: NodeJS.WritableStream;
   readonly stderr: OutputStream;
@@ -460,6 +462,36 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     return next.done === true ? undefined : next.value;
   };
 
+  // Approval and normal input share the same readline iterator.
+  if (options.shellApproval !== undefined) {
+    options.shellApproval.setHandler(async (command, signal) => {
+      if (signal?.aborted) return false;
+      menu?.clear();
+      tuiInput?.setBusy(false);
+      try {
+        write(`\nShell command (Docker, network disabled):\n${command}\nApprove? [y/N]\n`);
+        readline.setPrompt("approve> ");
+        readline.prompt();
+        // Ctrl+C must unblock the pending line read, not leave the agent
+        // stuck waiting for a reply to an approval that was cancelled.
+        const unblockOnAbort = (): void => {
+          readline.write("\n");
+        };
+        signal?.addEventListener("abort", unblockOnAbort, { once: true });
+        try {
+          if (signal?.aborted) return false;
+          const answer = await readNextLine();
+          return answer?.trim().toLowerCase() === "y" && signal?.aborted !== true;
+        } finally {
+          signal?.removeEventListener("abort", unblockOnAbort);
+        }
+      } finally {
+        readline.setPrompt(REPL_PROMPT);
+        tuiInput?.setBusy(true);
+      }
+    });
+  }
+
   const signInAfterProviderSelection = async (): Promise<void> => {
     if (!options.tui || options.signIn === undefined) return;
     let missingKey: boolean;
@@ -590,6 +622,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     }
 
   } finally {
+    options.shellApproval?.setHandler(undefined);
     readline.close();
     tuiInput?.dispose();
   }

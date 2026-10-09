@@ -11,6 +11,7 @@ import { toolNamesFor, toolsFor } from "../src/evals/tools.js";
 import { MissingCapabilityError, runTask } from "../src/evals/runner.js";
 import { formatFailures, formatTable, toJsonReport } from "../src/evals/report.js";
 import { assistant, FakeLLMClient } from "./fakes.js";
+import { createLocalShellOperations } from "../src/shell/local.js";
 import type { LLMResponse } from "../src/llm.js";
 
 const temporaryDirectories: string[] = [];
@@ -726,6 +727,8 @@ describe("the new tasks, driven by a scripted model", () => {
     const result = await runTask(task, {
       systemPrompt: "system",
       capabilities,
+      // These scripted grading tests verify behavior, not Docker availability.
+      shellOperations: createLocalShellOperations(),
       attempts: 1,
       createClient: () => new FakeLLMClient([...script]),
     });
