@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/chivgent-banner-dark.svg">
+    <img src="docs/assets/chivgent-banner-light.svg" alt="chivgent: terminal coding agent. Read-only by default, Docker shell, OpenAI-compatible." width="100%">
+  </picture>
+</p>
+
 # chivgent
 
 [English](README.md) | [简体中文](README.zh-CN.md)
