@@ -91,7 +91,7 @@ rather than an intention — and it needs no second copy of the file in
 call in order with whether it succeeded, alongside the `toolsUsed` set the table
 prints.
 
-The nine tasks split into what the agent found and what it changed. Four exist
+The ten tasks split into what the agent found and what it changed. Four exist
 because the first real baseline passed 29 of 30 attempts and therefore measured
 nothing: `needle-in-many-files` (40 files with uninformative names, so listing
 gives no signal), `trace-the-default` (a value overridden twice, where stopping
