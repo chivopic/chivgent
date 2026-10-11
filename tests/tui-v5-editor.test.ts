@@ -94,6 +94,58 @@ describe("mouse caret and selected text", () => {
     expect(out.join("")).toContain("\u001b[?1000l");
   });
 
+  it("maps clicks through a horizontally scrolled viewport and its ellipsis", () => {
+    const c = new EditorController({ columns: 20, rows: 12, write: () => {} }, () => {}, {
+      submitOnEnter: true, mouse: true,
+    });
+    c.begin();
+    c.receive(Buffer.from("abcdefghijklmnopqrstuvwxyz"));
+    c.receive(Buffer.from("\u001b[12;4R"));
+    // At width 20 the visible text starts with “…” then “n”; click the n.
+    c.receive(Buffer.from("\u001b[<0;4;12M"));
+    expect(c.document.position).toEqual({ row: 0, column: 13 });
+    c.cancel();
+  });
+
+  it("uses each visible row's scroll mapping and treats Unicode by display cells", () => {
+    const c = new EditorController({ columns: 20, rows: 12, write: () => {} }, () => {}, {
+      submitOnEnter: true, mouse: true,
+    });
+    c.begin();
+    c.receive(Buffer.from("abcdefghijkl👩‍💻xyz\u000fshort\u001b[A\u001b[F"));
+    c.receive(Buffer.from("\u001b[12;4R"));
+    // The first line is scrolled; the second line is not. Clicking column 5
+    // on the second line must therefore map to its own column 2.
+    c.receive(Buffer.from("\u001b[<0;5;13M"));
+    expect(c.document.position).toEqual({ row: 1, column: 2 });
+    c.cancel();
+  });
+
+  it("maps a Unicode grapheme through a scrolled viewport by display cells", () => {
+    const c = new EditorController({ columns: 20, rows: 12, write: () => {} }, () => {}, {
+      submitOnEnter: true, mouse: true,
+    });
+    c.begin();
+    c.receive(Buffer.from("abcdefghijkl👩‍💻xyz"));
+    c.receive(Buffer.from("\u001b[12;4R"));
+    // The emoji starts at document display cell 12 and screen column 12.
+    c.receive(Buffer.from("\u001b[<0;12;12M"));
+    expect(c.document.position).toEqual({ row: 0, column: 12 });
+    c.cancel();
+  });
+
+  it("ignores mouse clicks on slash suggestion rows", () => {
+    const c = new EditorController({ columns: 30, rows: 10, write: () => {} }, () => {}, {
+      submitOnEnter: true, mouse: true, slashCommands: cmds,
+    });
+    c.begin();
+    c.receive(Buffer.from("/gi"));
+    c.receive(Buffer.from("\u001b[12;4R"));
+    c.receive(Buffer.from("\u001b[<0;8;13M"));
+    expect(c.document.cursor).toBe(3);
+    c.cancel();
+  });
+
   it("renders suggestions without exceeding terminal height", () => {
     const doc = new EditorDocument();
     doc.insert("/gi");

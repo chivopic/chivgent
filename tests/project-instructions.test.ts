@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { Message } from "../src/messages.js";
+import type { Message, ToolCall } from "../src/messages.js";
 import { ScopedProjectInstructions } from "../src/context/project-instructions.js";
 import { createLocalSession } from "../src/cli-runtime.js";
 import { parseCliArgs } from "../src/cli-options.js";
@@ -144,13 +144,74 @@ describe("scoped AGENTS.md discovery", () => {
       cwd, llm, restored: { resumed: false },
     });
     await session.prompt("Create src/a.ts");
-    expect(session.messages.find(message => message.role === "tool")).toMatchObject({
+    expect(session.messages.find(message => message.role === "tool" && message.toolName === "write_file")).toMatchObject({
       role: "tool",
       isError: true,
       content: expect.stringContaining("No files were changed"),
     });
     await expect(readFile(path.join(cwd, "src/a.ts"))).rejects.toMatchObject({ code: "ENOENT" });
     expect(llm.requests[1]?.messages[0]?.content).toContain("Read the source before editing.");
+  });
+
+  it("defers a write when many older targets precede its scoped rules", async () => {
+    const cwd = await temp();
+    await mkdir(path.join(cwd, "current"));
+    await writeFile(path.join(cwd, "current/AGENTS.md"), "Inspect current guidance first.");
+    const batch: ToolCall[] = Array.from({ length: 31 }, (_, index) => ({
+      id: `old-${index}`, name: "read_file", arguments: { path: `old-${index}/file.ts` },
+    }));
+    batch.push({ id: "write-current", name: "write_file", arguments: { path: "current/a.ts", contents: "unsafe attempt" } });
+    const llm = new FakeLLMClient([
+      assistant("", batch),
+      assistant("I will inspect the current instructions first."),
+    ]);
+    const session = createLocalSession({
+      options: parseCliArgs(["--allow-writes"], {}),
+      cwd, llm, restored: { resumed: false },
+    });
+    await session.prompt("Create current/a.ts");
+    expect(session.messages.find(message => message.role === "tool" && message.toolName === "write_file")).toMatchObject({
+      role: "tool", isError: true, content: expect.stringContaining("No files were changed"),
+    });
+    await expect(readFile(path.join(cwd, "current/a.ts"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(llm.requests[1]?.messages.some(message => message.content.includes("Inspect current guidance first."))).toBe(true);
+  });
+
+  it("refuses a write if its current instruction chain exceeds the byte budget", async () => {
+    const cwd = await temp();
+    await writeFile(path.join(cwd, "AGENTS.md"), "X".repeat(9_000));
+    const llm = new FakeLLMClient([
+      assistant("", [{ id: "write", name: "write_file", arguments: { path: "a.ts", contents: "unsafe attempt" } }]),
+      assistant("I need complete project guidance before writing."),
+    ]);
+    const session = createLocalSession({
+      options: parseCliArgs(["--allow-writes"], {}), cwd, llm, restored: { resumed: false },
+    });
+    await session.prompt("Create a.ts");
+    expect(session.messages.find(message => message.role === "tool" && message.toolName === "write_file")).toMatchObject({
+      role: "tool", isError: true, content: expect.stringContaining("exceed the safe loading limits"),
+    });
+    await expect(readFile(path.join(cwd, "a.ts"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses a write if its current instruction chain exceeds the directory limit", async () => {
+    const cwd = await temp();
+    const nested = Array.from({ length: 32 }, () => "d").join("/");
+    await mkdir(path.join(cwd, nested), { recursive: true });
+    await writeFile(path.join(cwd, nested, "AGENTS.md"), "Deep scoped rule.");
+    const target = path.join(nested, "a.ts");
+    const llm = new FakeLLMClient([
+      assistant("", [{ id: "write", name: "write_file", arguments: { path: target, contents: "unsafe attempt" } }]),
+      assistant("I need complete project guidance before writing."),
+    ]);
+    const session = createLocalSession({
+      options: parseCliArgs(["--allow-writes"], {}), cwd, llm, restored: { resumed: false },
+    });
+    await session.prompt("Create the deeply scoped file");
+    expect(session.messages.find(message => message.role === "tool" && message.toolName === "write_file")).toMatchObject({
+      role: "tool", isError: true, content: expect.stringContaining("No files were changed"),
+    });
+    await expect(readFile(path.join(cwd, target))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("keeps unchanged guidance across turns without invalidating continuation", async () => {

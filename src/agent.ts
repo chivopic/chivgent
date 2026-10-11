@@ -19,7 +19,7 @@ import type {
   AppliedCompaction,
   ContextManager,
 } from "./context/context-manager.js";
-import type { ProjectInstructionsProvider } from "./context/project-instructions.js";
+import { INCOMPLETE_PROJECT_GUIDANCE, type ProjectInstructionsProvider } from "./context/project-instructions.js";
 
 export interface AgentOptions {
   readonly systemPrompt: string;
@@ -430,12 +430,19 @@ export class Agent {
         // A model may issue its very first write into a nested folder whose
         // AGENTS.md wasn't visible at sampling time. Defer the mutation until
         // the next LLM request has included those scoped instructions.
-        const unseenGuidance = this.projectInstructions !== undefined &&
-          ["write_file", "edit_file", "apply_patch"].includes(toolCall.name) &&
-          (await this.projectInstructions.load(state.messages)) !== state.projectInstructionsText;
+        const currentGuidance = this.projectInstructions !== undefined &&
+          ["write_file", "edit_file", "apply_patch"].includes(toolCall.name)
+          ? await this.projectInstructions.load(state.messages, toolCall)
+          : undefined;
+        const unseenGuidance = currentGuidance !== undefined && (
+          currentGuidance.includes(INCOMPLETE_PROJECT_GUIDANCE) ||
+          currentGuidance !== state.projectInstructionsText
+        );
         if (unseenGuidance) {
           output = {
-            content: "New scoped AGENTS.md instructions were discovered. No files were changed. Review the new project guidance in the next turn before retrying.",
+            content: currentGuidance?.includes(INCOMPLETE_PROJECT_GUIDANCE)
+              ? "The current operation's scoped project instructions exceed the safe loading limits. No files were changed; narrow the operation or reduce the instruction size before retrying."
+              : "New scoped AGENTS.md instructions were discovered. No files were changed. Review the new project guidance in the next turn before retrying.",
             isError: true,
           };
         } else {

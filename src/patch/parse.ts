@@ -110,5 +110,6 @@ export function applyHunks(original: string, hunks: readonly PatchHunk[], file: 
     lines.splice(at, hunk.oldLines.length, ...hunk.newLines);
     cursor = at + hunk.newLines.length;
   }
+  if (lines.length === 0) return "";
   return lines.join("\n") + (hasFinalNewline ? "\n" : "");
 }

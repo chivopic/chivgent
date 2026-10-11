@@ -198,6 +198,8 @@ export interface EditorFrame {
   readonly lines: readonly string[];
   readonly cursorRow: number;
   readonly cursorColumn: number;
+  /** Document row and horizontal viewport mapping for each visible input row. */
+  readonly inputRows?: readonly { readonly documentRow: number; readonly scrollCells: number }[];
 }
 
 /** Fixed-height viewport; keep caret in frame even on small terminals. */
@@ -245,6 +247,7 @@ export function editorFrame(document: EditorDocument, width: number, height: num
         return `│ ${original.slice(0, lo)}\u001b[7m${original.slice(lo, hi)}\u001b[0m${original.slice(hi)}`;
       })(),
       caret: Math.min(cellWidth - 1, 2 + Math.max(0, caret - scrollCells) + (scrollCells > 0 ? 1 : 0)),
+      scrollCells,
     };
   });
   const header = fitLine(submitOnEnter
@@ -261,6 +264,7 @@ export function editorFrame(document: EditorDocument, width: number, height: num
     lines: [header, ...body.map(item => item.row), ...popup, footer],
     cursorRow: 1 + (position.row - first),
     cursorColumn: body[position.row - first]?.caret ?? 2,
+    inputRows: body.map((item, index) => ({ documentRow: first + index, scrollCells: item.scrollCells })),
   };
 }
 

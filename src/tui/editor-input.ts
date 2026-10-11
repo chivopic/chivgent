@@ -79,10 +79,19 @@ export class EditorController {
     if (button === 32 && !this.mouseDragging) return;
     if (this.originRow === undefined || this.lastFrame === undefined) return;
     const relative = Number(answer[3]) - 1 - this.originRow;
-    if (relative < 1 || relative >= this.lastFrame.lines.length - 1) return;
-    const docFirst = this.document.position.row - (this.lastFrame.cursorRow - 1);
-    const targetRow = docFirst + relative - 1;
-    this.document.placeAt(targetRow, Math.max(0, Number(answer[2]) - 3), button === 32);
+    const inputRow = this.lastFrame.inputRows?.[relative - 1];
+    // Only visible editable rows map to document text; header, popup and footer
+    // coordinates must never be interpreted as text positions.
+    if (inputRow === undefined) return;
+    const frameColumn = Math.max(0, Number(answer[2]) - 3);
+    const visibleTextColumn = inputRow.scrollCells > 0
+      ? Math.max(0, frameColumn - 1)
+      : frameColumn;
+    this.document.placeAt(
+      inputRow.documentRow,
+      visibleTextColumn + inputRow.scrollCells,
+      button === 32,
+    );
     this.mouseDragging = true;
   }
 

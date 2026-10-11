@@ -95,6 +95,15 @@ describe("apply_patch", () => {
     expect(await readFile(path.join(root, "a.ts"), "utf8")).toBe("FIRST\nkeep\nLAST\n");
   });
 
+  it("deletes the only line to an empty file and preserves ordinary final newlines", async () => {
+    const root = await temp();
+    await writeFile(path.join(root, "only.txt"), "only\n");
+    const workspace = new LocalWorkspace(root, { allowWrites: true });
+    await workspace.applyPatch("*** Begin Patch\n*** Update File: only.txt\n@@\n-only\n*** End Patch");
+    expect(await readFile(path.join(root, "only.txt"), "utf8")).toBe("");
+    expect(parsePatch("*** Begin Patch\n*** Update File: unused.txt\n@@\n-a\n+A\n*** End Patch")).toHaveLength(1);
+  });
+
   it("preserves uniform CRLF and a UTF-8 BOM", async () => {
     const root = await temp();
     await writeFile(path.join(root, "a.txt"), "\uFEFFalpha\r\nbeta\r\n");
