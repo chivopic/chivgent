@@ -2,980 +2,181 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-> A readable terminal coding agent with a streaming TUI and configurable AI providers.
-
-![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=nodedotjs&logoColor=white)
-![TypeScript](https://img.shields.io/badge/TypeScript-ESM-3178C6?logo=typescript&logoColor=white)
+[![npm](https://img.shields.io/npm/v/chivgent)](https://www.npmjs.com/package/chivgent)
 [![CI](https://github.com/chivopic/chivgent/actions/workflows/ci.yml/badge.svg)](https://github.com/chivopic/chivgent/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Node.js >=22](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=nodedotjs&logoColor=white)
 
-`chivgent` connects a Provider-independent agent loop to LLM APIs, tools, and a
-workspace boundary. It can discover files, search source text, read bounded
-file ranges, and optionally edit files or run commands. It works with OpenAI,
-DeepSeek, and compatible Chat Completions endpoints.
+chivgent is a terminal coding agent you can read end to end. It asks an LLM
+(OpenAI, DeepSeek, or any OpenAI-compatible endpoint) about the project in your
+current directory, using read-only file tools by default. Writes and shell
+commands are separate opt-in flags, and shell commands run in an offline Docker
+container with per-command approval.
 
-The project is intentionally compact: it is designed to make the mechanics of
-tool calling, conversation state, Provider adapters, and loop termination easy
-to study before adding production-harness complexity.
+It is small on purpose: a TypeScript CLI with four runtime dependencies, where
+the agent loop, Provider adapters, context compaction, and tool sandboxing are
+each a few hundred lines you can study.
 
-## Features
-
-- A real multi-turn agent loop: model -> tool call -> tool result -> model.
-- Provider-independent runtime messages and tool contracts.
-- A Provider registry: adding a Provider is a declaration, not a CLI change.
-- API keys resolved from `--api-key`, the environment, then an optional file.
-- OpenAI support through the Responses API.
-- DeepSeek support through a reusable OpenAI-compatible Chat Completions client.
-- Custom OpenAI-compatible endpoints through the TUI, CLI options, or environment.
-- A rolling TUI with inline slash-command suggestions and a Provider picker.
-- An interactive session with slash commands, or a single-shot question.
-- Sessions that persist as JSON lines and can be resumed in a later process.
-- A context manager that summarises old turns to stay inside the window.
-- A `--json` event stream for scripting and other front ends.
-- Streamed answers rendered from a typed runtime event stream.
-- Interruptible runs: Ctrl+C stops the current answer; at an idle prompt it exits.
-- Per-attempt Provider timeouts and bounded exponential-backoff retries.
-- Deterministic project discovery through `list_files` and literal `search_text`.
-- Ranged `read_file` output with continuation hints and bounded tool results.
-- Read-only by default; `--allow-writes` adds `write_file` and `edit_file`.
-- An opt-in `bash` tool behind `--allow-shell`, with streamed output.
-- Token usage from the Provider, per turn, per run, per eval task.
-- An eval suite that measures whether the agent completes tasks, not just runs.
-- Remote sessions: one process holds a session, others attach over a local socket.
-- Several clients can watch one session; any of them can interrupt the run.
-- Extensions that add tools, slash commands, event handlers and prompt text.
-- Project extensions gated by a per-directory trust decision, taken before any
-  module is imported and refused outright when there is no terminal to ask.
-- Commands run in their own process group, so cancelling kills the whole tree.
-- Command output is truncated from the tail; the full text goes to a temp file.
-- Exact-match `edit_file` that refuses missing or ambiguous edits.
-- Edits preserve the file's own byte order mark and CRLF line endings.
-- Atomic writes: a crash mid-write leaves the original file intact.
-- Safe workspace access with traversal and symlink-escape protection.
-- Root `.gitignore`, generated-directory, and sensitive-path filtering.
-- Tool argument validation, explicit tool errors, and a bounded turn limit.
-- A packaged Node.js CLI with no framework dependency.
-- Unit tests that do not spend API credits.
+**Use it if** you want a coding agent whose every mechanism you can inspect and
+change, or a reference implementation for building your own.
+**Look elsewhere if** you want the most capable agent for daily work, a hosted
+product, a fine-grained permission system, or native Windows shell support.
 
 ## Quick start
 
-### Requirements
-
-- Node.js 22 or newer
-- npm
-- An API key for OpenAI, DeepSeek, or a compatible Provider
-
-### Install from npm
+You need Node.js 22 or newer and an API key for one Provider.
 
 ```bash
 npm install -g chivgent
 chivgent --version
 ```
 
-Update an npm global installation with:
-
-```bash
-chivgent update --check  # Check without installing
-chivgent update         # Install the newer version, then restart chivgent
-```
-
-For older releases without this command, run `npm install -g chivgent@latest`
-once. The updater checks only when requested. Source checkouts, local dependencies
-and temporary `npx` runs receive instructions for their installation type.
-See [updating chivgent](docs/updating.md) for details and troubleshooting.
-
-To install the current source checkout instead:
-
-```bash
-git clone https://github.com/chivopic/chivgent.git
-cd chivgent
-npm install
-npm run build
-npm install -g .
-```
-
-### Ask about a project
-
-Run `chivgent` from the project you want it to inspect.
-
-With OpenAI:
+This prints the installed version, such as `1.0.0`. Then, from the project you want to ask
+about:
 
 ```bash
 export OPENAI_API_KEY="your-api-key"
-chivgent "What does src/agent.ts do?"
+chivgent "What does this project do, and where is its entry point?"
 ```
 
-With DeepSeek:
+The answer streams to stdout. Tool activity (`list_files`, `search_text`,
+`read_file`) is shown on stderr. Nothing in the project is changed.
+
+Prefer DeepSeek or another Provider? Swap the key and add `--provider`:
 
 ```bash
 export DEEPSEEK_API_KEY="your-api-key"
 chivgent --provider deepseek "Explain the architecture in src/"
 ```
 
-With any OpenAI-compatible Chat Completions endpoint:
+Run `chivgent` with no question for an interactive session. If no key is set,
+the session still starts: type `/provider`, pick one, and enter its key when
+asked. Keys are saved owner-only in `~/.chivgent/auth.json`.
+
+**Try it without a key or network:** from a source checkout, `npm run demo:tui`
+runs the TUI against a stub Provider and does not touch the workspace.
+
+## What it can do, and what it needs from you
+
+| Capability | Flag | What it can touch |
+| --- | --- | --- |
+| Discover, search, and read files | default | The current directory only. `.gitignore`d, generated, and credential paths (such as `.env`, `id_rsa`) are skipped. |
+| Create and edit files (`write_file`, `edit_file`, `apply_patch`) | `--allow-writes` | Files inside the workspace. Edits are exact-match and atomic. |
+| Run shell commands (`bash`) | `--allow-shell` | A fresh `node:22-alpine` Docker container with no network, the workspace mounted at `/workspace`, and no API keys. Each command needs a `y` to run. Docker is required; there is no fallback to the host. |
+| Load project extensions | trust prompt on first run | Anything you can: extensions are in-process JavaScript. |
+
+Costs: chivgent calls the Provider you choose with your key, so you pay that
+Provider's normal token prices. It reports token counts per turn and per
+session (`/session`) but never converts them to money.
+
+## Providers
+
+| Provider | `--provider` | API key variable | Default model |
+| --- | --- | --- | --- |
+| OpenAI (Responses API) | `openai` (default) | `OPENAI_API_KEY` | `gpt-5.6` |
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-v4-flash` |
+| Any OpenAI-compatible endpoint | `openai-compatible` | `OPENAI_API_KEY` + `OPENAI_BASE_URL` | set `OPENAI_MODEL` |
+| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | set `OPENROUTER_MODEL` |
+| Groq | `groq` | `GROQ_API_KEY` | set `GROQ_MODEL` |
+| xAI | `xai` | `XAI_API_KEY` | set `XAI_MODEL` |
+| Moonshot | `moonshot` | `MOONSHOT_API_KEY` | set `MOONSHOT_MODEL` |
+
+`--model` overrides the model variable. Keys resolve in this order: `--api-key`,
+then the environment variable, then `~/.chivgent/auth.json` (literal keys only;
+no `$VAR` expansion or command substitution). A custom `OPENAI_BASE_URL`
+receives your key and prompts, so point it only at endpoints you trust.
+
+Compatible endpoints must implement `POST /chat/completions` with function tool
+calling. Changing only the base URL does not guarantee full compatibility; see
+[architecture](docs/architecture.md#openai-compatible-providers).
+
+## Everyday use
 
 ```bash
-export OPENAI_API_KEY="your-provider-api-key"
-export OPENAI_BASE_URL="https://api.vendor.example/v1"
-export OPENAI_MODEL="vendor-model"
-
-chivgent --provider openai-compatible "Explain the architecture in src/"
+chivgent                                   # interactive session
+chivgent --continue                        # resume the latest session here
+chivgent --allow-writes "Rename sayHi to greet everywhere"
+chivgent --allow-shell "Run the tests and explain the failure"
+chivgent --json "List the CLI flags" > run.jsonl   # machine-readable events
 ```
 
-Start an interactive session by running `chivgent` with no question:
+- **Interactive sessions** keep history across prompts and are saved as JSON
+  lines under `~/.chivgent/sessions` (`--no-session` to skip). `/help` lists
+  slash commands such as `/provider`, `/model`, `/login`, `/session`, `/diff`,
+  and `/exit`. Ctrl+C stops a running answer; at an idle prompt it exits.
+- **`--tui`** adds a live status region and a multi-line editor with history,
+  an inline `/` command menu, and `/gitdiff` review. See the
+  [TUI guide](docs/tui-v5.md).
+- **Long sessions** stay inside the context window: older turns are summarised,
+  while the list of files read and changed is kept from the tool calls
+  themselves. See [architecture](docs/architecture.md#context-management).
+- **Exit codes:** `0` answered, `1` configuration or Provider failure, `2` turn
+  limit reached, `130` interrupted.
+- **Updating:** `chivgent update --check`, then `chivgent update`. See
+  [updating](docs/updating.md).
 
-```bash
-chivgent
-› What does src/agent.ts do?
-› Where is that loop tested?
-› /exit
-```
+`chivgent --help` prints every flag.
 
-The conversation is kept across prompts, so follow-up questions do not repeat
-the earlier context. Resume it later with `chivgent --continue` (or
-`chivgent --resume <id>`; `chivgent --sessions` lists what is recorded).
+## Security model
 
-Answers stream to stdout as the model produces them, so stdout stays pipeable.
-Tool activity, retries, and run status go to stderr; Provider failures produce a
-non-zero exit code. Use `--no-stream` for one final write, and `--quiet` to hide
-tool activity.
+chivgent states its boundaries rather than pretending to enforce fine-grained
+ones. Capabilities are coarse, session-level switches.
 
-## CLI reference
+- File tools reject paths outside the workspace, including `..` traversal and
+  symlink escapes, and deny common credential and private-key paths. Tool output
+  is capped at 64 KiB.
+- `--allow-shell` runs each command in a new offline container (dropped
+  capabilities, read-only root, non-root user, resource limits) and asks before
+  each one. Headless and served sessions deny commands unless you also pass
+  `--approve-all-shell`. Inside the container, commands can still change or
+  delete anything in the mounted project, and Docker is not proof against
+  kernel or VM escapes. Details: [shell sandbox](docs/shell-sandbox.md).
+- Writes and trusted extensions are **not** inside the container. Trusting a
+  project's extensions means letting its authors run code as you, so chivgent
+  asks once per directory and never loads them when there is no terminal to ask.
+- `auth.json`, session logs, and `trust.json` are written owner-only but in
+  plain text. Session logs contain prompts, answers, and file excerpts.
+- `--serve` exposes a session on a Unix socket in an owner-only directory.
+  Anyone who can open the socket gets every capability the server started with.
+  There is no TCP listener; use SSH forwarding for another machine.
 
-```text
-chivgent [options] "question"     Answer one question and exit
-chivgent [options]                Start an interactive session
+Work on committed code, and use a disposable copy for repositories you don't
+trust.
 
-Options:
-  --provider NAME  openai, deepseek, openai-compatible, openrouter, groq, xai,
-                   moonshot (default: openai)
-  --model MODEL    Provider model override
-  --max-turns N    Tool-calling turn limit (default: 8, 16 with --allow-writes
-                   or --allow-shell)
-  --no-stream      Wait for the full answer instead of streaming tokens
-  -q, --quiet      Hide tool activity on stderr
-  --json           Write the run as JSON lines instead of rendered text
-  -c, --continue   Resume the most recent session for this workspace
-  --resume ID      Resume a specific session
-  --api-key KEY    API key for this run; prefer an environment variable
-  --sessions       List recorded sessions and exit
-  --allow-writes   Let the agent create and change files (default: read-only)
-  --allow-shell    Let the agent run shell commands. This implies write access:
-                   a shell is not bound by the workspace. Unix only.
-  --serve          Expose this session on a local socket and keep running
-  --connect TARGET Attach to a served session, by id or socket path
-  --servers        List the servers still answering, then exit
-  --no-extensions  Do not load any extension, and do not ask about trust
-  --extensions     List loaded extensions and what they register, then exit
-  --forget-trust   Forget the trust decision covering this workspace, then exit
-  --context-window N  Token budget for the context (default: 128000)
-  --no-compaction  Send the whole transcript instead of summarising old turns
-  --no-session     Do not record this run
-  -h, --help       Show help
-  -v, --version    Show version
-```
+## Going deeper
 
-In an interactive session, `/help` lists the slash commands, including
-`/provider`, `/model`, `/endpoint`, `/login`, `/session`, `/tools`, `/clear`, and `/exit`.
-In the TUI, typing `/` opens an inline command menu; `/provider` opens a Provider picker
-with Up/Down and Enter. Selecting a Provider without a saved key immediately asks for
-its API key. Use `/login` later to replace a key. Ctrl+C stops a running answer;
-at an idle prompt it exits with code 130. Ctrl+D also leaves the session.
-
-Exit codes: `0` answered, `1` configuration or Provider failure, `2` turn limit
-reached, `130` interrupted with Ctrl+C.
-
-### Signing in
-
-The quickest way in is to start chivgent and let it ask:
-
-```text
-$ chivgent --tui
-  v1.0.0
-  openai / gpt-5.6
-  Start with /provider → choose a Provider
-› /provider deepseek
-Selected deepseek / deepseek-v4-flash. API key needed for deepseek.
-API key for deepseek (hidden, saved locally; Enter skips):
-Stored the key for deepseek. Ready for your next prompt.
-› 
-```
-
-An interactive session starts even without a key. Choose a Provider in the TUI
-and enter its key when asked; the next prompt can use it immediately. An already
-configured Provider skips this step. `/login` remains available to replace a key.
-
-The key is not echoed as you type, and `auth.json` is written owner-only. It is
-not verified against the Provider when stored; the first prompt after it is what
-proves it works.
-
-A non-interactive run still fails fast when no key is configured: a pipeline has
-nobody to ask.
-
-You can switch Providers and models without restarting or losing history:
-
-```text
-› /provider
-› /provider deepseek
-› /model deepseek-v4-pro
-› /provider openrouter
-› /model anthropic/claude-sonnet-4
-› /provider openai-compatible
-› /model vendor-model
-› /endpoint https://api.vendor.example/v1
-```
-
-In the TUI, a newly selected Provider asks for its key if none is configured.
-For Providers that also need a model or endpoint, the key can be stored first.
-
-`--api-key` remains scoped to the Provider selected at startup; it is never
-reused for a different Provider.
-Switching from OpenAI to a custom compatible endpoint also does not reuse
-`OPENAI_API_KEY`; the TUI asks for that endpoint's own key.
-
-### Provider configuration
-
-| Provider | API key | Model environment variable | Default model | API style |
-| --- | --- | --- | --- | --- |
-| OpenAI | `OPENAI_API_KEY` | `OPENAI_MODEL` | `gpt-5.6` | Responses API |
-| DeepSeek | `DEEPSEEK_API_KEY` | `DEEPSEEK_MODEL` | `deepseek-v4-flash` | OpenAI-compatible Chat Completions |
-| Custom compatible | `OPENAI_API_KEY` | `OPENAI_MODEL` | Required | OpenAI-compatible Chat Completions |
-| OpenRouter | `OPENROUTER_API_KEY` | `OPENROUTER_MODEL` | Required | OpenAI-compatible Chat Completions |
-| Groq | `GROQ_API_KEY` | `GROQ_MODEL` | Required | OpenAI-compatible Chat Completions |
-| xAI | `XAI_API_KEY` | `XAI_MODEL` | Required | OpenAI-compatible Chat Completions |
-| Moonshot | `MOONSHOT_API_KEY` | `MOONSHOT_MODEL` | Required | OpenAI-compatible Chat Completions |
-
-An explicit `--model` value takes precedence over the Provider-specific model
-environment variable. Custom compatible Providers also require
-`OPENAI_BASE_URL`. Sessions are written under `CHIVGENT_HOME` (default
-`~/.chivgent`).
-
-Providers are declared in a registry rather than branched on in the CLI, so
-`--help` and `--provider` validation are generated from the same list that
-creates the client.
-
-#### API key resolution
-
-Keys are resolved in this order, first match wins:
-
-1. `--api-key` for a single run
-2. the Provider's environment variable
-3. `<CHIVGENT_HOME>/auth.json`
-
-An environment variable deliberately beats the stored file, matching the
-convention other CLIs use, so a stored key can be overridden for one run
-without editing anything.
-
-`auth.json` is optional and holds literal keys only:
-
-```json
-{
-  "openai": { "type": "api_key", "key": "sk-..." },
-  "deepseek": "sk-..."
-}
-```
-
-Neither `$VAR` expansion nor `!command` substitution is supported: letting a
-config file spawn a process is a large attack surface for a small convenience.
-chivgent warns when the file is readable by other users; keep it at `chmod 600`.
-
-```bash
-chivgent --provider openai --model gpt-5.6 "Explain package.json"
-chivgent --provider deepseek --model deepseek-v4-pro "Explain package.json"
-chivgent --provider openai-compatible --model vendor-model "Explain package.json"
-```
-
-## Architecture
-
-```text
-                                  +-> OpenAI Responses API
-User -> CLI -> Agent -> LLMClient |
-                 |                +-> OpenAI-compatible Chat -> DeepSeek / custom
-                 |
-                 +-> Tool Registry -> list_files / search_text / read_file -> Workspace
-                 |                    write_file / edit_file (--allow-writes)
-                 |                    bash (--allow-shell) -> ShellOperations
-```
-
-The Agent runtime owns its own messages. Provider-specific schemas are converted
-only at the `LLMClient` boundary:
-
-```text
-Agent Message[] -> Provider adapter -> Provider request
-                                     <- Provider response
-AssistantMessage <- normalized result
-```
-
-This prevents the Agent, tools, and CLI from depending on one vendor's message
-format.
-
-### Context management
-
-A session records everything that happened. The context manager decides what
-is worth sending for one request. Keeping those apart is what lets a long
-session stay inside a fixed context window.
-
-```text
-Full transcript ──────────────→ Session store (what happened)
-       │
-       ↓
-ContextManager
-       │  token estimate vs. contextWindow - reserveTokens
-       ↓
-summary + recent messages ────→ Provider (what the model sees)
-```
-
-When the estimate exceeds the budget, older messages are summarised into a
-single message and recent turns are kept verbatim. Three details matter:
-
-- **File lists are derived from tool calls, not from the summary.** A summary
-  can forget or invent a path. For a coding agent, "which files did I read and
-  change" is the part that most needs to survive intact, so it is collected
-  from the `read_file`, `write_file`, and `edit_file` calls themselves.
-- **Tool calls are never separated from their results.** A split point that
-  would orphan a tool result moves forward past the whole group.
-- **Compaction discards the Provider continuation.** A Provider that chains
-  history server-side replays its own copy and ignores the messages sent with
-  it, so keeping the continuation would send back the history just removed.
-
-Token counts are estimated from character length rather than with a real
-tokenizer, which would be model-specific and a large dependency for a number
-that only decides *when* to compact. The reserve budget absorbs the error.
-
-A single tool result larger than the whole budget cannot be compacted away;
-bound tool output instead. Compaction is disabled with `--no-compaction`.
-
-### Runtime events
-
-The Agent Loop reports what it is doing through a typed event stream instead of
-printing anything itself. One run emits:
-
-```text
-agent_start
-  turn_start -> message_start -> message_update* -> message_end
-    tool_execution_start -> tool_execution_end   (once per tool call)
-  turn_end
-  ...
-agent_end (completed | max_turns | aborted | error)
-```
-
-`message_update` carries deltas only, never a cumulative snapshot, so the stream
-stays linear in the length of the answer. Events are structured-cloneable and
-each listener receives a copy, so a renderer can never mutate the transcript.
-The CLI renderer in `src/render.ts` is one consumer; a log file, a JSON stream,
-or a TUI are others.
-
-`LLMClient.stream` is optional. When a Provider does not implement it, the Agent
-falls back to `complete` and the same events are emitted without deltas.
-
-### OpenAI-compatible Providers
-
-Compatible Providers reuse the official `openai` npm package by changing
-`baseURL`, credentials, and model. CLI users do not need to edit code:
-
-```bash
-export OPENAI_API_KEY="your-provider-api-key"
-export OPENAI_BASE_URL="https://api.vendor.example/v1"
-export OPENAI_MODEL="vendor-model"
-
-chivgent --provider openai-compatible "What does src/agent.ts do?"
-```
-
-`OPENAI_BASE_URL` must point to the Provider's OpenAI-compatible API root. The
-Provider must implement `POST /chat/completions` and function tool calling.
-
-When adding a named Provider in source code, use the same adapter:
-
-```ts
-const client = new OpenAICompatibleChatClient({
-  apiKey: process.env.VENDOR_API_KEY!,
-  baseURL: "https://api.vendor.example/v1",
-  model: "vendor-model",
-  continuationTag: "vendor-chat",
-});
-```
-
-`DeepSeekChatClient` is a small configuration wrapper around this shared client.
-The compatibility layer also preserves optional Provider-only fields such as
-DeepSeek's `reasoning_content` inside opaque continuation state.
-
-Changing only `baseURL` is not a promise of complete compatibility. Providers
-can differ in model names, authentication, tool-schema support, strict mode,
-reasoning fields, streaming events, and error behavior. Keep those differences
-inside thin Provider adapters rather than leaking them into the Agent loop.
-
-## Project structure
-
-```text
-src/
-  cli.ts                         CLI entry point and process boundary
-  cli-options.ts                 Argument and Provider configuration
-  auth/
-    credentials.ts               Credential contract and resolution order
-    runtime-credentials.ts       --api-key override
-    env-credentials.ts           Environment variable lookup
-    file-credentials.ts          The auth.json store, read and write
-  agent.ts                       Agent loop and run state
-  events.ts                      Runtime event model
-  render.ts                      Terminal renderer for runtime events
-  llm.ts                         Provider-independent LLM contract
-  retry.ts                       Provider timeout and retry decorator
-  messages.ts                    Runtime message model
-  session.ts                     Conversation state and event fan-out
-  session-store.ts               JSONL session log and resume support
-  repl.ts                        Interactive prompt and slash commands
-  context/
-    context-manager.ts           Builds the messages for one request
-    compaction.ts                Summarises old history and tracks files
-    token-estimator.ts           Character-based token approximation
-  workspace.ts                   Workspace configuration and the read-only default
-  workspace/
-    types.ts                     Limits, errors, and the Workspace contract
-    paths.ts                     Path normalisation and escape protection
-    ignore.ts                    .gitignore and generated-directory filtering
-    text.ts                      UTF-8 decoding, line splitting, previews
-    read.ts                      Ranged reads
-    list.ts                      Directory walking
-    search.ts                    Literal text search
-    write.ts                     Atomic whole-file writes and exact edits
-  providers/
-    registry.ts                  Provider registry
-    usage.ts                     Reading and adding up Provider token counts
-    deferred-client.ts           A client whose Provider can arrive later
-    definitions.ts               Built-in Provider declarations
-    client.ts                    Credential resolution into an LLM client
-    openai.ts                    OpenAI Responses adapter
-    openai-compatible-chat.ts    Shared Chat Completions adapter
-    deepseek.ts                  DeepSeek configuration wrapper
-  tools/
-    tool.ts                      Tool contract
-    output.ts                    Shared 64 KiB tool-output boundary
-    list-files.ts                Deterministic project-tree discovery
-    search-text.ts               Bounded literal source search
-    read-file.ts                 Ranged text-file reader
-    write-file.ts                Whole-file create and replace
-    edit-file.ts                 Exact unique-match edit
-    bash.ts                      Shell command execution
-  prompts.ts                     The instructions the agent runs under
-  evals/
-    task.ts                      Task definitions and their validation
-    fixture.ts                   A fresh workspace copy per attempt
-    graders.ts                   Deterministic graders
-    runner.ts                    Runs a task N times and aggregates
-    report.ts                    Table and JSON output
-    parse-args.ts                Eval CLI arguments
-    cli.ts                       npm run eval
-  remote/
-    protocol.ts                  Message shapes and version negotiation
-    framing.ts                   JSON Lines framing with a bounded buffer
-    server.ts                    Serves one session on a Unix socket
-    client.ts                    Attaches to a served session
-    repl.ts                      The interactive loop for an attached client
-    socket-path.ts               Socket paths, staleness, and discovery
-  extensions/
-    trust.ts                     Per-directory trust store
-    decide-trust.ts              The prompt, and the refusal when nobody can answer
-    discover.ts                  Where extensions live and which files count
-    api.ts                       What an extension may register
-    registry.ts                  Collects registrations, rejects conflicts
-    loader.ts                    Imports modules and contains their failures
-  shell/
-    types.ts                     Execution contract and shell error types
-    config.ts                    Shell resolution and the Windows guard
-    local.ts                     Local spawn backend
-    process.ts                   Process-group kill and exit handling
-    output.ts                    Bounded streaming output accumulator
-    truncate.ts                  Tail truncation for command output
-    sanitize.ts                  Control-character filtering
-tests/                           Provider, loop, and workspace tests
-evals/                           Eval tasks and their fixtures
-docs/                            Architecture and learning notes
-```
+- [Architecture](docs/architecture.md): agent loop, runtime events, context
+  compaction, Provider adapters, the TUI live region, and the source layout.
+- [Evals and token usage](docs/evals.md): ten deterministic task suites that
+  measure pass rates over repeated attempts, separate from the free, offline
+  unit tests.
+- [Extensions and remote sessions](docs/extensions-and-remote.md): adding
+  tools and slash commands, project trust, and attaching several terminals to
+  one session.
+- [Patch format](docs/apply-patch.md), [scoped `AGENTS.md`](docs/scoped-agents-md.md),
+  [parallel read tools](docs/parallel-read-tools.md),
+  [plan tracking](docs/agent-plan-progress.md).
+- Design notes for each build stage, from
+  [stage 1](docs/stage-1-minimal-agent.md) to [stage 14](docs/stage-14-tui.md),
+  and the [release process](docs/releasing.md).
 
 ## Development
 
 ```bash
+git clone https://github.com/chivopic/chivgent.git
+cd chivgent
 npm install
 npm run check
 npm test
 npm run build
 ```
 
-Run the complete release gate, including an npm tarball dry run:
-
-```bash
-npm run release:check
-```
-
-Build a locally installable tarball:
-
-```bash
-npm install -g "$(npm pack --silent)"
-```
-
-Tests use scripted or mocked LLM clients. A real API smoke test is deliberately
-manual so the default test suite never consumes credits.
-
-## Evals
-
-**Agent progress plans:** On complex tasks the Agent can use Codex-inspired `update_plan` to publish a validated, tracked checklist without gaining new write or Shell permissions. See [Agent plan tracking](docs/agent-plan-progress.md).
-
-**TUI V5:** The default editor has an inline slash command menu, optional mouse caret/drag support, and explicitly approved `/gitdiff [--staged]` for read-only tracked worktree review. See [TUI V5 guide](docs/tui-v5.md).
-
-**TUI V4:** In `--tui`, the cursor-addressable composer is now the default. Enter submits; Ctrl+O adds a line; Ctrl+Z/Y undo/redo; Ctrl+R searches session history. See [TUI V4 guide](docs/tui-v4.md).
-
-**TUI V3:** Use `/editor` for cursor-editable multiline prompts (arrows, Ctrl+S submit), `/review` for interactive patch paging, and syntax-highlighted terminal code fences. See [TUI V3 guide](docs/tui-v3.md).
-
-**TUI V2:** Interactive sessions support `/compose` for multiline prompts, `/diff [page]` for reviewing the latest successful patch, Markdown/code-block display and one-key Shell approvals. See [TUI V2 guide](docs/tui-v2.md).
-
-**Parallel reads:** Consecutive built-in file reads, listings, and searches now run concurrently (at most 4). Writes, Docker shell commands, and third-party extensions stay exclusive, with ordered results. See [tool scheduling](docs/parallel-read-tools.md).
-
-**Repository guidance:** chivgent supports scoped `AGENTS.md` and `AGENTS.override.md`; see [discovery and compaction behavior](docs/scoped-agents-md.md).
-
-**Patch edits:** `--allow-writes` now enables an `apply_patch` tool for strict, multi-file edits; see [the patch format guide](docs/apply-patch.md) for its supported subset and rollback limitations.
-
-**Shell safety:** `--allow-shell` runs commands in an offline Docker container and requires a per-command confirmation in interactive mode. Headless sessions deny commands unless explicitly started with `--approve-all-shell`. See [Shell sandbox and approvals](docs/shell-sandbox.md) for restrictions and remaining risks.
-
-
-For a reproducible suite fingerprint and credential-free validation, see [the eval baseline guide](docs/eval-baseline-guide.md). Run `npm run eval -- --dry-run --allow-writes --allow-shell` before recording model results. Missing token usage is reported as unknown, not zero.
-
-
-The 300-odd unit tests check that the code runs the way it was written. They say
-nothing about whether this is a good agent. `npm run eval` answers that:
-
-```bash
-npm run eval                              # every task in evals/
-npm run eval -- --task rename-symbol --attempts 10
-npm run eval -- --allow-writes --allow-shell --json report.json
-DEEPSEEK_API_KEY=sk-... npm run eval -- --provider deepseek
-```
-
-`--api-key` works too, but prefer the environment variable here: npm echoes the
-fully expanded command before running it, so a key on the command line lands in
-the clear in any captured log.
-
-```text
-task                  pass  turns  tokens  tools                       p50
-find-auth-logic       4/5   2.0    3.4k    list_files,search_text,...  6.1s
-rename-symbol         3/5   5.4    12.1k   read_file,edit_file         9.8s
-
-overall  7/10 (70%)  58.3k tokens
-
-rename-symbol attempt 2,5: not-used-tool name="write_file" — called write_file 1 time(s)
-```
-
-The `tokens` column is what the Provider reported, so a change can be judged on
-both axes at once: a prompt that lifts the pass rate from 70% to 75% while
-tripling the tokens is usually a bad trade, and without the second number that
-looks like a pure win.
-
-**An eval is not a test.** A model is nondeterministic, so one run of a task is a
-coin flip: passing and failing are properties of the model-and-harness
-combination, not of that run. The unit is therefore a pass rate over N attempts,
-and evals never gate CI — a merge gate that costs money and goes red six times in
-ten trains everyone to ignore CI. `npm test` stays free, offline and
-deterministic.
-
-A task is a directory under `evals/`: a `task.json` and a `fixture/` tree copied
-into a fresh temporary workspace for every attempt.
-
-```jsonc
-{
-  "prompt": "Rename the function sayHi to greet everywhere, including callers.",
-  "capabilities": ["writes"],
-  "attempts": 5,
-  "graders": [
-    { "type": "file-contains", "path": "src/greet.ts", "text": "export function greet(" },
-    { "type": "file-excludes", "path": "src/greet.ts", "text": "sayHi" },
-    { "type": "used-tool", "name": "edit_file" },
-    { "type": "not-used-tool", "name": "write_file" }
-  ]
-}
-```
-
-Graders are deterministic — file contents, tool calls, answer patterns, turn
-counts. There is no LLM judge: a judge is itself a nondeterministic instrument,
-and measuring a nondeterministic subject with one compounds the error until "the
-agent got worse" cannot be told apart from "the judge felt different today".
-
-Those last two graders are the point. Rewriting the whole file also produces the
-right contents, and an eval that scores results alone would give it full marks.
-For a coding agent, tool misuse is the more common and the more interesting
-failure, so tasks assert on how the work was done.
-
-A grader naming a tool the task never grants is refused when the task loads.
-`not-used-tool: write_file` on a read-only task cannot fail — it asserts the
-model did not call something it was never given — and its mirror image cannot
-pass. Both are task-definition mistakes, and both are caught before the run
-spends anything. One such grader shipped for two releases before this check
-existed.
-
-Three graders exist because a set of tool names cannot answer the question they
-answer. `tool-never-failed` catches a guessed path, which shows up as a failed
-read that a deduplicated name list hides — it is sound only where a failed call
-means the model was wrong, so it fits `read_file` and not `bash`, which reports
-any non-zero exit as an error and is *supposed* to fail on a task that runs a
-failing test. `max-tool-calls` budgets calls rather than turns, because a model
-may issue any number of calls in one turn: "did it follow the imports or read
-the whole project" is a call count. `file-unchanged` compares against the
-fixture, so "don't touch what you weren't asked to touch" becomes a verdict
-rather than an intention — and it needs no second copy of the file in
-`task.json` to drift out of date. The JSON report carries `toolCalls`, every
-call in order with whether it succeeded, alongside the `toolsUsed` set the table
-prints.
-
-The nine tasks split into what the agent found and what it changed. Four exist
-because the first real baseline passed 29 of 30 attempts and therefore measured
-nothing: `needle-in-many-files` (40 files with uninformative names, so listing
-gives no signal), `trace-the-default` (a value overridden twice, where stopping
-at the first hop yields a plausible wrong number), `decoy-config` (two
-near-identical modules, one of them dead), and `wrong-test` (a failing test
-whose expectation contradicts the contract documented in the source — bending
-the source to fit it is the trap).
-
-A task that scores 0/N or N/N across different models is not measuring anything
-and should be made harder, fixed, or dropped. Passing is not evidence of quality
-when everything passes.
-
-## Token usage
-
-Providers report what each call cost, and chivgent now keeps it: per turn on
-`message_end`, per run on `agent_end` and the run result, per attempt in the
-eval report, and cumulatively in `/session`.
-
-```text
-› /session
-id:        2026-09-07T...
-workspace: /home/me/project
-prompts:   4
-messages:  18
-tokens:    38.2k total, 35.9k in, 2.3k out, 12.0k cached
-```
-
-**Tokens only, never money.** Converting to a currency needs a model-to-price
-table, and that table goes stale silently when a Provider changes its rates —
-producing a figure that looks precise and is wrong, which is worse than no
-figure because nobody questions a number with a decimal point in it. Token
-counts are what the Provider itself reported and do not expire.
-
-A total is marked incomplete when some call reported nothing, rather than
-counting it as zero: a missing figure stays visibly missing instead of quietly
-understating the total. Compaction's own summarising call is included, since it
-trades a call now against smaller inputs later and that trade cannot be judged
-with half of it hidden.
-
-Streamed Chat Completions only report usage when asked, so chivgent sends
-`stream_options: { include_usage: true }`. A self-hosted OpenAI-compatible
-endpoint that predates that field may reject the request; `--no-stream` is the
-fallback.
-
-## The live region
-
-`--tui` draws a status region above the prompt while a run is in progress: the
-turn, whether the model is thinking or running tools, which tools are running
-with what they are aimed at and their newest output, elapsed time, and the
-running token count. Long single-line replies keep their newest text visible;
-long paths retain the filename and tool progress. On narrow terminals, the
-status and stop shortcut take priority.
-
-```text
-Let me look at how sessions are stored.
-  read_file src/session.ts (2s)
-  search_text (1s)  src/store.ts:41: export class SessionStore
-running tools  ·  turn 2/8  ·  11s  ·  4.2k tokens  ·  ctrl+c to stop
-```
-
-It is the first consumer of the event stream that runs backwards. Every other
-one — streamed output, the session log, extensions, the remote client — is
-append-only: an event arrives, it is printed, it is forgotten. This one has to
-rebuild *what is happening now* from the same stream and keep it right as more
-arrives, which splits into three pieces:
-
-```text
-reduce(state, event, now)  ->  ViewState     pure
-view(state, {width, now})  ->  string[]      pure
-paint(previous, next)                        the only part that touches a terminal
-```
-
-Both pure pieces are tested without a terminal, which is where the real
-guarantees live. One asymmetry in the event vocabulary is what makes the state
-model load-bearing: `message_update` carries a **delta**, `tool_execution_update`
-carries a truncated **snapshot**. Appending a snapshot stacks output that was
-never produced — the window has already had its front dropped — and replacing on
-a delta leaves the last token and loses the answer. An append-only renderer
-never has to know the difference, because it just prints whatever arrives. Two
-tests fail when either is written the wrong way round.
-
-It does not take the alternate screen buffer. That would cost the scrollback,
-and getting it back means reimplementing scrolling, search and selection —
-thousands of lines that teach terminal graphics rather than agent architecture.
-A finished turn is flushed to the terminal's own scrollback and dropped from
-the state, so a long session never grows it. Input stays with readline for the
-same reason: a line editor is not the interesting problem here.
-
-Painting rewrites only the lines whose content changed, so a ticking timer
-costs one line rather than a repaint. A resize invalidates that baseline — the
-terminal has reflowed what is on screen — and is the one moment a full repaint
-is correct rather than lazy.
-
-`--tui` needs a terminal on stdin and stderr and an interactive session; it
-refuses rather than falling back silently, since a switch that quietly does
-nothing makes a mistyped command look like it worked. It is not the default
-yet. The startup wordmark shows the Provider, model, workspace and next action;
-use `/session` for the session id. Type `/` to open the inline command menu
-(including extension commands); Up/Down selects, Tab completes, and Enter runs.
-Outside a menu, Up/Down browses input history. During a run ordinary typing is ignored; Ctrl+C cancels immediately.
-At an idle prompt Ctrl+C exits, clearing the draft and returning the terminal
-to the shell. Ctrl+D on an empty line also exits.
-Input is single-line: only the first submitted line in an input batch is accepted.
-Wait for the prompt before sending another question.
-After cancellation the prompt is ready again and partial text stays in scrollback.
-A completion line records the outcome, elapsed time and reported token usage.
-
-Chinese, combining characters and joined emoji are clipped by terminal columns;
-short terminals keep the status visible. Resizing repaints the existing region.
-All prompts and UI output go to stderr; stdout receives final answers only, so
-`chivgent --tui > answers.txt` keeps the terminal interactive while saving answers.
-
-```sh
-npm run build
-node dist/cli.js --tui
-npm run demo:tui  # Offline interactive demo; no API key or network required
-```
-
-The demo uses a stub Provider and simulated tool progress; it does not modify the
-workspace. See [the TUI guide](docs/tui.md) for controls and verification.
-
-## Remote sessions
-
-A session normally lives and dies with the terminal that started it. `--serve`
-keeps it in one process and lets others attach:
-
-```bash
-# One terminal
-chivgent --serve --allow-writes
-# chivgent 0.12.0 serving session 2026-09-06T...
-# socket:       ~/.chivgent/sockets/2026-09-06T....sock
-# capabilities: --allow-writes
-
-# Another terminal
-chivgent --servers                 # list what is running
-chivgent --connect <id>            # attach interactively
-chivgent --connect <id> "question" # ask once and leave
-```
-
-A client holds no state: it sends prompts and renders the event stream the
-server broadcasts. Several clients can attach at once — the extra ones watch the
-same run as it happens, and any of them can interrupt it, because the run
-belongs to the session rather than to whoever started it. A prompt sent while
-another is running is refused rather than queued, and a client that disconnects
-mid-run does not cancel it.
-
-Attaching does not replay history; the session log already holds that. The
-protocol is JSON Lines over a Unix socket, one object per line, the same shape
-`--json` writes.
-
-**Whoever can reach the socket has everything the server was started with.** If
-it was started with `--allow-shell`, anyone who can connect can make the model
-run commands, which is why the server prints its capabilities on startup: the
-person attaching cannot see the flags you typed. The boundary is filesystem
-permissions — sockets live in an owner-only directory under `CHIVGENT_HOME` —
-and there is no TCP listener. For another machine, forward the socket over SSH
-so that authentication is SSH's job.
-
-## Extensions
-
-An extension is an ES module that default-exports a function. It is called once
-at startup with an API that can add a tool, add a slash command, subscribe to
-runtime events, and append to the system prompt.
-
-```js
-// .chivgent/extensions/word-count.js
-export default function (api) {
-  api.registerTool({
-    name: "word_count",
-    description: "Count the words in a workspace file.",
-    inputSchema: {
-      type: "object",
-      properties: { path: { type: "string" } },
-      required: ["path"],
-      additionalProperties: false,
-    },
-    async execute(args, context) {
-      const file = await context.workspace.readTextFile(args.path);
-      return {
-        content: `${file.content.split(/\s+/).filter(Boolean).length} words`,
-        isError: false,
-      };
-    },
-  });
-
-  api.contributeSystemPrompt("Use word_count instead of reading a file to count words.");
-}
-```
-
-Extensions are loaded from two places:
-
-| Location | Loaded |
-| --- | --- |
-| `<CHIVGENT_HOME>/extensions/` | Always: it is your own machine's configuration |
-| `<workspace>/.chivgent/extensions/` | Only after you trust the project |
-
-Both accept `name.js` and `name/index.js`; nesting stops there. Plain JavaScript
-only — compiling TypeScript yourself is cheaper than making chivgent carry a
-TypeScript loader. A name already taken by a built-in tool or command is refused,
-so an extension cannot shadow `read_file` or `/clear`, and a broken extension is
-reported and skipped rather than taking chivgent down with it.
-
-`chivgent --extensions` lists what loaded and what each one registered.
-
-### Project trust
-
-The first time you run chivgent in a project that ships extensions, it describes
-what they are and asks once. The answer is stored in `<CHIVGENT_HOME>/trust.json`
-against the resolved directory path, and matched by nearest ancestor, so trusting
-`~/work` covers every repository under it. `--forget-trust` removes the decision
-covering the current workspace.
-
-**Trusting a project means letting its authors run code as you.** An extension
-executes inside the chivgent process: it is not bound by the workspace, it does
-not need `--allow-shell` to run a command, and it can read your environment
-including the API key. That is why the question is asked before anything is
-imported, and why the answer is no whenever there is nobody to ask — a CI job or
-a piped run never loads a checkout's extensions on its own.
-
-## Security model
-
-- API keys come from `--api-key`, an environment variable, or an optional
-  `auth.json`, in that order, and must never be committed.
-- `auth.json` stores keys in plain text. It is opt-in for that reason, and
-  chivgent warns when its permissions let other users read it.
-- `/login` writes it owner-only and does not echo what you type, but the key is
-  still stored in plain text; it is a convenience, not a secret manager.
-- The auth file accepts literal keys only; it cannot expand environment
-  variables or run shell commands.
-- A custom `OPENAI_BASE_URL` receives the configured API key and prompts; use
-  only endpoints you trust.
-- Workspace tools are read-only unless `--allow-writes` is passed; `write_file`
-  and `edit_file` are not registered at all without it.
-- The `bash` tool needs `--allow-shell`, which is separate from `--allow-writes`
-  and never implied by it. Granting it grants far more: a shell can change or
-  delete anything the user running chivgent can, inside the workspace or not,
-  and none of the workspace limits below apply to it.
-- Commands are spawned in their own process group and killed as a group, so
-  cancelling a run does not leave descendants behind.
-- Commands inherit chivgent's environment, which includes the API key it is
-  using. A model with `--allow-shell` can read that key and anything else the
-  environment holds. Run it with an environment that carries only what the task
-  needs.
-- Truncated command output is written to a temp file so the model can read the
-  rest. The file is owner-only, but it is not deleted when the run ends: it can
-  hold anything the command printed. Clear the temp directory after sensitive
-  work.
-- Session logs record command output as well as file excerpts once
-  `--allow-shell` is on.
-- Project extensions are loaded only after an explicit, recorded trust decision,
-  and never without a terminal to ask at. An extension runs in-process with your
-  permissions and is bound by none of the workspace limits above, so trusting a
-  project is the same order of authority as `--allow-shell`, reached by cloning
-  a repository rather than by typing a flag.
-- User extensions under `<CHIVGENT_HOME>/extensions/` are always loaded; that
-  directory is your own configuration.
-- Extensions cannot take the name of a built-in tool or command.
-- `trust.json`, like the session log and the auth file, is written owner-only.
-- A served session is reachable by anyone who can open its socket, and they get
-  every capability the server was started with. Sockets live in an owner-only
-  directory; the directory is the real gate, because a socket file exists
-  briefly with default permissions before it can be restricted.
-- chivgent never listens on TCP. Use SSH forwarding to reach another machine.
-- Writes resolve the deepest existing ancestor and reject a symlink at any
-  segment, so a planted link cannot redirect a write out of the workspace.
-- Writes are staged in a sibling temp file and renamed into place, so an
-  interrupted write cannot truncate an existing file.
-- `edit_file` refuses an edit whose `old_text` is missing or matches more than
-  once, so an imprecise edit fails instead of changing the wrong line.
-- Paths must remain inside the current workspace.
-- Real-path checks block `..` traversal and symlink escapes.
-- File size and binary-content checks limit unsafe reads.
-- Discovery respects the root `.gitignore` and fixed generated-directory ignores.
-- Common credential and private-key paths are denied across all workspace tools.
-- Tool results are limited to 64 KiB; reads, scans, depth, and result counts are bounded.
-- Tool inputs are untrusted and validated before execution.
-- The agent stops after a bounded number of model turns.
-- Session logs under `~/.chivgent/sessions` contain prompts, answers, and tool
-  results, including file excerpts. Use `--no-session` in sensitive workspaces,
-  and treat the log directory like the project it describes.
-- Session ids are validated before they become file paths.
-
-This is an educational MVP, not a hardened sandbox. There is no permission
-system: capabilities are coarse, session-level switches, and neither
-`--allow-writes` nor `--allow-shell` asks for per-action confirmation. That is
-deliberate. Once a shell exists, a command allowlist is bypassed by a single
-`sh -c`, and a prompt on every action only trains people to approve without
-reading, so chivgent states the boundary instead of pretending to enforce one.
-
-Use these switches on work you have committed. If you need a real boundary,
-put the whole process in a container and give that container only what the task
-needs. Review the code and threat model before pointing chivgent at a sensitive
-project.
-
-## Roadmap
-
-- [x] Minimal tool-calling agent loop
-- [x] Safe `read_file` tool
-- [x] OpenAI and DeepSeek Providers
-- [x] Reusable OpenAI-compatible Chat Completions adapter
-- [x] Custom OpenAI-compatible CLI Provider
-- [x] Project discovery tools: `list_files`, `search_text`, and ranged `read_file`
-- [x] Streaming output and runtime events
-- [x] Persistent multi-turn sessions
-- [x] Context-window management and compaction
-- [x] Opt-in `write_file` and `edit_file` behind `--allow-writes`
-- [x] Provider registry and credential resolution chain
-- [x] `bash` tool with streaming output, behind `--allow-shell`
-- [x] Extensions and project trust
-- [x] Remote sessions over a local socket
-- [x] An eval suite with deterministic graders and pass rates
-- [x] Token usage from the Provider, aggregated per run and per eval
-- [x] A live status region driven by the event stream (`--tui`)
-
-Per-command confirmation prompts and command allowlists are deliberately not
-planned. Once a shell tool exists, `bash` can do anything `write_file` can and
-more, so an allowlist is bypassed by a single `sh -c` and a per-command prompt
-only trains people to approve without reading. Capabilities are coarse,
-session-level switches; the real boundary is a container.
-
-## Documentation
-
-- [Stage 1: Minimal Agent design](docs/stage-1-minimal-agent.md)
-- [DeepSeek Provider design](docs/deepseek-provider.md)
-- [Stage 2: Project Discovery implementation design](docs/stage-2-project-discovery.md)
-- [Stage 3: Runtime Events and Streaming design](docs/stage-3-runtime-events.md)
-- [Stage 4: Sessions and interactive mode design](docs/stage-4-sessions.md)
-- [Stage 5: Write tools and the workspace split](docs/stage-5-write-tools.md)
-- [Stage 6: Provider registry and credential chain](docs/stage-6-provider-registry.md)
-- [Stage 7: Context budget and compaction](docs/stage-7-context-management.md)
-- [Stage 8: Shell tool and streaming subprocesses](docs/stage-8-shell-tool.md)
-- [Stage 9: Extensions and project trust](docs/stage-9-extensions.md)
-- [Stage 10: Remote sessions](docs/stage-10-remote-sessions.md)
-- [Stage 11: Evals](docs/stage-11-evals.md)
-- [Stage 12: Token usage](docs/stage-12-usage.md)
-- [Release process](docs/releasing.md)
-
-## Contributing
-
-Issues and focused pull requests are welcome. Before submitting a change, run:
-
-```bash
-npm run check
-npm test
-npm run build
-```
-
-Please keep Provider-specific types inside `src/providers/` and keep the core
-Agent runtime independent from vendor SDK schemas.
+Tests use scripted LLM clients and never spend API credits.
+`npm run release:check` runs the full gate, including an `npm pack` dry run.
+To try the checkout as a global command: `npm install -g .`
+
+Issues and focused pull requests are welcome. Keep Provider-specific types in
+`src/providers/` so the agent runtime stays independent of vendor SDKs.
 
 ## License
 
-Licensed under the [MIT License](LICENSE).
+[MIT](LICENSE)

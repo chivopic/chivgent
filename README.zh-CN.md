@@ -2,6 +2,8 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
+> ⚠️ **本中文版已过时，请以 [英文 README](README.md) 为准。** 尤其是安全说明：`--allow-shell` 现在在离线 Docker 容器中运行命令，每条命令需逐条确认，且不向容器传入 API key（详见 [shell sandbox](docs/shell-sandbox.md)）。下文中与此冲突的说法均已失效。
+
 > 一款易读的终端 Coding Agent，提供流式 TUI 与可切换的 AI 供应商。
 
 ![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=nodedotjs&logoColor=white)
