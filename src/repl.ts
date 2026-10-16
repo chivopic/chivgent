@@ -536,7 +536,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
 
   // Approval and normal input share the same readline iterator.
   if (options.shellApproval !== undefined) {
-    options.shellApproval.setHandler(async (command, signal) => {
+    options.shellApproval.setHandler(async (command, signal, context) => {
       if (signal?.aborted) return false;
       menu?.clear();
       options.liveRegion?.pause();
@@ -544,7 +544,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       tuiInput?.setBusy(false);
       try {
         const width = terminalWidth({ columns: (options.output as typeof options.output & { columns?: number }).columns });
-        write(approvalPreview(command, width));
+        write(approvalPreview(command, width, context ?? "Shell command"));
         if (!commandReviewable(command, width)) {
           write("  Denied: command cannot be fully reviewed at this width. Ask for a shorter command.\n");
           return false;

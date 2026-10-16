@@ -6,7 +6,7 @@ import { BashTool } from "../dist/tools/bash.js";
 
 const root = await mkdtemp(path.join(tmpdir(), "chivgent-sandbox-smoke-"));
 process.env.CHIVGENT_TEST_SECRET = "must-not-leak-into-container";
-const tool = new BashTool({ cwd: root, approve: async () => true });
+const tool = new BashTool({ cwd: root, backend: "docker", allowWrites: true, approve: async () => true });
 
 try {
   await writeFile(path.join(root, "writable.txt"), "before");

@@ -128,6 +128,19 @@ describe("WriteFileTool", () => {
     });
   });
 
+  it("protects agent configuration directories from direct writes", async () => {
+    const root = await temporaryDirectory("chivgent-workspace-");
+    for (const name of [".agents", ".codex", ".aws", ".ssh"]) {
+      await mkdir(path.join(root, name));
+      const result = await new WriteFileTool().execute(
+        { path: `${name}/owned.txt`, contents: "nope\n" },
+        { workspace: writableWorkspace(root) },
+      );
+      expect(result.isError).toBe(true);
+      await expect(readFile(path.join(root, name, "owned.txt"), "utf8")).rejects.toThrow();
+    }
+  });
+
   it("refuses NUL bytes without touching the target", async () => {
     const root = await temporaryDirectory("chivgent-workspace-");
     await writeFile(path.join(root, "keep.ts"), "original\n");

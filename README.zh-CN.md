@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-> ⚠️ **本中文版已过时，请以 [英文 README](README.md) 为准。** 尤其是安全说明：`--allow-shell` 现在在离线 Docker 容器中运行命令，每条命令需逐条确认，且不向容器传入 API key（详见 [shell sandbox](docs/shell-sandbox.md)）。下文中与此冲突的说法均已失效。
+> ⚠️ **本中文版已过时，请以 [英文 README](README.md) 为准。** `--allow-shell` 在 macOS 默认使用系统 Seatbelt 沙箱，在其他支持的平台使用 Docker。默认禁止网络和工作区写入；命令需要逐条确认（详见 [shell sandbox](docs/shell-sandbox.md)）。
 
 > 一款易读的终端 Coding Agent，提供流式 TUI 与可切换的 AI 供应商。
 
@@ -520,7 +520,7 @@ npm install -g "$(npm pack --silent)"
 
 **批量补丁：** `--allow-writes` 现在可以使用 `apply_patch` 一次修改多个文件，采用严格上下文校验；参见 [补丁格式和限制](docs/apply-patch.md)。
 
-**Shell 安全提示：** `--allow-shell` 现在通过无网络的 Docker 容器执行命令，交互模式会逐条请求确认；非交互模式默认拒绝，除非显式使用 `--approve-all-shell`。限制与风险详见 [Shell 沙箱说明](docs/shell-sandbox.md)。
+**Shell 安全提示：** `--allow-shell` 在 macOS 默认使用 Seatbelt，其他支持平台使用 Docker；默认禁止网络与工作区写入，交互模式会逐条请求确认。限制与风险详见 [Shell 沙箱说明](docs/shell-sandbox.md)。
 
 
 评测前请先运行 `npm run eval -- --dry-run --allow-writes --allow-shell`，在不调用模型的情况下校验任务和生成题目指纹。具体方法见 [基线评测指南](docs/eval-baseline-guide.md)。Token 用量缺失会标为未知，而不是 0。

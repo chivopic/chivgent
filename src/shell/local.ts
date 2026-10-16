@@ -38,6 +38,8 @@ export function validateTimeoutSeconds(value: number): number {
 export interface LocalShellOptions {
   /** Resolved once per command so a shell installed mid-session is picked up. */
   readonly resolveConfig?: (cwd: string) => ShellConfig;
+  /** Optional environment override; otherwise the child inherits the host environment. */
+  readonly env?: NodeJS.ProcessEnv;
 }
 
 /** Runs commands as child processes of this one. */
@@ -68,7 +70,7 @@ export function createLocalShellOperations(
       const child = spawn(config.shell, [...config.args, command], {
         cwd,
         detached: true,
-        env: env ?? process.env,
+        env: env ?? options.env ?? process.env,
         stdio: ["ignore", "pipe", "pipe"],
       });
 
@@ -113,6 +115,8 @@ export function createLocalShellOperations(
         return { exitCode };
       } finally {
         if (child.pid !== undefined) {
+          // A command may leave background descendants in its process group.
+          killProcessTree(child.pid);
           untrackChildPid(child.pid);
         }
         if (timeoutHandle !== undefined) {
@@ -122,4 +126,17 @@ export function createLocalShellOperations(
       }
     },
   };
+}
+
+/** Keep host tool discovery while withholding provider credentials and shell startup injection. */
+export function safeShellEnvironment(): NodeJS.ProcessEnv {
+  const result: NodeJS.ProcessEnv = {};
+  for (const key of ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "NO_COLOR", "CI"]) {
+    const value = process.env[key];
+    if (value !== undefined) result[key] = value;
+  }
+  result.HOME = process.env.TMPDIR ?? "/tmp";
+  result.BASH_ENV = "/dev/null";
+  result.ENV = "/dev/null";
+  return result;
 }

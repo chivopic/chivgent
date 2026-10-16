@@ -1,5 +1,5 @@
 /** Every shell call requires a positive user decision. */
-export type ShellApproval = (command: string, signal?: AbortSignal) => Promise<boolean>;
+export type ShellApproval = (command: string, signal?: AbortSignal, context?: string) => Promise<boolean>;
 
 /**
  * Shell permission is scoped to the current CLI process. Interactive sessions
@@ -15,10 +15,10 @@ export class ShellApprovalGate {
     this.handler = handler;
   }
 
-  async approve(command: string, signal?: AbortSignal): Promise<boolean> {
+  async approve(command: string, signal?: AbortSignal, context?: string): Promise<boolean> {
     if (signal?.aborted) return false;
     if (this.approveAll) return true;
     if (this.handler === undefined) return false;
-    return (await this.handler(command, signal)) && signal?.aborted !== true;
+    return (await this.handler(command, signal, context)) && signal?.aborted !== true;
   }
 }

@@ -71,7 +71,10 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
       ...(options.allowWrites ? [new WriteFileTool(), new EditFileTool(), new ApplyPatchTool()] : []),
       ...(options.allowShell ? [new BashTool({
         cwd,
-        approve: (command, signal) => config.shellApproval?.approve(command, signal) ?? Promise.resolve(false),
+        allowWrites: options.allowWrites,
+        allowNetwork: options.shellNetwork,
+        backend: options.shellBackend,
+        approve: (command, signal, context) => config.shellApproval?.approve(command, signal, context) ?? Promise.resolve(false),
       })] : []),
       ...(extensions?.registeredTools ?? []).map((entry) => entry.tool),
     ],

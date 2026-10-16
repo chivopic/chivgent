@@ -1,6 +1,6 @@
 import type { Tool, ToolContext, ToolOutput } from "./tool.js";
 import { validateTimeoutSeconds } from "../shell/local.js";
-import { createDockerShellOperations } from "../shell/docker.js";
+import { createShellOperations, type ShellBackend } from "../shell/factory.js";
 import type { ShellApproval } from "../shell/approval.js";
 import { OutputAccumulator } from "../shell/output.js";
 import { formatSize, type TruncationResult } from "../shell/truncate.js";
@@ -39,6 +39,9 @@ interface BashArguments {
 
 export interface BashToolOptions {
   readonly cwd: string;
+  readonly allowWrites?: boolean;
+  readonly allowNetwork?: boolean;
+  readonly backend?: ShellBackend;
   /** Swap in a container or SSH backend without touching the tool. */
   readonly operations?: ShellOperations;
   /** A human decision (or explicit session-wide approval). Absent means deny. */
@@ -65,7 +68,7 @@ export class BashTool implements Tool {
 
   constructor(options: BashToolOptions) {
     this.cwd = options.cwd;
-    this.operations = options.operations ?? createDockerShellOperations();
+    this.operations = options.operations ?? createShellOperations({ backend: options.backend, allowWrites: options.allowWrites, allowNetwork: options.allowNetwork });
     this.approve = options.approve;
     if (options.maxLines !== undefined) {
       this.maxLines = options.maxLines;
@@ -110,7 +113,7 @@ export class BashTool implements Tool {
     }
     let approved: boolean;
     try {
-      approved = await this.approve(parsed.command, context.signal);
+      approved = await this.approve(parsed.command, context.signal, `Shell context: ${this.operations.backend ?? "custom backend; network policy unknown"}`);
     } catch (error: unknown) {
       if (isAbortError(error) || context.signal?.aborted) throw new ShellAbortError();
       return { content: "Shell command denied: approval failed.", isError: true };

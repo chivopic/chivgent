@@ -11,6 +11,7 @@ export const ALLOWED_ENV_FILES = new Set([
   ".env.template",
 ]);
 export const FORBIDDEN_DIRECTORY_NAMES = new Set([".git", ".ssh", ".aws"]);
+const PROTECTED_WRITE_DIRECTORY_NAMES = new Set([".git", ".ssh", ".aws", ".agents", ".codex"]);
 export const FORBIDDEN_FILE_NAMES = new Set([
   ".npmrc",
   ".pypirc",
@@ -215,6 +216,9 @@ export async function resolveWritePath(
   relativePath: string,
 ): Promise<ResolvedWritePath> {
   const normalized = normalizeRelativePath(root, relativePath);
+  if (normalized.relativePath.split("/").some((part) => PROTECTED_WRITE_DIRECTORY_NAMES.has(part.toLowerCase()))) {
+    throw new WorkspaceError("forbidden_path", "Writes to protected workspace directories are not allowed.");
+  }
   if (normalized.relativePath === ".") {
     throw new WorkspaceError(
       "invalid_path",

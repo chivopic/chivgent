@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/chivgent-banner-dark.svg">
-    <img src="docs/assets/chivgent-banner-light.svg" alt="chivgent: terminal coding agent. Read-only by default, Docker shell, OpenAI-compatible." width="100%">
+    <img src="docs/assets/chivgent-banner-light.svg" alt="chivgent: terminal coding agent. Read-only by default, sandboxed shell, OpenAI-compatible." width="100%">
   </picture>
 </p>
 
@@ -16,8 +16,8 @@
 chivgent is a terminal coding agent you can read end to end. It asks an LLM
 (OpenAI, DeepSeek, or any OpenAI-compatible endpoint) about the project in your
 current directory, using read-only file tools by default. Writes and shell
-commands are separate opt-in flags, and shell commands run in an offline Docker
-container with per-command approval.
+commands are separate opt-in flags, and shell commands run in a macOS Seatbelt
+sandbox or an offline Docker container with per-command approval.
 
 It is small on purpose: a TypeScript CLI with four runtime dependencies, where
 the agent loop, Provider adapters, context compaction, and tool sandboxing are
@@ -68,7 +68,7 @@ runs the TUI against a stub Provider and does not touch the workspace.
 | --- | --- | --- |
 | Discover, search, and read files | default | The current directory only. `.gitignore`d, generated, and credential paths (such as `.env`, `id_rsa`) are skipped. |
 | Create and edit files (`write_file`, `edit_file`, `apply_patch`) | `--allow-writes` | Files inside the workspace. Edits are exact-match and atomic. |
-| Run shell commands (`bash`) | `--allow-shell` | A fresh `node:22-alpine` Docker container with no network, the workspace mounted at `/workspace`, and no API keys. Each command needs a `y` to run. Docker is required; there is no fallback to the host. |
+| Run shell commands (`bash`) | `--allow-shell` | macOS Seatbelt sandbox by default on macOS; Docker on other supported platforms. Network and workspace writes are denied unless explicitly enabled. Each command needs a `y` to run. |
 | Load project extensions | trust prompt on first run | Anything you can: extensions are in-process JavaScript. |
 
 Costs: chivgent calls the Provider you choose with your key, so you pay that
@@ -102,9 +102,16 @@ calling. Changing only the base URL does not guarantee full compatibility; see
 chivgent                                   # interactive session
 chivgent --continue                        # resume the latest session here
 chivgent --allow-writes "Rename sayHi to greet everywhere"
-chivgent --allow-shell "Run the tests and explain the failure"
+chivgent --allow-shell --approve-all-shell "Run the tests and explain the failure"
 chivgent --json "List the CLI flags" > run.jsonl   # machine-readable events
 ```
+
+Select a shell backend with `--shell-backend auto|native|docker` (`auto` uses
+Seatbelt on macOS and Docker elsewhere). Shell writes require `--allow-writes`;
+network access requires `--shell-network`. The native macOS sandbox uses host
+tools and withholds provider credentials, while shell commands can still read
+files available to your user. It constrains writes and network access; it is not
+confidentiality isolation. See [shell safety](docs/shell-sandbox.md).
 
 - **Interactive sessions** keep history across prompts and are saved as JSON
   lines under `~/.chivgent/sessions` (`--no-session` to skip). `/help` lists
@@ -131,12 +138,12 @@ ones. Capabilities are coarse, session-level switches.
 - File tools reject paths outside the workspace, including `..` traversal and
   symlink escapes, and deny common credential and private-key paths. Tool output
   is capped at 64 KiB.
-- `--allow-shell` runs each command in a new offline container (dropped
-  capabilities, read-only root, non-root user, resource limits) and asks before
-  each one. Headless and served sessions deny commands unless you also pass
-  `--approve-all-shell`. Inside the container, commands can still change or
-  delete anything in the mounted project, and Docker is not proof against
-  kernel or VM escapes. Details: [shell sandbox](docs/shell-sandbox.md).
+- `--allow-shell` runs each command in a macOS Seatbelt sandbox or fresh Docker
+  container and asks before each one. Writes and network are denied by default;
+  use `--allow-writes` and `--shell-network` to opt in. Headless and served
+  sessions deny commands unless you also pass `--approve-all-shell`. Native
+  commands can read files available to your user. Details:
+  [shell sandbox](docs/shell-sandbox.md).
 - Writes and trusted extensions are **not** inside the container. Trusting a
   project's extensions means letting its authors run code as you, so chivgent
   asks once per directory and never loads them when there is no terminal to ask.

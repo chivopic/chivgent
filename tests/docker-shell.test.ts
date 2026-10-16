@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -33,11 +34,14 @@ describe("Docker shell isolation", () => {
     expect(flags).toContain("--pids-limit 64");
     expect(flags).toContain("--memory 512m");
     expect(flags).toContain("--workdir /workspace");
-    expect(flags).toContain(`type=bind,source=${root},target=/workspace`);
+    expect(flags).toContain(`type=bind,source=${realpathSync(root)},target=/workspace,readonly`);
     expect(flags).not.toContain("/var/run/docker.sock");
     expect(flags).not.toContain("--privileged");
     expect(flags).not.toContain("--network host");
     expect(cfg.args.filter(arg => arg === "--mount")).toHaveLength(1);
+    const writeEnabled = dockerShellConfig(root, { allowWrites: true });
+    expect(writeEnabled.args.join(" ")).not.toContain(`source=${realpathSync(root)},target=/workspace,readonly`);
+    expect(writeEnabled.args.join(" ")).toContain("--network none");
   });
 
   it("allows no untrusted Docker image that looks like another option", async () => {
