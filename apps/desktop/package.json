@@ -1,0 +1,35 @@
+{
+  "name": "chivgent-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "chivgent Desktop prototype. The packaged app bundles its own Agent host and does not need a global Node, a global chivgent, or the source tree.",
+  "author": "Chiv",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "build:host": "vite build --config vite.host.config.ts",
+    "dev": "npm run build:host && electron-vite dev",
+    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "build": "npm run typecheck && electron-vite build && npm run build:host",
+    "pack": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --publish never",
+    "test": "vitest run",
+    "preview": "npm run build:host && electron-vite preview",
+    "verify:packaged": "node scripts/verify-packaged.mjs"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "24.13.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.1.2",
+    "electron": "44.8.0",
+    "electron-builder": "26.15.3",
+    "electron-vite": "6.0.0",
+    "playwright-core": "1.64.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2",
+    "vite": "8.3.4",
+    "vitest": "4.1.11"
+  }
+}

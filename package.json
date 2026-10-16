@@ -43,7 +43,11 @@
     "release:check": "npm run check && npm test && npm run build && npm pack --dry-run",
     "prepublishOnly": "npm run check && npm test",
     "prepack": "npm run build",
-    "eval": "npm run build && node dist/evals/cli.js"
+    "eval": "npm run build && node dist/evals/cli.js",
+    "desktop:dev": "npm --prefix apps/desktop run dev",
+    "desktop:build": "npm --prefix apps/desktop run build",
+    "desktop:pack": "npm --prefix apps/desktop run pack",
+    "desktop:test": "npm --prefix apps/desktop test"
   },
   "dependencies": {
     "ignore": "7.0.6",
