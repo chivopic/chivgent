@@ -36,10 +36,11 @@ configuration do not persist between commands.
 
 Docker uses a read-only container root, drops Linux capabilities, disables
 networking by default, and mounts only the workspace. The workspace mount is
-read-only unless `--allow-writes` is set; protected directories already present
-at launch are mounted read-only in write-enabled mode. A protected directory
-created later in the command is not protected by a mount. Write-enabled Docker
-mode fails closed when a protected entry is a symlink or `.git` pointer file.
+read-only unless `--allow-writes` is set. In write-enabled mode, protected paths
+already present at launch are mounted read-only; absent paths are masked with a
+small read-only temporary filesystem. This prevents shell commands from
+creating protected paths during the run. Docker mode fails closed when a
+protected entry is a symlink or `.git` pointer file.
 Docker is a separate development environment, so host-only tools may not be
 present. Docker daemon or image errors fail the command without running it on
 the host.
