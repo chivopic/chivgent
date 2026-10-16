@@ -31,7 +31,12 @@ export interface SessionClearRecord {
   readonly type: "session_clear";
 }
 
-export type SessionRecord = SessionHeader | AgentEvent | SessionClearRecord;
+export type SessionMetadataRecord =
+  | { readonly type: "session_rename"; readonly title: string }
+  | { readonly type: "session_plan_mode"; readonly enabled: boolean }
+  | { readonly type: "session_compaction"; readonly compaction: AppliedCompaction; readonly transcriptHash: string; readonly usage?: UsageTotal };
+
+export type SessionRecord = SessionHeader | AgentEvent | SessionClearRecord | SessionMetadataRecord;
 
 export interface SessionTranscript {
   readonly header: SessionHeader;
@@ -40,6 +45,8 @@ export interface SessionTranscript {
   readonly compaction?: AppliedCompaction;
   readonly usage?: UsageTotal;
   readonly promptCount: number;
+  readonly title?: string;
+  readonly planMode: boolean;
 }
 
 export interface SessionSummary {
@@ -48,6 +55,8 @@ export interface SessionSummary {
   readonly timestamp: string;
   readonly updatedAt: string;
   readonly promptCount: number;
+  readonly title?: string;
+  readonly planMode: boolean;
   readonly lastPrompt?: string;
 }
 
@@ -184,6 +193,8 @@ export class FileSessionStore implements SessionStore {
       timestamp: transcript.header.timestamp,
       updatedAt,
       promptCount: transcript.prompts.length,
+      planMode: transcript.planMode,
+      ...(transcript.title === undefined ? {} : { title: transcript.title }),
       ...(lastPrompt === undefined ? {} : { lastPrompt }),
     };
   }
@@ -204,6 +215,8 @@ export function parseTranscript(
   let compaction: AppliedCompaction | undefined;
   let usage: UsageTotal | undefined;
   let promptCount = 0;
+  let title: string | undefined;
+  let planMode = false;
 
   for (const line of contents.split("\n")) {
     if (line.trim().length === 0) {
@@ -221,6 +234,15 @@ export function parseTranscript(
 
     if (record.type === "session") {
       header = toHeader(record);
+    } else if (record.type === "session_rename" && "title" in record && typeof record.title === "string" && record.title.trim().length > 0 && record.title.length <= 120 && !/[\x00-\x1f\x7f]/.test(record.title)) {
+      title = record.title;
+    } else if (record.type === "session_plan_mode" && "enabled" in record && typeof record.enabled === "boolean") {
+      planMode = record.enabled;
+    } else if (record.type === "session_compaction" && "compaction" in record && "transcriptHash" in record) {
+      const candidate = record as { compaction: unknown; transcriptHash: unknown; usage?: unknown };
+      if (candidate.transcriptHash === transcriptHash(messages)) compaction = validCompaction(candidate.compaction, messages);
+      const savedUsage = validUsage(candidate.usage);
+      if (savedUsage !== undefined) usage = savedUsage;
     } else if (record.type === "session_clear") {
       messages = [];
       compaction = undefined;
@@ -253,17 +275,19 @@ export function parseTranscript(
   }
 
   promptCount = Math.max(promptCount, prompts.length);
-  return header === undefined ? undefined : { header, messages, prompts, promptCount, ...(compaction === undefined ? {} : { compaction }), ...(usage === undefined ? {} : { usage }) };
+  return header === undefined ? undefined : { header, messages, prompts, promptCount, planMode, ...(title === undefined ? {} : { title }), ...(compaction === undefined ? {} : { compaction }), ...(usage === undefined ? {} : { usage }) };
 }
 
 function validCompaction(value: unknown, messages: readonly Message[]): AppliedCompaction | undefined {
   if (typeof value !== "object" || value === null || !("splitIndex" in value) || !("state" in value)) return undefined;
-  const c = value as { splitIndex: unknown; anchorIndex?: unknown; state: unknown };
+  const c = value as { splitIndex: unknown; anchorIndex?: unknown; manualTranscriptLength?: unknown; state: unknown };
   if (!Number.isSafeInteger(c.splitIndex) || (c.splitIndex as number) < 0 || (c.splitIndex as number) > messages.length || messages[c.splitIndex as number]?.role === "tool") return undefined;
   if ("anchorIndex" in value && c.anchorIndex !== undefined) {
     if (!Number.isSafeInteger(c.anchorIndex) || (c.anchorIndex as number) < 0 ||
       (c.anchorIndex as number) >= (c.splitIndex as number) || messages[c.anchorIndex as number]?.role !== "user") return undefined;
   }
+  if ("manualTranscriptLength" in value && c.manualTranscriptLength !== undefined &&
+    (!Number.isSafeInteger(c.manualTranscriptLength) || (c.manualTranscriptLength as number) < 0 || (c.manualTranscriptLength as number) > messages.length)) return undefined;
   if (typeof c.state !== "object" || c.state === null || !("summary" in c.state) ||
     typeof c.state.summary !== "string" || !("readFiles" in c.state) || !Array.isArray(c.state.readFiles) ||
     !("modifiedFiles" in c.state) || !Array.isArray(c.state.modifiedFiles) || !("decisions" in c.state) ||

@@ -23,6 +23,8 @@ export interface AgentSessionOptions {
   readonly compaction?: AppliedCompaction;
   readonly promptCount?: number;
   readonly usage?: UsageTotal;
+  readonly title?: string;
+  readonly planMode?: boolean;
   /** True when the session log already has a header line. */
   readonly resumed?: boolean;
   readonly now?: () => Date;
@@ -46,8 +48,11 @@ export class AgentSession {
   private headerWritten: boolean;
   private promptCount = 0;
   private promptInProgress = false;
+  private controlInProgress = false;
   private usageTotal: UsageTotal | undefined;
   private compaction: AppliedCompaction | undefined;
+  private sessionTitle: string | undefined;
+  private planModeEnabled: boolean;
 
   constructor(options: AgentSessionOptions) {
     this.id = options.id ?? createSessionId();
@@ -59,6 +64,8 @@ export class AgentSession {
     this.promptCount = options.promptCount ?? 0;
     this.usageTotal = options.usage === undefined ? undefined : structuredClone(options.usage);
     this.headerWritten = options.resumed ?? false;
+    this.sessionTitle = options.title;
+    this.planModeEnabled = options.planMode ?? false;
     this.agent = new Agent({
       ...options.agent,
       onEvent: (event) => {
@@ -84,6 +91,67 @@ export class AgentSession {
     return this.agent.toolNames;
   }
 
+  get title(): string | undefined { return this.sessionTitle; }
+  get planMode(): boolean { return this.planModeEnabled; }
+
+  async rename(title: string): Promise<void> {
+    this.beginControl("rename");
+    try {
+      const clean = title.trim();
+      if (!clean || clean.length > 120 || /[\x00-\x1f\x7f]/.test(clean)) throw new TypeError("Title must be 1–120 characters without control characters.");
+      await this.writeHeaderStrict();
+      if (this.store !== undefined) {
+        await this.store.append(this.id, { type: "session_rename", title: clean });
+        await this.store.flush?.();
+      }
+      this.sessionTitle = clean;
+    } finally { this.controlInProgress = false; }
+  }
+
+  async setPlanMode(enabled: boolean): Promise<void> {
+    this.beginControl("change Plan Mode");
+    try {
+      if (this.planModeEnabled === enabled) return;
+      await this.writeHeaderStrict();
+      if (this.store !== undefined) {
+        await this.store.append(this.id, { type: "session_plan_mode", enabled });
+        await this.store.flush?.();
+      }
+      this.planModeEnabled = enabled;
+    } finally { this.controlInProgress = false; }
+  }
+
+  /** Persist a new empty session immediately so it appears in /resume. */
+  async initialize(): Promise<void> {
+    this.beginControl("initialize");
+    try { await this.writeHeaderStrict(); await this.store?.flush?.(); }
+    finally { this.controlInProgress = false; }
+  }
+
+  async compact(signal?: AbortSignal): Promise<boolean> {
+    this.beginControl("compact");
+    try {
+      if (this.compaction === undefined && this.transcript.length < 2) throw new Error("There is no older conversation to compact safely.");
+      const result = await this.agent.compactHistory(this.transcript, this.compaction, signal);
+      if (!result.compacted) return false;
+      if (signal?.aborted) throw new Error("Compaction cancelled.");
+      const total = addUsage(this.usageTotal, result.usage);
+      await this.writeHeaderStrict();
+      if (this.store !== undefined) {
+        await this.store.append(this.id, { type: "session_compaction", compaction: result.compaction, transcriptHash: transcriptHash(this.transcript), ...(result.usage === undefined ? {} : { usage: total }) });
+        await this.store.flush?.();
+      }
+      this.compaction = result.compaction;
+      if (result.usage !== undefined) this.usageTotal = total;
+      return true;
+    } finally { this.controlInProgress = false; }
+  }
+
+  private beginControl(action: string): void {
+    if (this.promptInProgress || this.controlInProgress) throw new Error(`Cannot ${action} while another session operation is running.`);
+    this.controlInProgress = true;
+  }
+
   subscribe(listener: AgentEventListener): () => void {
     this.listeners.add(listener);
     return () => {
@@ -93,9 +161,8 @@ export class AgentSession {
 
   /** Drops the transcript but keeps the session id and its log. */
   clear(): void {
-    if (this.promptInProgress) {
-      throw new Error("Cannot clear a session while a prompt is running.");
-    }
+    if (this.promptInProgress) throw new Error("Cannot clear a session while a prompt is running.");
+    if (this.controlInProgress) throw new Error("Cannot clear a session while another session operation is running.");
     this.transcript = [];
     this.compaction = undefined;
     this.promptCount = 0;
@@ -107,7 +174,7 @@ export class AgentSession {
     text: string,
     options: { readonly signal?: AbortSignal } = {},
   ): Promise<AgentRunResult> {
-    if (this.promptInProgress) {
+    if (this.promptInProgress || this.controlInProgress) {
       throw new Error("This session is already running a prompt.");
     }
     this.promptInProgress = true;
@@ -119,6 +186,7 @@ export class AgentSession {
         return await this.agent.run(text, {
           history: this.transcript,
           ...(this.compaction === undefined ? {} : { compaction: this.compaction }),
+          planMode: this.planModeEnabled,
           ...(options.signal === undefined ? {} : { signal: options.signal }),
         });
       } finally {
@@ -194,6 +262,12 @@ export class AgentSession {
     } catch {
       // Skip persistence for this run. A later prompt can retry the header.
     }
+  }
+
+  private async writeHeaderStrict(): Promise<void> {
+    if (this.store === undefined || this.headerWritten) return;
+    await this.store.append(this.id, this.header());
+    this.headerWritten = true;
   }
 
   private async flush(): Promise<void> {

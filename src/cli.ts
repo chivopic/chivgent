@@ -158,6 +158,8 @@ interface RestoredSession {
   readonly compaction?: import("./context/context-manager.js").AppliedCompaction;
   readonly promptCount?: number;
   readonly usage?: import("./providers/usage.js").UsageTotal;
+  readonly title?: string;
+  readonly planMode?: boolean;
   readonly resumed: boolean;
 }
 
@@ -280,9 +282,8 @@ async function main(argv: readonly string[]): Promise<number> {
         color: process.stderr.isTTY === true && process.env.NO_COLOR === undefined && process.env.TERM !== "dumb",
       })
     : undefined;
-  session.subscribe(
-    options.json
-      ? createJsonEventWriter(process.stdout, session.header())
+  const renderer = options.json
+      ? undefined
       : (liveRegion?.listener ??
         createEventRenderer(
           { stdout: process.stdout, stderr: process.stderr },
@@ -295,17 +296,25 @@ async function main(argv: readonly string[]): Promise<number> {
               !options.quiet && process.stderr.isTTY === true,
             color: process.stderr.isTTY === true,
           },
-        )),
-  );
+        ));
+  let detachSession = (): void => undefined;
+  let hasAttachedSession = false;
+  const attachSession = (target: AgentSession): void => {
+    detachSession();
+    if (hasAttachedSession) liveRegion?.reset();
+    const detachRender = target.subscribe(options.json
+      ? createJsonEventWriter(process.stdout, target.header())
+      : renderer!);
+    const detachExtensions = registry === undefined ? undefined : target.subscribe(registry.eventListener);
+    detachSession = () => { detachRender(); detachExtensions?.(); };
+    hasAttachedSession = true;
+  };
+  attachSession(session);
 
   if (liveRegion !== undefined) {
     // A resize reflows what is on screen, so the diff baseline no longer
     // describes it. This is the one moment a full repaint is correct.
     process.stderr.on("resize", liveRegion.resized);
-  }
-
-  if (registry !== undefined) {
-    session.subscribe(registry.eventListener);
   }
 
   if (options.serve) {
@@ -322,6 +331,34 @@ async function main(argv: readonly string[]): Promise<number> {
         ...(liveRegion === undefined ? {} : { liveRegion }),
         signIn: providerControl,
         providers: providerControl,
+        compactionEnabled: options.compaction,
+        providerName: options.provider,
+        modelName: options.model,
+        permissions: [
+          ...(options.allowWrites ? ["file-write"] : []),
+          ...(options.allowShell ? ["shell"] : []),
+          ...(options.shellNetwork ? ["network"] : []),
+        ],
+        sessionOptions: store === undefined ? undefined : {
+          list: async () => (await store.list({ cwd })).map(({ id, title }) => ({ id, ...(title === undefined ? {} : { title }) })),
+          create: async (title) => {
+            await store.flush?.();
+            const next = createLocalSession({ options, cwd, llm, ...(shellApproval === undefined ? {} : { shellApproval }), ...(registry === undefined ? {} : { extensions: registry }), restored: { resumed: false }, store });
+            await next.initialize();
+            if (title) await next.rename(title);
+            attachSession(next);
+            return next;
+          },
+          resume: async (id) => {
+            await store.flush?.();
+            const record = await store.read(id);
+            if (record === undefined || record.header.cwd !== cwd) return undefined;
+            const next = createLocalSession({ options, cwd, llm, ...(shellApproval === undefined ? {} : { shellApproval }), ...(registry === undefined ? {} : { extensions: registry }), restored: { id, messages: record.messages, compaction: record.compaction, promptCount: record.promptCount, usage: record.usage, title: record.title, planMode: record.planMode, resumed: true }, store });
+            attachSession(next);
+            return next;
+          },
+        },
+        sessionFileForSession: store === undefined ? undefined : (current) => store.location(current.id),
         input: process.stdin,
         // In JSON mode stdout carries the event stream and nothing else:
         // readline writes its prompt and echo to the same stream it is given,
@@ -611,7 +648,7 @@ async function restoreSession(
   if (transcript === undefined) {
     return `Unknown session: ${id}`;
   }
-  return { id, messages: transcript.messages, compaction: transcript.compaction, promptCount: transcript.promptCount, usage: transcript.usage, resumed: true };
+  return { id, messages: transcript.messages, compaction: transcript.compaction, promptCount: transcript.promptCount, usage: transcript.usage, title: transcript.title, planMode: transcript.planMode, resumed: true };
 }
 
 async function listSessions(
@@ -626,7 +663,7 @@ async function listSessions(
   for (const summary of sessions) {
     const prompt = summary.lastPrompt ?? "";
     process.stdout.write(
-      `${summary.id}  ${summary.updatedAt}  ${summary.promptCount} prompt(s)  ${prompt.split("\n", 1)[0] ?? ""}\n`,
+      `${summary.id}  ${summary.updatedAt}  ${summary.promptCount} prompt(s)  ${summary.title ? `${summary.title}  ` : ""}${prompt.split("\n", 1)[0] ?? ""}\n`,
     );
   }
   return 0;

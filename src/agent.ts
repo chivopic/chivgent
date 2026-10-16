@@ -12,7 +12,7 @@ import type {
   ToolResultMessage,
 } from "./messages.js";
 import { ToolExecutionError, type Tool, type ToolDefinition, type ToolOutput } from "./tools/tool.js";
-import { isParallelReadTool, MAX_PARALLEL_READS } from "./tools/parallel.js";
+import { isParallelReadTool, isPlanModeTool, MAX_PARALLEL_READS } from "./tools/parallel.js";
 import { UpdatePlanTool, type PlanUpdate } from "./tools/update-plan.js";
 import type { Workspace } from "./workspace.js";
 import { ContextBudgetError, type AppliedCompaction, type ContextManager } from "./context/context-manager.js";
@@ -45,6 +45,8 @@ export interface AgentRunOptions {
    */
   readonly history?: readonly Message[];
   readonly compaction?: AppliedCompaction;
+  /** Enforced in the execution path; provider tool schemas are filtered too. */
+  readonly planMode?: boolean;
 }
 
 export type AgentRunResult =
@@ -73,6 +75,7 @@ interface RunState {
   continuation?: LLMContinuation;
   compaction?: AppliedCompaction;
   projectInstructionsText?: string;
+  planMode: boolean;
 }
 
 export class AgentProtocolError extends Error {
@@ -125,6 +128,11 @@ export class Agent {
     return [...this.registry.keys()];
   }
 
+  async compactHistory(messages: readonly Message[], previous?: AppliedCompaction, signal?: AbortSignal) {
+    if (this.contextManager === undefined) throw new ContextBudgetError("Manual compaction is disabled.");
+    return this.contextManager.compactHistory(messages, previous, signal);
+  }
+
   async run(
     userInput: string,
     options: AgentRunOptions = {},
@@ -146,6 +154,7 @@ export class Agent {
       ],
       seenToolCallIds: new Set<string>(),
       turnCount: 0,
+      planMode: options.planMode === true,
       ...(options.compaction === undefined || JSON.stringify(history) !== originalHistory
         ? {} : { compaction: structuredClone(options.compaction) }),
     };
@@ -331,9 +340,11 @@ export class Agent {
     const messages = await this.buildContext(state, signal, prefixMessages);
     const modelMessages: readonly Message[] = [...prefixMessages, ...messages];
     const request = {
-      systemPrompt: this.systemPrompt,
+      systemPrompt: state.planMode ? `${this.systemPrompt}\n\n${PLAN_MODE_PROMPT}` : this.systemPrompt,
       messages: modelMessages,
-      tools: this.toolDefinitions,
+      tools: state.planMode
+        ? this.toolDefinitions.filter((definition) => isPlanModeTool(this.registry.get(definition.name)))
+        : this.toolDefinitions,
       ...(state.continuation === undefined
         ? {}
         : { continuation: state.continuation }),
@@ -447,7 +458,9 @@ export class Agent {
     const tool = this.registry.get(toolCall.name);
     let output: ToolOutput;
 
-    if (tool === undefined) {
+    if (state.planMode && !isPlanModeTool(tool)) {
+      output = { content: `Plan Mode blocked tool: ${toolCall.name}. Only built-in read tools and update_plan can run.`, isError: true };
+    } else if (tool === undefined) {
       output = {
         content: `Unknown tool: ${toolCall.name}`,
         isError: true,
@@ -557,6 +570,7 @@ export class Agent {
 }
 
 const INTERRUPTED_TOOL_RESULT = "Tool execution interrupted before completion.";
+const PLAN_MODE_PROMPT = `Plan Mode is active. Investigate using available built-in read tools, then propose a concise plan or ask the user a question in natural language. Do not modify files or run commands. Use update_plan for a checklist when useful, then wait for the user to turn Plan Mode off with /plan off before carrying out changes.`;
 
 /**
  * Ensure every function call has a corresponding output before history is

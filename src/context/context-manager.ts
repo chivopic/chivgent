@@ -39,6 +39,8 @@ export interface AppliedCompaction {
   readonly splitIndex: number;
   /** Preserve the active prompt before a compacted run of later tool turns. */
   readonly anchorIndex?: number;
+  /** Transcript length at the last explicit /compact; prevents repeat charges. */
+  readonly manualTranscriptLength?: number;
 }
 
 export interface BuildOptions {
@@ -107,6 +109,47 @@ export class ContextManager {
 
   get budget(): number {
     return this.contextWindow - this.reserveTokens;
+  }
+
+  /** Build a durable checkpoint on demand without changing the transcript. */
+  async compactHistory(
+    messages: readonly Message[],
+    previous?: AppliedCompaction,
+    signal?: AbortSignal,
+  ): Promise<{ readonly compacted: false } | { readonly compacted: true; readonly compaction: AppliedCompaction; readonly usage?: Usage }> {
+    if (this.compactor === undefined) throw new ContextBudgetError("Manual compaction is disabled.");
+    if (signal?.aborted) throw new Error("Compaction cancelled.");
+    const effective = previous === undefined
+      ? [...messages]
+      : previous.anchorIndex === undefined
+        ? [summaryMessage(previous.state), ...messages.slice(previous.splitIndex)]
+        : [messages[previous.anchorIndex]!, summaryMessage(previous.state), ...messages.slice(previous.splitIndex)];
+    const summaryIndex = previous === undefined ? -1 : previous.anchorIndex === undefined ? 0 : 1;
+    const latestUser = findLastUserIndex(effective, summaryIndex);
+    if (previous?.manualTranscriptLength !== undefined && messages.length <= previous.manualTranscriptLength) {
+      return { compacted: false };
+    }
+    if (previous !== undefined && effective.length <= (previous.anchorIndex === undefined ? 1 : 2)) {
+      return { compacted: false };
+    }
+    if (latestUser <= 0) {
+      if (previous !== undefined) return { compacted: false };
+      throw new ContextBudgetError("There is no older conversation to compact safely.");
+    }
+    const head = effective.slice(0, latestUser);
+    if (previous !== undefined && head.length === 1 && head[0]?.role === "user" && head[0].content.startsWith("[Compacted conversation data")) {
+      return { compacted: false };
+    }
+    const compacted = await this.compactor.compact(head, signal, previous?.state);
+    if (signal?.aborted) throw new Error("Compaction cancelled.");
+    const splitIndex = previous === undefined
+      ? latestUser
+      : previous.splitIndex + Math.max(0, latestUser - (previous.anchorIndex === undefined ? 1 : 2));
+    const candidate: AppliedCompaction = { state: compacted.state, splitIndex, manualTranscriptLength: messages.length };
+    if (this.estimator.estimateMessages([summaryMessage(candidate.state), ...messages.slice(splitIndex)]) > this.budget) {
+      throw new ContextBudgetError("The manual summary and retained transcript exceed the available context budget; no checkpoint was saved.");
+    }
+    return { compacted: true, compaction: candidate, ...(compacted.usage === undefined ? {} : { usage: compacted.usage }) };
   }
 
   async build(

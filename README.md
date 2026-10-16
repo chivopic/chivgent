@@ -116,7 +116,18 @@ confidentiality isolation. See [shell safety](docs/shell-sandbox.md).
 - **Interactive sessions** keep history across prompts and are saved as JSON
   lines under `~/.chivgent/sessions` (`--no-session` to skip). `/help` lists
   slash commands such as `/provider`, `/model`, `/login`, `/session`, `/diff`,
-  and `/exit`. Ctrl+C stops a running answer; at an idle prompt it exits.
+  `/status`, `/compact`, `/plan`, `/new`, `/resume`, and `/rename`. `/new` saves
+  the current session and starts a fresh one; `/resume` lists IDs when omitted
+  and only switches to sessions from the current workspace. Ctrl+C stops a
+  running answer; at an idle prompt it exits.
+- **Plan Mode** (`/plan`, `/plan on`, `/plan off`) persists with the session.
+  The agent can use exact built-in read tools and `update_plan`; the execution
+  layer blocks writes, Shell, and extension tools even if a Provider requests
+  them. New sessions start with Plan Mode off.
+- **Manual compaction** (`/compact`) saves a model-facing checkpoint while
+  retaining the complete transcript for resume. It is unavailable with
+  `--no-compaction`. `/status` shows the active model, permissions, session
+  state, usage, and an approximate token estimate scoped to transcript messages.
 - **`--tui`** adds a live status region and a multi-line editor with history,
   an inline `/` command menu, and `/gitdiff` review. See the
   [TUI guide](docs/tui-v5.md).

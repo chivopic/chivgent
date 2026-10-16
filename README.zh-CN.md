@@ -175,7 +175,13 @@ chivgent [选项]                   进入交互式会话
 ```
 
 交互式会话中 `/help` 会列出全部斜杠命令，包括 `/provider`、`/model`、`/endpoint`、`/login`、
-`/session`、`/tools`、`/clear` 和 `/exit`。TUI 输入 `/` 会在当前输入行下方打开命令菜单；
+`/session`、`/status`、`/compact`、`/plan`、`/new`、`/resume`、`/rename`、`/tools`、`/clear` 和 `/exit`。
+`/new` 会保存当前会话并创建新 ID；`/resume` 不带 ID 时列出当前工作区的会话，带 ID 时切换会话。
+Plan Mode（`/plan`、`/plan on`、`/plan off`）会随会话保存，执行层只允许内置只读工具和 `update_plan`，
+并阻止文件写入、Shell 和扩展工具；新会话默认关闭 Plan Mode。
+`/compact` 保存供模型使用的 checkpoint，同时保留完整 transcript；`--no-compaction` 下不可用。
+`/status` 显示当前模型、权限、会话状态、Token 用量和仅按 transcript 估算的上下文 Token 数。
+TUI 输入 `/` 会在当前输入行下方打开命令菜单；
 输入 `/provider` 会打开供应商菜单，可用上下键选择并按 Enter 切换。
 选中没有 Key 的供应商后会直接进入隐藏的 Key 输入；已有 Key 时直接可用。
 `/login` 保留用于更换 Key。
@@ -332,7 +338,7 @@ Token 数量按字符长度估算，而不是用真正的 tokenizer：后者与�
 预算包含 system prompt、工具 schema、项目指导和对话历史，Token 数按字符数近似估算；
 system prompt 或工具 schema 本身超出预算，或压缩后仍放不下请求时，会返回可读错误。
 Session 会保存压缩摘要和 transcript 切分点，`--continue` / `--resume` 会恢复它，
-同时恢复累计 usage 和 prompt 数。`/clear` 会重置这些会话累计状态。
+同时恢复累计 usage、prompt 数、标题和 Plan Mode。`/clear` 会重置对话累计状态，但保留 Plan Mode。
 用 `--no-compaction` 可以关闭压缩。
 
 ### 运行时事件

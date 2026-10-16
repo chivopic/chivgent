@@ -99,6 +99,20 @@ describe("REPL commands", () => {
     expect(output).toContain("Ctrl+C");
     expect(output).toContain("/provider");
     expect(output).toContain("/model");
+    expect(output).toContain("/compact");
+    expect(output).toContain("/plan");
+    expect(output).toContain("/new");
+    expect(output).toContain("/resume");
+    expect(output).toContain("/rename");
+    expect(output).toContain("/status");
+  });
+
+  it("routes plan toggles and validates rename input without sending slash text to the model", () => {
+    const { outcome: toggle } = run("/plan");
+    expect(toggle).toEqual({ kind: "plan", enabled: true });
+    expect(run("/plan off").outcome).toEqual({ kind: "plan", enabled: false });
+    expect(run("/rename new title\nforged").output).toContain("Usage: /rename");
+    expect(run("/rename a new title").outcome).toEqual({ kind: "rename", title: "a new title" });
   });
 
   it("routes Provider and model changes through the interactive control", () => {
