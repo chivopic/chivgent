@@ -191,7 +191,7 @@ export class ContextManager {
       const anchorTokens = anchored ? this.estimator.estimateMessage(effective[latestUser]!) : 0;
       const tailBudget = this.budget - prefixTokens - summaryTokens - anchorTokens;
       if (tailBudget < 0) {
-        throw new ContextBudgetError(`The request still needs about ${tokensAfter} tokens after compaction, exceeding the available context budget of ${this.budget}. Reduce the prompt, tool schemas, or context window reserve.`, usage);
+        throw new ContextBudgetError(`The request still needs about ${tokensAfter} tokens after compaction, exceeding the available context budget of ${this.budget}. Reduce the prompt, tool schemas, or context window reserve.`, usage, usageComplete);
       }
 
       const initialCut = cut;
@@ -199,10 +199,21 @@ export class ContextManager {
       anchored = latestUser >= 0 && cut > latestUser;
       ({ head, tail } = buildHeadAndTail(cut, anchored));
       if (head.length === 0) {
-        throw new ContextBudgetError(`The request still needs about ${tokensAfter} tokens after compaction, exceeding the available context budget of ${this.budget}. Reduce the prompt, tool schemas, or context window reserve.`, usage);
+        throw new ContextBudgetError(`The request still needs about ${tokensAfter} tokens after compaction, exceeding the available context budget of ${this.budget}. Reduce the prompt, tool schemas, or context window reserve.`, usage, usageComplete);
       }
 
-      const second = await this.compactor.compact(head, options.signal, state);
+      let second: Awaited<ReturnType<Compactor["compact"]>>;
+      try {
+        second = await this.compactor.compact(head, options.signal, state);
+      } catch (error: unknown) {
+        // The first summary was already paid for. Preserve its usage even if
+        // the bounded retry fails or is aborted; the retry's usage is unknown.
+        throw new ContextBudgetError(
+          error instanceof Error ? `Context compaction retry failed: ${error.message}` : "Context compaction retry failed.",
+          usage,
+          false,
+        );
+      }
       state = second.state;
       usage = mergeCompactionUsage(usage, second.usage);
       usageComplete = usageComplete && second.usage !== undefined;
@@ -213,7 +224,7 @@ export class ContextManager {
       if (tokensAfter > this.budget) {
         // A single retry is deliberately bounded. The new summary can itself
         // grow, so another retry would multiply Provider calls unpredictably.
-        throw new ContextBudgetError(`The request still needs about ${tokensAfter} tokens after compaction, exceeding the available context budget of ${this.budget}. Reduce the prompt, tool schemas, or context window reserve.`, usage);
+        throw new ContextBudgetError(`The request still needs about ${tokensAfter} tokens after compaction, exceeding the available context budget of ${this.budget}. Reduce the prompt, tool schemas, or context window reserve.`, usage, usageComplete);
       }
     }
 
@@ -247,7 +258,11 @@ export class ContextManager {
 }
 
 export class ContextBudgetError extends Error {
-  constructor(message: string, readonly compactionUsage?: Usage) { super(message); this.name = "ContextBudgetError"; }
+  constructor(
+    message: string,
+    readonly compactionUsage?: Usage,
+    readonly compactionUsageComplete?: boolean,
+  ) { super(message); this.name = "ContextBudgetError"; }
 }
 
 function mergeCompactionUsage(first: Usage | undefined, second: Usage | undefined): Usage | undefined {
@@ -329,14 +344,16 @@ export function findSplitIndex(
 }
 
 function toolGroupStart(messages: readonly Message[], endExclusive: number): number {
-  let start = endExclusive;
-  while (start > 0 && messages[start - 1]?.role === "tool") {
+  if (endExclusive <= 0) return 0;
+
+  let start = endExclusive - 1;
+  while (start >= 0 && messages[start]?.role === "tool") {
     start -= 1;
   }
 
-  const assistant = messages[start - 1];
+  const assistant = messages[start];
   if (assistant?.role === "assistant" && assistant.toolCalls.length > 0) {
-    return start - 1;
+    return start;
   }
-  return start;
+  return endExclusive - 1;
 }

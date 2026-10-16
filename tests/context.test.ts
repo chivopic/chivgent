@@ -104,6 +104,12 @@ describe("findSplitIndex", () => {
 
     expect(findSplitIndex(messages, estimator, 10_000)).toBe(0);
   });
+
+  it("advances past ordinary trailing messages when choosing a recent tail", () => {
+    const messages: Message[] = [user("old"), user("active")];
+
+    expect(findSplitIndex(messages, estimator, 1)).toBe(1);
+  });
 });
 
 describe("ContextManager", () => {
@@ -248,18 +254,18 @@ describe("ContextManager", () => {
   it("compacts older history when the split lands immediately after the active user", async () => {
     const client = summarisingClient('{"summary":"older history"}');
     const manager = new ContextManager({
-      contextWindow: 900,
+      contextWindow: 1_000,
       reserveTokens: 100,
-      keepRecentTokens: 150,
+      keepRecentTokens: 200,
       compactor: new Compactor(client),
     });
 
     const messages: Message[] = [
-      user("old".repeat(1400)),
-      user("older".repeat(1400)),
-      user("active".repeat(200)),
-      assistantWithCall("read_file", "src/a.ts", "call-1"),
-      toolResult("call-1", "read_file", "result".repeat(400)),
+      user("o".repeat(2_400)),
+      { role: "assistant", content: "old answer", toolCalls: [] },
+      user("n".repeat(600)),
+      assistantWithCall("read_file", "a", "c"),
+      toolResult("c", "read_file", "r".repeat(600)),
     ];
 
     const context = await manager.build(messages);
@@ -284,7 +290,7 @@ describe("ContextManager", () => {
 
     const messages: Message[] = [
       user("x".repeat(2_000)),
-      user("a".repeat(700)),
+      { role: "assistant", content: "a".repeat(700), toolCalls: [] },
       user("older"),
       { role: "assistant", content: "b".repeat(700), toolCalls: [] },
       user("continue"),
@@ -322,7 +328,7 @@ describe("ContextManager", () => {
   it("carries an existing summary forward across an anchor-only cut", async () => {
     const client = summarisingClient('{"summary":"new summary"}');
     const manager = new ContextManager({
-      contextWindow: 120,
+      contextWindow: 130,
       reserveTokens: 10,
       keepRecentTokens: 35,
       compactor: new Compactor(client),
@@ -334,7 +340,7 @@ describe("ContextManager", () => {
     ];
     const previous: AppliedCompaction = {
       state: {
-        summary: "old history",
+        summary: "old history ".repeat(24),
         readFiles: [],
         modifiedFiles: [],
         decisions: [],
@@ -356,6 +362,36 @@ describe("ContextManager", () => {
     expect(context.messages[2]).toEqual(messages[2]);
     expect(context.compaction?.splitIndex).toBe(2);
     expect(context.compaction?.anchorIndex).toBe(1);
+  });
+
+  it("preserves first summary usage when the bounded retry fails", async () => {
+    const failedRetry = new Error("retry unavailable");
+    let calls = 0;
+    const compactor = {
+      async compact() {
+        calls += 1;
+        if (calls === 2) throw failedRetry;
+        return {
+          state: { summary: "first summary", readFiles: [], modifiedFiles: [], decisions: [], pendingTasks: [] },
+          usage: { inputTokens: 20, outputTokens: 4, totalTokens: 24 },
+        };
+      },
+    } as unknown as Compactor;
+    const manager = new ContextManager({
+      contextWindow: 1_000, reserveTokens: 100, keepRecentTokens: 400, compactor,
+    });
+    const messages: Message[] = [
+      user("x".repeat(2_000)), user("a".repeat(700)), user("older"),
+      { role: "assistant", content: "b".repeat(700), toolCalls: [] }, user("continue"),
+    ];
+
+    await expect(manager.build(messages, { fixedMessages: [user("schema".repeat(400))] }))
+      .rejects.toMatchObject({
+        name: "ContextBudgetError",
+        compactionUsage: { inputTokens: 20, outputTokens: 4, totalTokens: 24 },
+        compactionUsageComplete: false,
+      });
+    expect(calls).toBe(2);
   });
 
   it("reports what it dropped", async () => {

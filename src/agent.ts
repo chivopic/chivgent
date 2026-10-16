@@ -281,8 +281,12 @@ export class Agent {
         ],
       });
     } catch (error: unknown) {
-      if (error instanceof ContextBudgetError && error.compactionUsage !== undefined) {
+      if (error instanceof ContextBudgetError &&
+        (error.compactionUsage !== undefined || error.compactionUsageComplete === false)) {
         state.usage = addUsage(state.usage, error.compactionUsage);
+        if (error.compactionUsageComplete === false) {
+          state.usage = { usage: state.usage.usage, complete: false };
+        }
       }
       throw error;
     }
