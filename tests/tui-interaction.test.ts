@@ -149,7 +149,7 @@ describe("TUI REPL", () => {
       expect(screen).toContain("/model");
       // /inspect is below the menu's initial 16-row viewport. Arrow through
       // the suggestions to prove it remains reachable without choosing it.
-      input.write("\x1b[B".repeat(21));
+      input.write("\x1b[B".repeat(40));
       await vi.waitFor(() => expect(screen).toContain("/inspect"));
       input.write("\x1b");
       expect(screen).toContain("/inspect");

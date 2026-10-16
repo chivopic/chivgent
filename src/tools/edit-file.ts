@@ -55,6 +55,7 @@ export class EditFileTool implements Tool {
           oldText: argumentsObject.oldText,
           newText: argumentsObject.newText,
         },
+        context.signal,
       );
       return {
         content: `Edited ${result.path} at line ${result.line} (now ${result.totalLines} lines, ${result.bytesWritten} bytes).`,

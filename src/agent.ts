@@ -34,6 +34,8 @@ export interface AgentOptions {
   readonly contextManager?: ContextManager;
   /** Scoped repository guidance, read separately from trusted system prompts. */
   readonly projectInstructions?: ProjectInstructionsProvider;
+  /** Additional execution-time boundary for tools such as trusted extensions. */
+  readonly authorizeToolCall?: (name: string, argumentsValue: unknown, signal?: AbortSignal) => Promise<boolean>;
 }
 
 export interface AgentRunOptions {
@@ -96,6 +98,7 @@ export class Agent {
   private readonly streaming: boolean;
   private readonly contextManager?: ContextManager;
   private readonly projectInstructions?: ProjectInstructionsProvider;
+  private readonly authorizeToolCall?: AgentOptions["authorizeToolCall"];
 
   constructor(options: AgentOptions) {
     if (!Number.isSafeInteger(options.maxTurns) || options.maxTurns <= 0) {
@@ -122,6 +125,7 @@ export class Agent {
     if (options.projectInstructions !== undefined) {
       this.projectInstructions = options.projectInstructions;
     }
+    this.authorizeToolCall = options.authorizeToolCall;
   }
 
   get toolNames(): readonly string[] {
@@ -467,6 +471,11 @@ export class Agent {
       };
     } else {
       try {
+        const authorized = this.authorizeToolCall === undefined ||
+          await this.authorizeToolCall(toolCall.name, toolCall.arguments, signal);
+        if (!authorized) {
+          output = { content: `Tool call denied: ${toolCall.name}. Approval was declined or unavailable.`, isError: true };
+        } else {
         // A model may issue its very first write into a nested folder whose
         // AGENTS.md wasn't visible at sampling time. Defer the mutation until
         // the next LLM request has included those scoped instructions.
@@ -506,6 +515,7 @@ export class Agent {
               },
             }),
           );
+        }
         }
       } catch (error: unknown) {
         if (isAbortError(error) || isAborted(signal)) {
