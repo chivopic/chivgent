@@ -282,7 +282,7 @@ describe("ContextManager", () => {
       user("x".repeat(200)),
       user("a".repeat(700)),
       user("older"),
-      assistant("b".repeat(700)),
+      { role: "assistant", content: "b".repeat(700), toolCalls: [] },
       user("continue"),
     ];
 
