@@ -2,7 +2,7 @@
 
 New sessions can choose a permission mode with `--permission-mode ask-first|workspace|unrestricted`, then inspect or change it with `/permissions` and view it with `/status`. The selection is process-local and is never restored from a saved session; resuming a session does not restore a previously broader mode.
 
-`ask-first` asks before every file change and shell command. `workspace` automatically allows workspace file changes and shell commands within the sandbox, with network disabled. A shell request that needs host file access must explicitly set `scope: "host"` and give a justification; the approval describes broad host file access and applies to that command only. Declining, cancellation, or unavailable interactive approval prevents execution. Host scope does not enable network. `unrestricted` is an explicit opt-in that runs shell commands automatically with broad host file access and network, within the OS sandbox; direct file tools remain workspace-bound.
+`ask-first` asks before every file change and shell command. `workspace` automatically allows workspace file changes and shell commands within the sandbox, with network disabled. A shell request that needs host file access must explicitly set `scope: "host"` and give a justification; the approval describes broad host file and network access and applies to that command only. Declining, cancellation, or unavailable interactive approval prevents execution. `unrestricted` is an explicit opt-in that runs shell commands automatically with broad host file access and network, within the OS sandbox; direct file tools remain workspace-bound.
 
 `--permission-mode` cannot be combined with legacy capability switches such as `--allow-writes` or `--allow-shell`. Existing legacy behavior remains available when no permission mode is selected.
 
@@ -36,8 +36,9 @@ read permission, then denies sensitive roots including user home directories,
 allowing back the workspace and selected system/toolchain roots. This
 deny-then-allow policy is a practical boundary, not a complete filesystem
 allowlist; system paths explicitly reopened remain readable. Workspace `.aws`,
-`.ssh`, `.codex`, and root `.env*` files remain denied, including through
-symlinks. Host scope removes workspace read/write boundaries for one command
+`.ssh`, `.codex`, and selected root `.env` filenames (`.env`, `.env.local`,
+`.env.development`, `.env.test`, `.env.production`, and `.env.staging`) remain
+denied, including through symlinks. Host scope removes workspace read/write boundaries for one command
 but still retains protected OS write paths. macOS Seatbelt behavior depends on OS policy support;
 an unavailable sandbox executable or failed sandbox launch is an error.
 The private home is deleted after each command, so package caches and shell
