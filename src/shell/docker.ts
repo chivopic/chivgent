@@ -20,6 +20,8 @@ export interface DockerShellOptions {
   readonly allowNetwork?: boolean;
 }
 
+const PROTECTED_WRITE_PATHS = [".git", ".agents", ".codex", ".aws", ".ssh"] as const;
+
 export function dockerShellConfig(cwd: string, options: DockerShellOptions = {}): ShellConfig {
   const workspace = realpathSync(cwd);
   const image = options.image ?? DEFAULT_SHELL_IMAGE;
@@ -46,11 +48,14 @@ export function dockerShellConfig(cwd: string, options: DockerShellOptions = {})
       "--user", user,
       "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m",
       "--mount", `type=bind,source=${workspace},target=/workspace${options.allowWrites ? "" : ",readonly"}`,
-      ...(options.allowWrites ? [".git", ".agents", ".codex", ".aws", ".ssh"].flatMap((name) => {
+      ...(options.allowWrites ? PROTECTED_WRITE_PATHS.flatMap((name) => {
         const protectedPath = `${workspace}/${name}`;
-        if (!existsSync(protectedPath)) return [];
-        if (lstatSync(protectedPath).isSymbolicLink()) throw new Error(`Protected path is a symlink; refusing write-enabled Docker shell: ${name}`);
-        if (name === ".git" && lstatSync(protectedPath).isFile()) throw new Error("Write-enabled Docker shell cannot safely protect a .git pointer file; use --shell-backend native on macOS or disable shell writes.");
+        if (!existsSync(protectedPath)) {
+          return ["--tmpfs", `/workspace/${name}:ro,nosuid,nodev,size=1m`];
+        }
+        const entry = lstatSync(protectedPath);
+        if (entry.isSymbolicLink()) throw new Error(`Protected path is a symlink; refusing write-enabled Docker shell: ${name}`);
+        if (name === ".git" && entry.isFile()) throw new Error("Write-enabled Docker shell cannot safely protect a .git pointer file; use --shell-backend native on macOS or disable shell writes.");
         return ["--mount", `type=bind,source=${protectedPath},target=/workspace/${name},readonly`];
       }) : []),
       "--workdir", "/workspace",
