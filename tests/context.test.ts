@@ -244,42 +244,45 @@ describe("ContextManager", () => {
     await expect(manager.build([user("active".repeat(2_000))])).rejects.toThrow(/no safely removable history/);
   });
 
-  it("can compact history when the split lands immediately after the active user", async () => {
+  it("compacts older history when the split lands immediately after the active user", async () => {
     const client = summarisingClient('{"summary":"older history"}');
     const manager = new ContextManager({
       contextWindow: 900,
       reserveTokens: 100,
-      keepRecentTokens: 400,
+      keepRecentTokens: 150,
       compactor: new Compactor(client),
     });
 
     const messages: Message[] = [
-      user("old".repeat(500)),
-      user("older".repeat(500)),
-      user("active".repeat(350)),
+      user("old".repeat(1400)),
+      user("older".repeat(1400)),
+      user("active".repeat(200)),
       assistantWithCall("read_file", "src/a.ts", "call-1"),
-      toolResult("call-1", "read_file", "result".repeat(1200)),
+      toolResult("call-1", "read_file", "result".repeat(400)),
     ];
 
     const context = await manager.build(messages);
 
     expect(context.compacted).toBe(true);
+    expect(context.compaction?.splitIndex).toBe(3);
+    expect(context.compaction?.anchorIndex).toBe(2);
     expect(context.messages[0]).toEqual(messages[2]);
     expect(context.messages[1]?.content).toContain("older history");
-    expect(context.messages.at(-1)).toEqual(messages[4]);
+    expect(context.messages[2]).toEqual(messages[3]);
+    expect(context.messages[3]).toEqual(messages[4]);
   });
 
-  it("allows a split immediately after the active user to compact older history", async () => {
+  it("shrinks the retained tail when fixed request context consumes the budget", async () => {
     const client = summarisingClient('{"summary":"old history"}');
     const manager = new ContextManager({
-      contextWindow: 900,
+      contextWindow: 1_000,
       reserveTokens: 100,
       keepRecentTokens: 400,
       compactor: new Compactor(client),
     });
 
     const messages: Message[] = [
-      user("x".repeat(200)),
+      user("x".repeat(2_000)),
       user("a".repeat(700)),
       user("older"),
       { role: "assistant", content: "b".repeat(700), toolCalls: [] },
@@ -291,10 +294,28 @@ describe("ContextManager", () => {
     });
 
     expect(context.compacted).toBe(true);
-    expect(context.messages.some((message) => message.content === "continue")).toBe(true);
+    expect(context.messages.at(-1)).toEqual(messages[4]);
     expect(context.messages.some((message) => message.content.includes("old history"))).toBe(true);
-    expect(context.estimatedTokens).toBeLessThanOrEqual(800);
+    expect(context.estimatedTokens).toBeLessThanOrEqual(900);
     expect(client.calls).toBe(2);
+  });
+
+  it("does not split an active tool exchange when the exchange cannot fit", async () => {
+    const client = summarisingClient('{"summary":"should not run"}');
+    const manager = new ContextManager({
+      contextWindow: 2_000,
+      reserveTokens: 400,
+      keepRecentTokens: 200,
+      compactor: new Compactor(client),
+    });
+    const messages: Message[] = [
+      user("please read a.ts"),
+      assistantWithCall("read_file", "a.ts", "1"),
+      toolResult("1", "read_file", "x".repeat(20_000)),
+    ];
+
+    await expect(manager.build(messages)).rejects.toThrow(/no safely removable history/);
+    expect(client.calls).toBe(0);
   });
 
   it("reports what it dropped", async () => {
