@@ -2,6 +2,17 @@ import { ReadFileTool } from "./read-file.js";
 import { ListFilesTool } from "./list-files.js";
 import { SearchTextTool } from "./search-text.js";
 import type { Tool } from "./tool.js";
+import { UpdatePlanTool } from "./update-plan.js";
+
+/** Exact built-in classes approved to execute while Plan Mode is active. */
+export function isPlanModeTool(tool: Tool | undefined): boolean {
+  return tool !== undefined && (
+    tool.constructor === ReadFileTool ||
+    tool.constructor === ListFilesTool ||
+    tool.constructor === SearchTextTool ||
+    tool.constructor === UpdatePlanTool
+  );
+}
 
 /**
  * Keep the concurrency cap small. A model may request dozens of repo-wide

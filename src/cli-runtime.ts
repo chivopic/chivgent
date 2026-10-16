@@ -33,6 +33,8 @@ interface LocalSessionConfig {
     readonly compaction?: AppliedCompaction;
     readonly promptCount?: number;
     readonly usage?: UsageTotal;
+    readonly title?: string;
+    readonly planMode?: boolean;
     readonly resumed: boolean;
   };
   readonly store?: SessionStore;
@@ -92,6 +94,8 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
     ...(options.compaction && restored.compaction !== undefined ? { compaction: restored.compaction } : {}),
     ...(restored.promptCount === undefined ? {} : { promptCount: restored.promptCount }),
     ...(restored.usage === undefined ? {} : { usage: restored.usage }),
+    ...(restored.title === undefined ? {} : { title: restored.title }),
+    planMode: restored.planMode ?? false,
     ...(store === undefined ? {} : { store }),
   });
 }

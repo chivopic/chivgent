@@ -33,6 +33,8 @@ export interface LiveRegion {
   stop(): void;
   /** Drops the diff baseline and repaints, for a resize. */
   resized(): void;
+  /** Clears run state when the active conversation changes. */
+  reset(): void;
   /** Yield terminal ownership while a modal approval reads input. */
   pause(): void;
   /** Restore the live region without discarding accumulated progress. */
@@ -168,6 +170,12 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
       if (state.run === undefined || paused) return;
       painter.invalidate(options.width(), options.height?.());
       paint();
+    },
+
+    reset: (): void => {
+      stopClock();
+      painter.clear();
+      state = EMPTY_STATE;
     },
   };
 }

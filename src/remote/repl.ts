@@ -15,6 +15,12 @@ const HELP = `Commands:
   /help      Show this help
   /session   Show the served session's id, workspace and capabilities
   /tools     List the tools the server offers
+  /compact   Unavailable for a remote connection
+  /plan      Unavailable for a remote connection
+  /new       Unavailable for a remote connection
+  /resume    Unavailable for a remote connection
+  /rename    Unavailable for a remote connection
+  /status    Unavailable for a remote connection
   /exit      Leave this client (the server keeps running)
 
 Anything else is sent to the server. Ctrl+C interrupts a running answer; at the prompt it detaches.
@@ -90,6 +96,8 @@ export async function runRemoteRepl(
         );
       } else if (command === "/tools") {
         write(`${options.remote.toolNames.map((name) => `  ${name}`).join("\n")}\n`);
+      } else if (["/compact", "/plan", "/new", "/resume", "/rename", "/status"].includes(command ?? "")) {
+        write(`${command} is unavailable over a remote connection. The command was not sent to the server.\n`);
       } else {
         write(`Unknown command: ${trimmed}. Try /help.\n`);
       }

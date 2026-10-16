@@ -14,6 +14,7 @@ import { terminalWidth } from "./tui/live.js";
 import { formatDiffPage, mostRecentSuccessfulPatch } from "./tui/diff.js";
 import type { LiveRegion } from "./tui/live.js";
 import type { ShellApprovalGate } from "./shell/approval.js";
+import { HeuristicTokenEstimator } from "./context/token-estimator.js";
 
 export const REPL_PROMPT = "› ";
 
@@ -26,6 +27,11 @@ export type SlashCommandOutcome =
   | { readonly kind: "provider"; readonly argument: string }
   | { readonly kind: "model"; readonly argument: string }
   | { readonly kind: "endpoint"; readonly argument: string }
+  | { readonly kind: "compact" }
+  | { readonly kind: "rename"; readonly title: string }
+  | { readonly kind: "plan"; readonly enabled: boolean }
+  | { readonly kind: "new-session"; readonly title?: string }
+  | { readonly kind: "resume-session"; readonly id?: string }
   /** An extension command matched; the REPL runs it, since it may be async. */
   | {
       readonly kind: "extension";
@@ -44,6 +50,16 @@ export interface SlashCommandContext {
   readonly providers?: ProviderControl;
   readonly width?: number;
   readonly color?: boolean;
+  readonly compactionEnabled?: boolean;
+  readonly providerName?: string;
+  readonly modelName?: string;
+  readonly permissions?: readonly string[];
+  readonly sessionOptions?: {
+    readonly list?: () => Promise<readonly { readonly id: string; readonly title?: string }[]>;
+    readonly create?: (title?: string) => Promise<AgentSession>;
+    readonly resume?: (id: string) => Promise<AgentSession | undefined>;
+  };
+  readonly sessionFileForSession?: (session: AgentSession) => string | undefined;
 }
 
 export interface ProviderSelection {
@@ -77,6 +93,12 @@ export interface SignIn {
 export const BUILT_IN_COMMANDS = [
   "help",
   "session",
+  "status",
+  "compact",
+  "plan",
+  "new",
+  "resume",
+  "rename",
   "tools",
   "diff",
   "compose",
@@ -95,6 +117,12 @@ export const BUILT_IN_COMMANDS = [
 const HELP = `Commands:
   /help      Show this help
   /session   Show the current session id, workspace, and size
+  /status    Show live session, model, permissions, plan state, and usage
+  /compact   Summarise older history for the model; keeps the full transcript
+  /plan [on|off]  Toggle restricted read-only Plan Mode
+  /new [title]    Save this session and start a fresh session
+  /resume [id]    Switch to a saved session in this workspace
+  /rename TITLE  Set the current session title
   /tools     List the tools available to the model
   /diff [N]  Review the latest successful apply_patch, page N
   /compose   Write a multi-line prompt (/send to submit, /cancel to discard)
@@ -146,6 +174,50 @@ export function handleSlashCommand(
 
     case "/session":
       context.write(describeSession(context));
+      return "handled";
+
+    case "/status":
+      context.write(describeStatus(context));
+      return "handled";
+
+    case "/compact":
+      return { kind: "compact" };
+
+    case "/rename": {
+      const title = trimmed.slice("/rename".length).trim();
+      if (!title || title.length > 120 || /[\x00-\x1f\x7f]/.test(title)) {
+        context.write("Usage: /rename <title> (1–120 characters, no control characters)\n");
+        return "handled";
+      }
+      return { kind: "rename", title };
+    }
+
+    case "/plan": {
+      const argument = trimmed.slice("/plan".length).trim().toLowerCase();
+      if (argument && argument !== "on" && argument !== "off") {
+        context.write("Usage: /plan [on|off]\n");
+      } else {
+        const enabled = argument === "on" ? true : argument === "off" ? false : !context.session.planMode;
+        return { kind: "plan", enabled };
+      }
+      return "handled";
+    }
+
+    case "/new":
+      if (context.sessionOptions?.create === undefined) context.write("/new is unavailable in this session.\n");
+      else {
+        const title = trimmed.slice("/new".length).trim();
+        if (title.length > 120 || /[\x00-\x1f\x7f]/.test(title)) {
+          context.write("Usage: /new [title] (title must be at most 120 characters, without control characters)\n");
+          return "handled";
+        }
+        return { kind: "new-session", ...(title ? { title } : {}) };
+      }
+      return "handled";
+
+    case "/resume":
+      if (context.sessionOptions?.resume === undefined) context.write("/resume is unavailable in this session.\n");
+      else return { kind: "resume-session", ...(trimmed.slice("/resume".length).trim() ? { id: trimmed.slice("/resume".length).trim() } : {}) };
       return "handled";
 
     case "/tools":
@@ -279,9 +351,30 @@ function describeSession(context: SlashCommandContext): string {
     `messages:  ${context.session.messages.length}`,
     ...describeUsage(context),
   ];
-  if (context.sessionFile !== undefined) {
-    lines.push(`log:       ${context.sessionFile}`);
+  const sessionFile = context.sessionFileForSession?.(context.session) ?? context.sessionFile;
+  if (sessionFile !== undefined) {
+    lines.push(`log:       ${sessionFile}`);
   }
+  return `${lines.join("\n")}\n`;
+}
+
+function describeStatus(context: SlashCommandContext): string {
+  const usage = describeUsage(context);
+  let contextEstimate = "unavailable";
+  try { contextEstimate = `approximately ${new HeuristicTokenEstimator().estimateMessages(context.session.messages)} tokens (transcript only; excludes system prompt and tool schemas)`; }
+  catch { /* inaccessible estimates are reported explicitly */ }
+  const lines = [
+    `provider:  ${context.providers?.provider ?? context.providerName ?? "unavailable"}`,
+    `model:     ${context.providers === undefined ? context.modelName ?? "unavailable" : context.providers.model ?? "unavailable"}`,
+    `cwd:       ${context.session.cwd}`,
+    `session:   ${context.session.id}${context.session.title ? ` · ${context.session.title}` : ""}`,
+    `plan:      ${context.session.planMode ? "on (writes and Shell blocked for this session)" : "off"}`,
+    `file write grant: ${context.permissions === undefined ? "unavailable" : context.permissions.includes("file-write") ? "enabled" : "disabled"}`,
+    `Shell grant:      ${context.permissions === undefined ? "unavailable" : context.permissions.includes("shell") ? "enabled" : "disabled"}`,
+    `network grant:    ${context.permissions === undefined ? "unavailable" : !context.permissions.includes("shell") ? "unavailable (Shell disabled)" : context.permissions.includes("network") ? "enabled" : "disabled"}`,
+    ...usage,
+    `context:   ${contextEstimate}`,
+  ];
   return `${lines.join("\n")}\n`;
 }
 
@@ -302,6 +395,12 @@ export interface ReplOptions {
   readonly extensionCommands?: readonly RegisteredCommand[];
   readonly signIn?: SignIn;
   readonly providers?: ProviderControl;
+  readonly sessionOptions?: SlashCommandContext["sessionOptions"];
+  readonly compactionEnabled?: boolean;
+  readonly providerName?: string;
+  readonly modelName?: string;
+  readonly permissions?: readonly string[];
+  readonly sessionFileForSession?: SlashCommandContext["sessionFileForSession"];
 }
 
 /**
@@ -370,6 +469,7 @@ async function runSignIn(
  * its transcript and log; at an idle prompt it closes the REPL.
  */
 export async function runRepl(options: ReplOptions): Promise<number> {
+  let activeSession = options.session;
   const write = (text: string): void => {
     options.stderr.write(text);
   };
@@ -633,8 +733,8 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     let resolveDraft!: (draft: string | undefined) => void;
     const pending = new Promise<string | undefined>(resolve => { resolveDraft = resolve; });
     const output = options.output as typeof options.output & { columns?: number; rows?: number };
-    const recent = options.session.messages
-      .filter((message): message is Extract<(typeof options.session.messages)[number], { role: "user" }> => message.role === "user")
+    const recent = activeSession.messages
+      .filter((message): message is Extract<(typeof activeSession.messages)[number], { role: "user" }> => message.role === "user")
       .map(message => message.content)
       .filter(message => message.length > 0)
       .slice(-100);
@@ -667,7 +767,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
 
   /** Read-only patch viewer, safe and separate from the model's tool calls. */
   const inspectPatch = async (override?: string, label?: string): Promise<void> => {
-    const patch = override ?? mostRecentSuccessfulPatch(options.session.messages);
+    const patch = override ?? mostRecentSuccessfulPatch(activeSession.messages);
     if (patch === undefined) {
       write("No successfully applied patch found in this session.\n");
       return;
@@ -708,7 +808,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     }
     const mode: GitDiffMode = line.endsWith("--staged") ? "staged" : "working";
     // Explicit user confirmation before starting any local Git process.
-    const root = terminalText(options.session.cwd);
+    const root = terminalText(activeSession.cwd);
     write(`\nRead-only local Git diff (${mode}) in:\n${root}\nNo network, hooks, external diff or file writes. Approve once? [y/N]\n`);
     tuiInput.acceptLine();
     tuiInput.setApprovalMode(true);
@@ -727,7 +827,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       return;
     }
     try {
-      const diff = await (options.gitDiffReader ?? readLiveGitDiff)(options.session.cwd, mode);
+      const diff = await (options.gitDiffReader ?? readLiveGitDiff)(activeSession.cwd, mode);
       if (diff.trim().length === 0) {
         write(`No ${mode} tracked Git changes found.\n`);
         return;
@@ -796,18 +896,24 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         line = draft;
       }
       const outcome = fromComposer || fromEditor ? "not-a-command" : handleSlashCommand(line, {
-        session: options.session,
+        session: activeSession,
         write,
         width: terminalWidth({ columns: (options.output as typeof options.output & { columns?: number }).columns }),
         color: options.tui === true && process.env.NO_COLOR === undefined && process.env.TERM !== "dumb",
         ...(options.sessionFile === undefined
           ? {}
           : { sessionFile: options.sessionFile }),
+        ...(options.sessionFileForSession === undefined ? {} : { sessionFileForSession: options.sessionFileForSession }),
         ...(options.extensionCommands === undefined
           ? {}
           : { extensionCommands: options.extensionCommands }),
         ...(options.signIn === undefined ? {} : { signIn: options.signIn }),
         ...(options.providers === undefined ? {} : { providers: options.providers }),
+        ...(options.compactionEnabled === undefined ? {} : { compactionEnabled: options.compactionEnabled }),
+        ...(options.providerName === undefined ? {} : { providerName: options.providerName }),
+        ...(options.modelName === undefined ? {} : { modelName: options.modelName }),
+        ...(options.permissions === undefined ? {} : { permissions: options.permissions }),
+        ...(options.sessionOptions === undefined ? {} : { sessionOptions: options.sessionOptions }),
       });
       if (outcome === "exit") {
         break;
@@ -849,12 +955,69 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         showPrompt();
         continue;
       }
-      if (typeof outcome === "object") {
+      if (typeof outcome === "object" && outcome.kind === "compact") {
+        if (options.compactionEnabled === false) write("Manual compaction is unavailable because --no-compaction is active.\n");
+        else {
+          controller = new AbortController();
+          tuiInput?.setBusy(true);
+          write("Compacting older conversation history… Ctrl+C cancels.\n");
+          try {
+            const compacted = await activeSession.compact(controller.signal);
+            write(compacted ? "Compaction checkpoint saved. Full transcript retained.\n" : "Nothing new to compact; existing checkpoint retained.\n");
+          } catch (error: unknown) {
+            write(`Compaction failed: ${error instanceof Error ? error.message : String(error)}\n`);
+          } finally { controller = undefined; tuiInput?.setBusy(false); }
+        }
+        showPrompt();
+        continue;
+      }
+      if (typeof outcome === "object" && outcome.kind === "rename") {
+        try { await activeSession.rename(outcome.title); write(`Session renamed: ${activeSession.title}\n`); }
+        catch (error: unknown) { write(`Rename failed: ${error instanceof Error ? error.message : String(error)}\n`); }
+        showPrompt();
+        continue;
+      }
+      if (typeof outcome === "object" && outcome.kind === "plan") {
+        try {
+          await activeSession.setPlanMode(outcome.enabled);
+          write(`Plan Mode ${activeSession.planMode ? "on" : "off"}. ${activeSession.planMode ? "Only built-in read tools and update_plan may execute." : "Session capabilities restored."}\n`);
+        } catch (error: unknown) { write(`Could not change Plan Mode: ${error instanceof Error ? error.message : String(error)}\n`); }
+        showPrompt();
+        continue;
+      }
+      if (typeof outcome === "object" && outcome.kind === "new-session") {
+        try {
+          const next = await options.sessionOptions?.create?.(outcome.title);
+          if (next === undefined) throw new Error("Session creation is unavailable.");
+          activeSession = next;
+          write(`Started session ${next.id}${next.title ? ` · ${next.title}` : ""}. Previous session saved.\n`);
+        } catch (error: unknown) { write(`Could not start a new session: ${error instanceof Error ? error.message : String(error)}\n`); }
+        showPrompt();
+        continue;
+      }
+      if (typeof outcome === "object" && outcome.kind === "resume-session") {
+        try {
+          let id = outcome.id;
+          if (!id) {
+            const items = await options.sessionOptions?.list?.();
+            if (!items?.length) throw new Error("No saved sessions in this workspace.");
+            write(`Saved sessions in ${activeSession.cwd}:\n${items.map(item => `  ${item.id}${item.title ? ` · ${item.title}` : ""}`).join("\n")}\nUse /resume ID to switch.\n`);
+          } else {
+            const next = await options.sessionOptions?.resume?.(id);
+            if (next === undefined) throw new Error(`Unknown session in this workspace: ${id}`);
+            activeSession = next;
+            write(`Resumed session ${next.id}${next.title ? ` · ${next.title}` : ""}.\n`);
+          }
+        } catch (error: unknown) { write(`Could not resume session: ${error instanceof Error ? error.message : String(error)}\n`); }
+        showPrompt();
+        continue;
+      }
+      if (typeof outcome === "object" && outcome.kind === "extension") {
         // An extension command runs here rather than inside the parser so it may
         // be async, and so a throwing command cannot take the REPL down.
         try {
           await outcome.command.run({
-            session: options.session,
+            session: activeSession,
             write,
             argument: outcome.argument,
           });
@@ -882,7 +1045,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       tuiInput?.setBusy(true);
       try {
         const signal = controller.signal;
-        const prompt = () => options.session.prompt(line, { signal });
+        const prompt = () => activeSession.prompt(line, { signal });
         if (options.tui) await withoutEcho(readline, prompt);
         else await prompt();
       } catch (error: unknown) {
