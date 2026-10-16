@@ -10,6 +10,7 @@ import {
 import {
   ContextManager,
   findSplitIndex,
+  type AppliedCompaction,
 } from "../src/context/context-manager.js";
 import type { LLMClient, LLMResponse } from "../src/llm.js";
 import { Agent } from "../src/agent.js";
