@@ -1,5 +1,11 @@
 # Shell safety and approval
 
+New sessions can choose a permission mode with `--permission-mode ask-first|workspace|unrestricted`, then inspect or change it with `/permissions` and view it with `/status`. The selection is process-local and is never restored from a saved session; resuming a session does not restore a previously broader mode.
+
+`ask-first` asks before every file change and shell command. `workspace` automatically allows workspace file changes and shell commands within the sandbox, with network disabled. A shell request that needs host file access must explicitly set `scope: "host"` and give a justification; the approval describes broad host file and network access and applies to that command only. Declining, cancellation, or unavailable interactive approval prevents execution. `unrestricted` is an explicit opt-in that runs shell commands automatically with broad host file access and network, within the OS sandbox; direct file tools remain workspace-bound.
+
+`--permission-mode` cannot be combined with legacy capability switches such as `--allow-writes` or `--allow-shell`. Existing legacy behavior remains available when no permission mode is selected.
+
 `--allow-shell` exposes a command runner, but commands still require approval.
 Interactive runs ask before every command; headless and socket-server runs deny
 commands unless `--approve-all-shell` was explicitly supplied.
@@ -24,10 +30,16 @@ Native mode uses `/usr/bin/sandbox-exec` to apply an OS-enforced profile and
 launches `/bin/bash` without startup files. It keeps the host toolchain
 available, uses a fresh temporary home for each command, and passes only a
 small non-secret environment (PATH, locale and terminal settings). Provider
-keys and proxy variables are not passed through. The profile permits reads
-from the host, so commands can inspect files your account can read and can
-print their contents to the model. This is write/network containment, not
-confidentiality isolation. macOS Seatbelt behavior depends on OS policy support;
+keys and proxy variables are not passed through. The profile starts with broad
+read permission, then denies sensitive roots including user home directories,
+`/Users`, `/Volumes`, `/Applications`, and temporary/private data paths before
+allowing back the workspace and selected system/toolchain roots. This
+deny-then-allow policy is a practical boundary, not a complete filesystem
+allowlist; system paths explicitly reopened remain readable. Workspace `.aws`,
+`.ssh`, `.codex`, and selected root `.env` filenames (`.env`, `.env.local`,
+`.env.development`, `.env.test`, `.env.production`, and `.env.staging`) remain
+denied, including through symlinks. Host scope removes workspace read/write boundaries for one command
+but still retains protected OS write paths. macOS Seatbelt behavior depends on OS policy support;
 an unavailable sandbox executable or failed sandbox launch is an error.
 The private home is deleted after each command, so package caches and shell
 configuration do not persist between commands.
@@ -51,6 +63,9 @@ access they receive. Use disposable workspaces for untrusted projects and do
 not expose sensitive files to shell-readable paths.
 
 ```bash
+chivgent --permission-mode ask-first "Review this project"
+chivgent --permission-mode workspace "Run tests and fix the failure"
+chivgent --permission-mode unrestricted "Work across the host and use network"
 chivgent --allow-shell                         # interactive; approve each command
 chivgent --allow-shell --approve-all-shell "Run tests" # headless; pre-approve every command
 chivgent --allow-shell --allow-writes --shell-network --approve-all-shell "Install dependencies"

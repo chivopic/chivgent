@@ -79,6 +79,15 @@ describe("CLI options", () => {
     });
   });
 
+  it("accepts selectable permission modes and documents them in help", () => {
+    expect(parseCliArgs(["--permission-mode", "workspace", "Question"], {})).toMatchObject({ permissionMode: "workspace" });
+    expect(helpText()).toContain("--permission-mode MODE  ask-first, workspace, or unrestricted");
+  });
+
+  it("rejects permission modes for served sessions without an interactive approval channel", () => {
+    expect(() => parseCliArgs(["--serve", "--permission-mode", "workspace"], {})).toThrow(/--serve/);
+  });
+
   it("accepts runtime overrides", () => {
     expect(
       parseCliArgs(["--no-stream", "--quiet", "--max-turns", "3", "Q"], {}),

@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { createLocalShellOperations, safeShellEnvironment } from "./local.js";
 import type { ShellConfig } from "./config.js";
@@ -10,12 +10,14 @@ import { ShellUnavailableError } from "./types.js";
 export interface NativeShellOptions {
   readonly allowWrites?: boolean;
   readonly allowNetwork?: boolean;
+  /** Explicitly requested one-command host access; Seatbelt remains active. */
+  readonly allowHostAccess?: boolean;
   readonly sandboxExecutable?: string;
   readonly temporaryDirectory?: string;
   readonly protectedPaths?: readonly string[];
 }
 
-/** Build a fail-closed macOS Seatbelt invocation. Host files remain readable. */
+/** Build a fail-closed macOS Seatbelt profile. Reads from user homes and shared temp are denied. */
 export function nativeShellConfig(cwd: string, options: NativeShellOptions = {}): ShellConfig {
   if (process.platform !== "darwin" && options.sandboxExecutable === undefined) {
     throw new ShellUnavailableError("The native Seatbelt shell backend is supported only on macOS.");
@@ -26,10 +28,35 @@ export function nativeShellConfig(cwd: string, options: NativeShellOptions = {})
   }
   const temp = realpathSync(options.temporaryDirectory);
   const quote = (value: string): string => JSON.stringify(value);
+  const home = realpathSync(homedir());
+  const sharedTemp = realpathSync(tmpdir());
+  const deniedReadRoots = [
+    "/Users", "/Volumes", "/Applications", "/private/var",
+    "/private/tmp", "/tmp", "/Network", "/cores", "/opt", "/Library",
+  ].filter((candidate) => existsSync(candidate));
+  const toolchainPaths = [
+    "/System", "/usr", "/bin", "/sbin", "/Library/Developer",
+    "/Library/Frameworks", "/opt/homebrew", "/usr/local", "/private/etc",
+    "/private/var/db", "/dev",
+  ].filter((candidate) => existsSync(candidate));
   const rules = [
-    "(version 1)", "(deny default)", "(allow process-exec)", "(allow process-fork)", "(allow file-read*)",
+    "(version 1)", "(deny default)", "(allow process-exec)", "(allow process-fork)",
+    ...(options.allowHostAccess ? ["(allow file-read*)"] : [
+    // Start with read access, then deny user data, shared temp and non-toolchain
+    // roots before reopening only the workspace, command temp, and runtime paths.
+    // macOS Seatbelt aborts on positive read subpaths alone under deny default.
+    "(allow file-read*)",
+    `(deny file-read* (subpath ${quote(home)}))`,
+    `(deny file-read* (subpath ${quote(sharedTemp)}))`,
+    ...deniedReadRoots.map((candidate) => `(deny file-read* (subpath ${quote(candidate)}))`),
+    ...toolchainPaths.map((candidate) => `(allow file-read* (subpath ${quote(candidate)}))`),
+    `(allow file-read* (subpath ${quote("/private/var/db")}))`,
+    `(allow file-read* (subpath ${quote(workspace)}))`,
+    `(allow file-read* (subpath ${quote(temp)}))`,
+    ...[".aws", ".ssh", ".codex", ".env", ".env.local", ".env.development", ".env.test", ".env.production", ".env.staging"].map((name) => `(deny file-read* (subpath ${quote(path.join(workspace, name))}))`),
+    ]),
     "(allow file-write* (subpath \"/dev/null\"))",
-    ...(options.allowWrites ? [`(allow file-write* (subpath ${quote(workspace)}))`] : [`(deny file-write* (subpath ${quote(workspace)}))`]),
+    ...(options.allowHostAccess ? ["(allow file-write*)"] : options.allowWrites ? [`(allow file-write* (subpath ${quote(workspace)}))`] : [`(deny file-write* (subpath ${quote(workspace)}))`]),
     ...[".git", ".agents", ".codex", ".aws", ".ssh", ...(options.protectedPaths ?? [])].map((name) => `(deny file-write* (subpath ${quote(path.isAbsolute(name) ? name : `${workspace}/${name}`)}))`),
     `(allow file-write* (subpath ${quote(temp)}))`,
     ...(options.allowNetwork ? ["(allow network*)"] : []),
@@ -44,7 +71,7 @@ export function createNativeShellOperations(options: NativeShellOptions = {}): S
     throw new ShellUnavailableError("Native shell backend requires an explicit sandbox executable path.");
   }
   return {
-    backend: `native (Seatbelt, network ${options.allowNetwork ? "enabled" : "denied"})`,
+    backend: `native (Seatbelt${options.allowHostAccess ? ", host file access" : ", workspace file access"}, network ${options.allowNetwork ? "enabled" : "denied"})`,
     async exec(command: string, cwd: string, execOptions: ShellExecOptions) {
       const deniedPaths = [".git", ".agents", ".codex", ".aws", ".ssh"];
       for (const name of deniedPaths) {

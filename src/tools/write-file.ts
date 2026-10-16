@@ -47,6 +47,7 @@ export class WriteFileTool implements Tool {
       const result = await context.workspace.writeTextFile(
         argumentsObject.path,
         argumentsObject.contents,
+        context.signal,
       );
       return {
         content: `${result.created ? "Created" : "Replaced"} ${result.path} (${result.totalLines} lines, ${result.bytesWritten} bytes).`,

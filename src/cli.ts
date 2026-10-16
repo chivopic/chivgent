@@ -22,6 +22,7 @@ import {
 import { killTrackedChildren } from "./shell/process.js";
 import { killTrackedDockerContainers } from "./shell/docker.js";
 import { ShellApprovalGate } from "./shell/approval.js";
+import { PermissionPolicy } from "./permissions.js";
 import { decideTrust } from "./extensions/decide-trust.js";
 import { discoverExtensions } from "./extensions/discover.js";
 import { loadExtensions } from "./extensions/loader.js";
@@ -252,18 +253,21 @@ async function main(argv: readonly string[]): Promise<number> {
     return 1;
   }
 
-  if (options.allowShell) {
+  const permissionPolicy = options.permissionMode === undefined ? undefined : new PermissionPolicy(options.permissionMode);
+  if (options.allowShell || permissionPolicy !== undefined) {
     installShellCleanup();
   }
-  const shellApproval = options.allowShell
+  const shellApproval = options.allowShell || permissionPolicy !== undefined
     ? new ShellApprovalGate(options.approveAllShell)
     : undefined;
+  permissionPolicy?.setApproval((action, signal, context) => shellApproval?.approve(action, signal, context) ?? Promise.resolve(false));
 
   const session = createLocalSession({
     options,
     cwd,
     llm,
     ...(shellApproval === undefined ? {} : { shellApproval }),
+    ...(permissionPolicy === undefined ? {} : { permissionPolicy }),
     ...(registry === undefined ? {} : { extensions: registry }),
     restored,
     ...(store === undefined ? {} : { store }),
@@ -328,6 +332,7 @@ async function main(argv: readonly string[]): Promise<number> {
       return await runRepl({
         session,
         ...(shellApproval === undefined ? {} : { shellApproval }),
+        ...(permissionPolicy === undefined ? {} : { permissionPolicy }),
         ...(liveRegion === undefined ? {} : { liveRegion }),
         signIn: providerControl,
         providers: providerControl,
@@ -335,6 +340,7 @@ async function main(argv: readonly string[]): Promise<number> {
         providerName: options.provider,
         modelName: options.model,
         permissions: [
+          ...(options.permissionMode === undefined ? [] : [`mode:${options.permissionMode}`]),
           ...(options.allowWrites ? ["file-write"] : []),
           ...(options.allowShell ? ["shell"] : []),
           ...(options.shellNetwork ? ["network"] : []),
@@ -343,7 +349,7 @@ async function main(argv: readonly string[]): Promise<number> {
           list: async () => (await store.list({ cwd })).map(({ id, title }) => ({ id, ...(title === undefined ? {} : { title }) })),
           create: async (title) => {
             await store.flush?.();
-            const next = createLocalSession({ options, cwd, llm, ...(shellApproval === undefined ? {} : { shellApproval }), ...(registry === undefined ? {} : { extensions: registry }), restored: { resumed: false }, store });
+            const next = createLocalSession({ options, cwd, llm, ...(shellApproval === undefined ? {} : { shellApproval }), ...(permissionPolicy === undefined ? {} : { permissionPolicy }), ...(registry === undefined ? {} : { extensions: registry }), restored: { resumed: false }, store });
             await next.initialize();
             if (title) await next.rename(title);
             attachSession(next);
@@ -353,7 +359,7 @@ async function main(argv: readonly string[]): Promise<number> {
             await store.flush?.();
             const record = await store.read(id);
             if (record === undefined || record.header.cwd !== cwd) return undefined;
-            const next = createLocalSession({ options, cwd, llm, ...(shellApproval === undefined ? {} : { shellApproval }), ...(registry === undefined ? {} : { extensions: registry }), restored: { id, messages: record.messages, compaction: record.compaction, promptCount: record.promptCount, usage: record.usage, title: record.title, planMode: record.planMode, resumed: true }, store });
+            const next = createLocalSession({ options, cwd, llm, ...(shellApproval === undefined ? {} : { shellApproval }), ...(permissionPolicy === undefined ? {} : { permissionPolicy }), ...(registry === undefined ? {} : { extensions: registry }), restored: { id, messages: record.messages, compaction: record.compaction, promptCount: record.promptCount, usage: record.usage, title: record.title, planMode: record.planMode, resumed: true }, store });
             attachSession(next);
             return next;
           },

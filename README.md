@@ -15,9 +15,9 @@
 
 chivgent is a terminal coding agent you can read end to end. It asks an LLM
 (OpenAI, DeepSeek, or any OpenAI-compatible endpoint) about the project in your
-current directory, using read-only file tools by default. Writes and shell
-commands are separate opt-in flags, and shell commands run in a macOS Seatbelt
-sandbox or an offline Docker container with per-command approval.
+current directory, using read-only file tools by default. Choose a permission
+mode per process: ask before actions, automatically work within the sandboxed
+workspace, or explicitly allow broad shell access.
 
 It is small on purpose: a TypeScript CLI with four runtime dependencies, where
 the agent loop, Provider adapters, context compaction, and tool sandboxing are
@@ -69,6 +69,7 @@ runs the TUI against a stub Provider and does not touch the workspace.
 | Discover, search, and read files | default | The current directory only. `.gitignore`d, generated, and credential paths (such as `.env`, `id_rsa`) are skipped. |
 | Create and edit files (`write_file`, `edit_file`, `apply_patch`) | `--allow-writes` | Files inside the workspace. Edits are exact-match and atomic. |
 | Run shell commands (`bash`) | `--allow-shell` | macOS Seatbelt sandbox by default on macOS; Docker on other supported platforms. Network and workspace writes are denied unless explicitly enabled. Each command needs a `y` to run. |
+| Select permission behavior | `--permission-mode ask-first\|workspace\|unrestricted` | `/permissions` inspects or changes it; `/status` shows the active mode. |
 | Load project extensions | trust prompt on first run | Anything you can: extensions are in-process JavaScript. |
 
 Costs: chivgent calls the Provider you choose with your key, so you pay that
@@ -101,17 +102,17 @@ calling. Changing only the base URL does not guarantee full compatibility; see
 ```bash
 chivgent                                   # interactive session
 chivgent --continue                        # resume the latest session here
+chivgent --permission-mode workspace "Run tests and fix failures"
+chivgent --permission-mode ask-first "Review this project"
 chivgent --allow-writes "Rename sayHi to greet everywhere"
 chivgent --allow-shell --approve-all-shell "Run the tests and explain the failure"
 chivgent --json "List the CLI flags" > run.jsonl   # machine-readable events
 ```
 
 Select a shell backend with `--shell-backend auto|native|docker` (`auto` uses
-Seatbelt on macOS and Docker elsewhere). Shell writes require `--allow-writes`;
-network access requires `--shell-network`. The native macOS sandbox uses host
-tools and withholds provider credentials, while shell commands can still read
-files available to your user. It constrains writes and network access; it is not
-confidentiality isolation. See [shell safety](docs/shell-sandbox.md).
+Seatbelt on macOS and Docker elsewhere). Permission modes are described in
+[shell safety](docs/shell-sandbox.md). They are not saved in transcripts, so a
+resumed session uses the mode selected at startup.
 
 - **Interactive sessions** keep history across prompts and are saved as JSON
   lines under `~/.chivgent/sessions` (`--no-session` to skip). `/help` lists
@@ -144,16 +145,20 @@ confidentiality isolation. See [shell safety](docs/shell-sandbox.md).
 ## Security model
 
 chivgent states its boundaries rather than pretending to enforce fine-grained
-ones. Capabilities are coarse, session-level switches.
+ones. Permission modes are process-local policies, with one-command approval
+for explicitly requested host shell access.
 
 - File tools reject paths outside the workspace, including `..` traversal and
   symlink escapes, and deny common credential and private-key paths. Tool output
   is capped at 64 KiB.
-- `--allow-shell` runs each command in a macOS Seatbelt sandbox or fresh Docker
+- Legacy `--allow-shell` runs each command in a macOS Seatbelt sandbox or fresh Docker
   container and asks before each one. Writes and network are denied by default;
   use `--allow-writes` and `--shell-network` to opt in. Headless and served
-  sessions deny commands unless you also pass `--approve-all-shell`. Native
-  commands can read files available to your user. Details:
+  sessions deny commands unless you also pass `--approve-all-shell`. The
+  `workspace` mode automatically runs sandboxed workspace commands, while a
+  requested host scope requires one-command approval. Native mode uses a
+  deny-then-allow path policy that preserves selected system/toolchain reads;
+  it is not a complete filesystem allowlist. Details:
   [shell sandbox](docs/shell-sandbox.md).
 - Writes and trusted extensions are **not** inside the container. Trusting a
   project's extensions means letting its authors run code as you, so chivgent
