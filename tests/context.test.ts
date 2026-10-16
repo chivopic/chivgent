@@ -10,6 +10,7 @@ import {
 import {
   ContextManager,
   findSplitIndex,
+  type AppliedCompaction,
 } from "../src/context/context-manager.js";
 import type { LLMClient, LLMResponse } from "../src/llm.js";
 import { Agent } from "../src/agent.js";
@@ -103,9 +104,54 @@ describe("findSplitIndex", () => {
 
     expect(findSplitIndex(messages, estimator, 10_000)).toBe(0);
   });
+
+  it("advances past ordinary trailing messages when choosing a recent tail", () => {
+    const messages: Message[] = [user("old"), user("active")];
+
+    expect(findSplitIndex(messages, estimator, 1)).toBe(1);
+  });
 });
 
 describe("ContextManager", () => {
+  it("keeps the active prompt and complete recent tool pairs while compacting a long run", async () => {
+    const client = summarisingClient('{"summary":"earlier tool work"}');
+    const manager = new ContextManager({
+      contextWindow: 450, reserveTokens: 100, keepRecentTokens: 150,
+      compactor: new Compactor(client),
+    });
+    const messages: Message[] = [user("Keep this instruction")];
+    for (let index = 0; index < 12; index += 1) {
+      messages.push(assistantWithCall("read_file", `f${index}.ts`, `call-${index}`));
+      messages.push({ role: "tool", toolCallId: `call-${index}`, toolName: "read_file", content: `result ${index} ${"x".repeat(120)}`, isError: false });
+    }
+    const first = await manager.build(messages);
+    expect(first.compacted).toBe(true);
+    expect(first.compaction?.anchorIndex).toBe(0);
+    expect(first.messages[0]).toEqual(user("Keep this instruction"));
+    expect(first.messages[1]?.content).toContain("earlier tool work");
+    for (let index = 2; index < first.messages.length; index += 1) {
+      const current = first.messages[index];
+      if (current?.role === "assistant" && current.toolCalls.length > 0) {
+        expect(first.messages[index + 1]).toMatchObject({ role: "tool", toolCallId: current.toolCalls[0]?.id });
+      }
+      if (current?.role === "tool") {
+        expect(first.messages[index - 1]).toMatchObject({ role: "assistant" });
+      }
+    }
+    for (let index = 12; index < 24; index += 1) {
+      messages.push(assistantWithCall("read_file", `f${index}.ts`, `call-${index}`));
+      messages.push({ role: "tool", toolCallId: `call-${index}`, toolName: "read_file", content: `result ${index} ${"y".repeat(120)}`, isError: false });
+    }
+    const second = await manager.build(messages, { previous: first.compaction });
+    expect(second.compacted).toBe(true);
+    expect(second.compaction?.anchorIndex).toBe(0);
+    expect(second.messages[0]).toEqual(user("Keep this instruction"));
+    const resumed = await manager.build(messages, { previous: second.compaction });
+    expect(resumed.compacted).toBe(false);
+    expect(resumed.messages).toEqual(second.messages);
+    expect(client.calls).toBe(2);
+  });
+
   const long = "x".repeat(8_000);
 
   it("passes the transcript through when it fits", async () => {
@@ -121,14 +167,11 @@ describe("ContextManager", () => {
     expect(context.messages).toEqual(messages);
   });
 
-  it("passes through when no compactor is configured", async () => {
+  it("reports an over-budget request when compaction is disabled", async () => {
     const manager = new ContextManager({ contextWindow: 1_000 });
     const messages = [user(long), user(long)];
 
-    const context = await manager.build(messages);
-
-    expect(context.compacted).toBe(false);
-    expect(context.messages).toHaveLength(2);
+    await expect(manager.build(messages)).rejects.toThrow(/compaction is disabled/);
   });
 
   it("replaces old history with a summary once over budget", async () => {
@@ -185,11 +228,170 @@ describe("ContextManager", () => {
     const messages = [user("x".repeat(1_000)), user("recent")];
     const without = await manager.build(messages);
     expect(without.compacted).toBe(false);
-    const withGuidance = await manager.build(messages, {
-      prefixMessages: [user("guide".repeat(2_000))],
-    });
+    const guidance = [user("guide".repeat(2_000))];
+    await expect(manager.build(messages, { prefixMessages: guidance })).rejects.toThrow(/System prompt and tool definitions/);
+    const roomy = new ContextManager({ contextWindow: 3_200, reserveTokens: 500, keepRecentTokens: 250, compactor: new Compactor(client) });
+    const withGuidance = await roomy.build(messages, { prefixMessages: guidance });
     expect(withGuidance.compacted).toBe(true);
     expect(client.calls).toBe(1);
+  });
+
+  it("counts large tool schemas as fixed request context", async () => {
+    const manager = new ContextManager({ contextWindow: 1_000, reserveTokens: 200 });
+    await expect(manager.build([user("short")], {
+      fixedMessages: [user(JSON.stringify({ inputSchema: "x".repeat(5_000) }))],
+    })).rejects.toThrow(/System prompt and tool definitions/);
+  });
+
+  it("never summarizes the active user request to handle an oversized context", async () => {
+    const manager = new ContextManager({
+      contextWindow: 1_000, reserveTokens: 200,
+      compactor: new Compactor(summarisingClient('{"summary":"must not replace active prompt"}')),
+    });
+    await expect(manager.build([user("active".repeat(2_000))])).rejects.toThrow(/no safely removable history/);
+  });
+
+  it("compacts older history when the split lands immediately after the active user", async () => {
+    const client = summarisingClient('{"summary":"older history"}');
+    const manager = new ContextManager({
+      contextWindow: 1_000,
+      reserveTokens: 100,
+      keepRecentTokens: 200,
+      compactor: new Compactor(client),
+    });
+
+    const messages: Message[] = [
+      user("o".repeat(2_400)),
+      { role: "assistant", content: "old answer", toolCalls: [] },
+      user("n".repeat(600)),
+      assistantWithCall("read_file", "a", "c"),
+      toolResult("c", "read_file", "r".repeat(600)),
+    ];
+
+    const context = await manager.build(messages);
+
+    expect(context.compacted).toBe(true);
+    expect(context.compaction?.splitIndex).toBe(3);
+    expect(context.compaction?.anchorIndex).toBe(2);
+    expect(context.messages[0]).toEqual(messages[2]);
+    expect(context.messages[1]?.content).toContain("older history");
+    expect(context.messages[2]).toEqual(messages[3]);
+    expect(context.messages[3]).toEqual(messages[4]);
+  });
+
+  it("shrinks the retained tail when fixed request context consumes the budget", async () => {
+    const client = summarisingClient('{"summary":"old history"}');
+    const manager = new ContextManager({
+      contextWindow: 1_000,
+      reserveTokens: 100,
+      keepRecentTokens: 400,
+      compactor: new Compactor(client),
+    });
+
+    const messages: Message[] = [
+      user("x".repeat(2_000)),
+      { role: "assistant", content: "a".repeat(700), toolCalls: [] },
+      user("older"),
+      { role: "assistant", content: "b".repeat(700), toolCalls: [] },
+      user("continue"),
+    ];
+
+    const context = await manager.build(messages, {
+      fixedMessages: [user("schema".repeat(400))],
+    });
+
+    expect(context.compacted).toBe(true);
+    expect(context.messages.at(-1)).toEqual(messages[4]);
+    expect(context.messages.some((message) => message.content.includes("old history"))).toBe(true);
+    expect(context.estimatedTokens).toBeLessThanOrEqual(900);
+    expect(client.calls).toBe(2);
+  });
+
+  it("does not split an active tool exchange when the exchange cannot fit", async () => {
+    const client = summarisingClient('{"summary":"should not run"}');
+    const manager = new ContextManager({
+      contextWindow: 2_000,
+      reserveTokens: 400,
+      keepRecentTokens: 200,
+      compactor: new Compactor(client),
+    });
+    const messages: Message[] = [
+      user("please read a.ts"),
+      assistantWithCall("read_file", "a.ts", "1"),
+      toolResult("1", "read_file", "x".repeat(20_000)),
+    ];
+
+    await expect(manager.build(messages)).rejects.toThrow(/no safely removable history/);
+    expect(client.calls).toBe(0);
+  });
+
+  it("carries an existing summary forward across an anchor-only cut", async () => {
+    const client = summarisingClient('{"summary":"new summary"}');
+    const manager = new ContextManager({
+      contextWindow: 130,
+      reserveTokens: 10,
+      keepRecentTokens: 35,
+      compactor: new Compactor(client),
+    });
+    const messages: Message[] = [
+      user("old transcript"),
+      user("active"),
+      { role: "assistant", content: "suffix".repeat(8), toolCalls: [] },
+    ];
+    const previous: AppliedCompaction = {
+      state: {
+        summary: "old history ".repeat(24),
+        readFiles: [],
+        modifiedFiles: [],
+        decisions: [],
+        pendingTasks: [],
+      },
+      splitIndex: 2,
+      anchorIndex: 1,
+    };
+
+    const context = await manager.build(messages, {
+      previous,
+      fixedMessages: [user("f".repeat(268))],
+    });
+
+    expect(context.compacted).toBe(true);
+    expect(context.messages[0]).toEqual(messages[1]);
+    expect(context.messages[1]?.content).toContain("new summary");
+    expect(context.messages[1]?.content).not.toContain("old history");
+    expect(context.messages[2]).toEqual(messages[2]);
+    expect(context.compaction?.splitIndex).toBe(2);
+    expect(context.compaction?.anchorIndex).toBe(1);
+  });
+
+  it("preserves first summary usage when the bounded retry fails", async () => {
+    const failedRetry = new Error("retry unavailable");
+    let calls = 0;
+    const compactor = {
+      async compact() {
+        calls += 1;
+        if (calls === 2) throw failedRetry;
+        return {
+          state: { summary: "first summary", readFiles: [], modifiedFiles: [], decisions: [], pendingTasks: [] },
+          usage: { inputTokens: 20, outputTokens: 4, totalTokens: 24 },
+        };
+      },
+    } as unknown as Compactor;
+    const manager = new ContextManager({
+      contextWindow: 1_000, reserveTokens: 100, keepRecentTokens: 400, compactor,
+    });
+    const messages: Message[] = [
+      user("x".repeat(2_000)), user("a".repeat(700)), user("older"),
+      { role: "assistant", content: "b".repeat(700), toolCalls: [] }, user("continue"),
+    ];
+
+    await expect(manager.build(messages, { fixedMessages: [user("schema".repeat(400))] }))
+      .rejects.toMatchObject({
+        name: "ContextBudgetError",
+        compactionUsage: { inputTokens: 20, outputTokens: 4, totalTokens: 24 },
+        compactionUsageComplete: false,
+      });
+    expect(calls).toBe(2);
   });
 
   it("reports what it dropped", async () => {
@@ -377,9 +579,7 @@ describe("Agent with a ContextManager", () => {
     },
   };
 
-  it("drops the Provider continuation when it compacts", async () => {
-    // Turn 1 reads a large file and hands back a continuation; turn 2 must not
-    // reuse it, or the Provider would replay the history just summarised.
+  it("reports when an active tool exchange cannot fit without splitting it", async () => {
     const llm = new FakeLLMClient([
       assistant("", [{ id: "1", name: "read_file", arguments: { path: "a.ts" } }], {
         provider: "fake",
@@ -401,14 +601,8 @@ describe("Agent with a ContextManager", () => {
       contextManager: manager,
     });
 
-    const result = await agent.run("please read a.ts");
-
-    expect(result.status).toBe("completed");
-    expect(llm.requests).toHaveLength(2);
-    expect(llm.requests[0]).not.toHaveProperty("continuation");
-    // The second request compacted, so the continuation from turn 1 is gone.
-    expect(llm.requests[1]).not.toHaveProperty("continuation");
-    expect(llm.requests[1]?.messages[0]?.content).toContain("read a.ts");
+    await expect(agent.run("please read a.ts")).rejects.toThrow(/no safely removable history/);
+    expect(llm.requests).toHaveLength(1);
   });
 
   it("keeps the continuation when nothing needed compacting", async () => {
@@ -432,11 +626,34 @@ describe("Agent with a ContextManager", () => {
     expect(llm.requests[1]).toHaveProperty("continuation");
   });
 
+  it("drops Provider continuation when a long tool run compacts its history", async () => {
+    const mediumWorkspace: Workspace = {
+      ...workspace,
+      async readTextFile() {
+        return { content: "m".repeat(1_600), startLine: 1, endLine: 1, totalLines: 1, truncated: false };
+      },
+    };
+    const responses = Array.from({ length: 7 }, (_, index) => assistant(
+      "", [{ id: `medium-${index}`, name: "read_file", arguments: { path: "a.ts" } }], { provider: "fake" },
+    ));
+    responses.push(assistant("done"));
+    const llm = new FakeLLMClient(responses);
+    const agent = new Agent({
+      systemPrompt: "test", maxTurns: 10, llm, tools: [new ReadFileTool()], workspace: mediumWorkspace,
+      streaming: false,
+      contextManager: new ContextManager({
+        contextWindow: 2_000, reserveTokens: 400, keepRecentTokens: 200,
+        compactor: new Compactor(summarisingClient('{"summary":"earlier reads"}')),
+      }),
+    });
+    const result = await agent.run("read a.ts repeatedly");
+    expect(result.status).toBe("completed");
+    expect(llm.requests.some((request, index) => index > 0 && !("continuation" in request))).toBe(true);
+    expect(llm.requests.some((request, index) => index > 0 && "continuation" in request)).toBe(true);
+  });
+
   it("preserves the full transcript even after compacting", async () => {
-    const llm = new FakeLLMClient([
-      assistant("", [{ id: "1", name: "read_file", arguments: { path: "a.ts" } }]),
-      assistant("done"),
-    ]);
+    const llm = new FakeLLMClient([assistant("done")]);
     const manager = new ContextManager({
       contextWindow: 2_000,
       reserveTokens: 400,
@@ -452,14 +669,17 @@ describe("Agent with a ContextManager", () => {
       contextManager: manager,
     });
 
-    const result = await agent.run("please read a.ts");
+    const result = await agent.run("please continue", {
+      history: [user("x".repeat(20_000)), { role: "assistant", content: "old", toolCalls: [] }],
+    });
 
     // The session keeps what happened; only the request was shortened.
     expect(result.messages.map((message) => message.role)).toEqual([
       "user",
       "assistant",
-      "tool",
+      "user",
       "assistant",
     ]);
+    expect(result.messages[0]?.content).toBe("x".repeat(20_000));
   });
 });

@@ -6,6 +6,8 @@ import { ScopedProjectInstructions } from "./context/project-instructions.js";
 import type { ExtensionRegistry } from "./extensions/registry.js";
 import type { LLMClient } from "./llm.js";
 import type { Message } from "./messages.js";
+import type { AppliedCompaction } from "./context/context-manager.js";
+import type { UsageTotal } from "./providers/usage.js";
 import { SHELL_SYSTEM_PROMPT, SYSTEM_PROMPT, WRITE_SYSTEM_PROMPT } from "./prompts.js";
 import { AgentSession } from "./session.js";
 import { ShellApprovalGate } from "./shell/approval.js";
@@ -28,6 +30,9 @@ interface LocalSessionConfig {
   readonly restored: {
     readonly id?: string;
     readonly messages?: readonly Message[];
+    readonly compaction?: AppliedCompaction;
+    readonly promptCount?: number;
+    readonly usage?: UsageTotal;
     readonly resumed: boolean;
   };
   readonly store?: SessionStore;
@@ -81,6 +86,9 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
     resumed: restored.resumed,
     ...(restored.id === undefined ? {} : { id: restored.id }),
     ...(restored.messages === undefined ? {} : { messages: restored.messages }),
+    ...(options.compaction && restored.compaction !== undefined ? { compaction: restored.compaction } : {}),
+    ...(restored.promptCount === undefined ? {} : { promptCount: restored.promptCount }),
+    ...(restored.usage === undefined ? {} : { usage: restored.usage }),
     ...(store === undefined ? {} : { store }),
   });
 }

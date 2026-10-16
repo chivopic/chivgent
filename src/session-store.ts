@@ -3,6 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import type { AgentEvent } from "./events.js";
 import type { Message } from "./messages.js";
+import type { AppliedCompaction } from "./context/context-manager.js";
+import type { UsageTotal } from "./providers/usage.js";
+import { addUsage } from "./providers/usage.js";
+import { transcriptHash } from "./transcript-hash.js";
 
 export const SESSION_FORMAT_VERSION = 1;
 
@@ -33,6 +37,9 @@ export interface SessionTranscript {
   readonly header: SessionHeader;
   readonly messages: readonly Message[];
   readonly prompts: readonly string[];
+  readonly compaction?: AppliedCompaction;
+  readonly usage?: UsageTotal;
+  readonly promptCount: number;
 }
 
 export interface SessionSummary {
@@ -194,6 +201,9 @@ export function parseTranscript(
   let header: SessionHeader | undefined;
   let messages: readonly Message[] = [];
   const prompts: string[] = [];
+  let compaction: AppliedCompaction | undefined;
+  let usage: UsageTotal | undefined;
+  let promptCount = 0;
 
   for (const line of contents.split("\n")) {
     if (line.trim().length === 0) {
@@ -213,6 +223,10 @@ export function parseTranscript(
       header = toHeader(record);
     } else if (record.type === "session_clear") {
       messages = [];
+      compaction = undefined;
+      usage = undefined;
+      prompts.length = 0;
+      promptCount = 0;
     } else if (record.type === "agent_start" && "prompt" in record) {
       if (typeof record.prompt === "string") {
         prompts.push(record.prompt);
@@ -220,11 +234,54 @@ export function parseTranscript(
     } else if (record.type === "agent_end" && "messages" in record) {
       if (Array.isArray(record.messages)) {
         messages = record.messages as readonly Message[];
+        const end = record as { compaction?: unknown; sessionUsage?: unknown; compactionTranscriptHash?: unknown; usage?: unknown };
+        compaction = end.compactionTranscriptHash === transcriptHash(messages)
+          ? validCompaction(end.compaction, messages) : undefined;
+        const savedUsage = validUsage(end.sessionUsage);
+        if (savedUsage !== undefined) {
+          usage = savedUsage;
+        } else {
+          const runUsage = validUsage(end.usage);
+          usage = addUsage(usage, runUsage?.usage);
+          if (runUsage?.complete === false) usage = { usage: usage.usage, complete: false };
+        }
+        if (Number.isSafeInteger((record as { promptCount?: unknown }).promptCount)) {
+          promptCount = (record as unknown as { promptCount: number }).promptCount;
+        }
       }
     }
   }
 
-  return header === undefined ? undefined : { header, messages, prompts };
+  promptCount = Math.max(promptCount, prompts.length);
+  return header === undefined ? undefined : { header, messages, prompts, promptCount, ...(compaction === undefined ? {} : { compaction }), ...(usage === undefined ? {} : { usage }) };
+}
+
+function validCompaction(value: unknown, messages: readonly Message[]): AppliedCompaction | undefined {
+  if (typeof value !== "object" || value === null || !("splitIndex" in value) || !("state" in value)) return undefined;
+  const c = value as { splitIndex: unknown; anchorIndex?: unknown; state: unknown };
+  if (!Number.isSafeInteger(c.splitIndex) || (c.splitIndex as number) < 0 || (c.splitIndex as number) > messages.length || messages[c.splitIndex as number]?.role === "tool") return undefined;
+  if ("anchorIndex" in value && c.anchorIndex !== undefined) {
+    if (!Number.isSafeInteger(c.anchorIndex) || (c.anchorIndex as number) < 0 ||
+      (c.anchorIndex as number) >= (c.splitIndex as number) || messages[c.anchorIndex as number]?.role !== "user") return undefined;
+  }
+  if (typeof c.state !== "object" || c.state === null || !("summary" in c.state) ||
+    typeof c.state.summary !== "string" || !("readFiles" in c.state) || !Array.isArray(c.state.readFiles) ||
+    !("modifiedFiles" in c.state) || !Array.isArray(c.state.modifiedFiles) || !("decisions" in c.state) ||
+    !Array.isArray(c.state.decisions) || !("pendingTasks" in c.state) || !Array.isArray(c.state.pendingTasks) ||
+    ![...c.state.readFiles, ...c.state.modifiedFiles, ...c.state.decisions, ...c.state.pendingTasks].every((item) => typeof item === "string")) return undefined;
+  return value as AppliedCompaction;
+}
+
+function validUsage(value: unknown): UsageTotal | undefined {
+  if (typeof value !== "object" || value === null || !("usage" in value) || !("complete" in value)) return undefined;
+  const u = value as UsageTotal;
+  const validToken = (n: unknown): boolean => typeof n === "number" && Number.isFinite(n) && n >= 0;
+  if (typeof u.usage !== "object" || u.usage === null ||
+    !validToken(u.usage.inputTokens) || !validToken(u.usage.outputTokens) || !validToken(u.usage.totalTokens) ||
+    (u.usage.cachedInputTokens !== undefined && !validToken(u.usage.cachedInputTokens)) ||
+    (u.usage.reasoningTokens !== undefined && !validToken(u.usage.reasoningTokens)) ||
+    typeof u.complete !== "boolean") return undefined;
+  return u;
 }
 
 function toHeader(record: object): SessionHeader | undefined {

@@ -1,6 +1,8 @@
 import { Agent, type AgentOptions, type AgentRunResult } from "./agent.js";
 import type { AgentEvent, AgentEventListener } from "./events.js";
 import type { Message } from "./messages.js";
+import type { AppliedCompaction } from "./context/context-manager.js";
+import { transcriptHash } from "./transcript-hash.js";
 import { addUsage, type UsageTotal } from "./providers/usage.js";
 import {
   createSessionId,
@@ -18,6 +20,9 @@ export interface AgentSessionOptions {
   readonly store?: SessionStore;
   /** Messages restored from an earlier session. */
   readonly messages?: readonly Message[];
+  readonly compaction?: AppliedCompaction;
+  readonly promptCount?: number;
+  readonly usage?: UsageTotal;
   /** True when the session log already has a header line. */
   readonly resumed?: boolean;
   readonly now?: () => Date;
@@ -42,6 +47,7 @@ export class AgentSession {
   private promptCount = 0;
   private promptInProgress = false;
   private usageTotal: UsageTotal | undefined;
+  private compaction: AppliedCompaction | undefined;
 
   constructor(options: AgentSessionOptions) {
     this.id = options.id ?? createSessionId();
@@ -49,6 +55,9 @@ export class AgentSession {
     this.store = options.store;
     this.now = options.now ?? (() => new Date());
     this.transcript = structuredClone(options.messages ?? []);
+    this.compaction = options.compaction === undefined ? undefined : structuredClone(options.compaction);
+    this.promptCount = options.promptCount ?? 0;
+    this.usageTotal = options.usage === undefined ? undefined : structuredClone(options.usage);
     this.headerWritten = options.resumed ?? false;
     this.agent = new Agent({
       ...options.agent,
@@ -88,6 +97,9 @@ export class AgentSession {
       throw new Error("Cannot clear a session while a prompt is running.");
     }
     this.transcript = [];
+    this.compaction = undefined;
+    this.promptCount = 0;
+    this.usageTotal = undefined;
     this.record({ type: "session_clear" });
   }
 
@@ -106,6 +118,7 @@ export class AgentSession {
       try {
         return await this.agent.run(text, {
           history: this.transcript,
+          ...(this.compaction === undefined ? {} : { compaction: this.compaction }),
           ...(options.signal === undefined ? {} : { signal: options.signal }),
         });
       } finally {
@@ -129,10 +142,12 @@ export class AgentSession {
   }
 
   private dispatch(event: AgentEvent): void {
+    let persisted: AgentEvent = event;
     // agent_end is authoritative even for an error (where agent.run throws).
     // Keep in-memory state and the persisted event snapshot identical.
     if (event.type === "agent_end") {
       this.transcript = structuredClone(event.messages);
+      this.compaction = event.compaction === undefined ? undefined : structuredClone(event.compaction);
       this.usageTotal = addUsage(this.usageTotal, event.usage?.usage);
       if (event.usage?.complete === false) {
         this.usageTotal = {
@@ -140,6 +155,8 @@ export class AgentSession {
           complete: false,
         };
       }
+      persisted = { ...event, promptCount: this.promptCount, sessionUsage: this.usageTotal,
+        ...(this.compaction === undefined ? {} : { compactionTranscriptHash: transcriptHash(this.transcript) }) };
     }
 
     for (const listener of this.listeners) {
@@ -149,7 +166,7 @@ export class AgentSession {
         // A failing subscriber must not change the outcome of the run.
       }
     }
-    this.record(event);
+    this.record(persisted);
   }
 
   private record(event: SessionRecord): void {

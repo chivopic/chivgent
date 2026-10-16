@@ -40,4 +40,39 @@ describe("local CLI session setup", () => {
     expect(llm.requests[0]?.systemPrompt).toContain(WRITE_SYSTEM_PROMPT);
     expect(llm.requests[0]?.systemPrompt).not.toContain("You can also run shell commands");
   });
+
+  it("ignores restored compaction when --no-compaction is set", async () => {
+    const llm = new FakeLLMClient([assistant("Done")]);
+    const session = createLocalSession({
+      options: parseCliArgs(["--no-compaction"], {}),
+      cwd: "/workspace",
+      llm,
+      restored: {
+        resumed: true,
+        messages: [
+          { role: "user", content: "old user" },
+          { role: "assistant", content: "old assistant", toolCalls: [] },
+          { role: "user", content: "latest user" },
+        ],
+        compaction: {
+          splitIndex: 2,
+          state: {
+            summary: "summary",
+            decisions: [],
+            pendingTasks: [],
+            readFiles: [],
+            modifiedFiles: [],
+          },
+        },
+      },
+    });
+
+    await session.prompt("new user");
+    expect(llm.requests[0]?.messages).toEqual([
+      { role: "user", content: "old user" },
+      { role: "assistant", content: "old assistant", toolCalls: [] },
+      { role: "user", content: "latest user" },
+      { role: "user", content: "new user" },
+    ]);
+  });
 });

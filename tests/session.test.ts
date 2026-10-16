@@ -4,6 +4,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AgentEvent } from "../src/events.js";
 import { AgentSession } from "../src/session.js";
+import { ContextManager } from "../src/context/context-manager.js";
+import { Compactor } from "../src/context/compaction.js";
 import {
   createSessionId,
   defaultSessionHome,
@@ -73,6 +75,38 @@ async function temporaryHome(): Promise<string> {
 }
 
 describe("AgentSession", () => {
+  it("ignores malformed optional checkpoint usage without losing the transcript", () => {
+    const parsed = parseTranscript([
+      JSON.stringify({ type: "session", version: 1, id: "legacy", timestamp: "now", cwd: "/workspace" }),
+      JSON.stringify({ type: "agent_end", status: "completed", turnCount: 1, messages: [{ role: "user", content: "kept" }], usage: {}, sessionUsage: {} }),
+    ].join("\n"));
+    expect(parsed?.messages).toEqual([{ role: "user", content: "kept" }]);
+    expect(parsed?.usage).toEqual({ usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, complete: false });
+  });
+
+  it("rebuilds cumulative usage from older agent_end records", () => {
+    const header = { type: "session", version: 1, id: "legacy-usage", timestamp: "now", cwd: "/workspace" };
+    const end = (tokens: number) => ({
+      type: "agent_end", status: "completed", turnCount: 1, messages: [],
+      usage: { usage: { inputTokens: tokens, outputTokens: 1, totalTokens: tokens + 1 }, complete: true },
+    });
+    const parsed = parseTranscript([JSON.stringify(header), JSON.stringify(end(4)), JSON.stringify(end(7))].join("\n"));
+    expect(parsed?.usage).toEqual({
+      usage: { inputTokens: 11, outputTokens: 2, totalTokens: 13 }, complete: true,
+    });
+  });
+
+  it("preserves incomplete usage when rebuilding older records", () => {
+    const header = { type: "session", version: 1, id: "legacy-incomplete", timestamp: "now", cwd: "/workspace" };
+    const parsed = parseTranscript([JSON.stringify(header), JSON.stringify({
+      type: "agent_end", status: "completed", turnCount: 1, messages: [],
+      usage: { usage: { inputTokens: 4, outputTokens: 1, totalTokens: 5 }, complete: false },
+    })].join("\n"));
+    expect(parsed?.usage).toEqual({
+      usage: { inputTokens: 4, outputTokens: 1, totalTokens: 5 }, complete: false,
+    });
+  });
+
   it("carries the transcript into the next prompt", async () => {
     const llm = new FakeLLMClient([
       assistant("First answer."),
@@ -102,6 +136,8 @@ describe("AgentSession", () => {
 
     await session.prompt("First question");
     session.clear();
+    expect(session.turns).toBe(0);
+    expect(session.usage).toBeUndefined();
     await session.prompt("Second question");
 
     expect(session.id).toBe(id);
@@ -123,7 +159,7 @@ describe("AgentSession", () => {
     await store.flush();
 
     expect((await store.read("cleared-session"))?.messages).toEqual([]);
-    expect((await store.read("cleared-session"))?.prompts).toEqual(["Old question"]);
+    expect((await store.read("cleared-session"))?.prompts).toEqual([]);
 
     const resumed = createSession(new FakeLLMClient([assistant("Fresh answer.")]), {
       store,
@@ -222,6 +258,122 @@ describe("AgentSession", () => {
       .split("\n")
       .filter((line) => (JSON.parse(line) as { type: string }).type === "session");
     expect(headers).toHaveLength(1);
+  });
+
+  it("restores prompt count and cumulative usage across a process restart", async () => {
+    const store = new FileSessionStore(await temporaryHome());
+    const first = createSession(new FakeLLMClient([
+      { ...assistant("one"), usage: { inputTokens: 12, outputTokens: 3, totalTokens: 15 } },
+    ]), { store, id: "usage-restore" });
+    await first.prompt("first");
+    const saved = await store.read("usage-restore");
+    expect(saved?.promptCount).toBe(1);
+    expect(saved?.usage?.usage.totalTokens).toBe(15);
+
+    const resumed = createSession(new FakeLLMClient([
+      { ...assistant("two"), usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 } },
+    ]), {
+      store, id: "usage-restore", resumed: true,
+      messages: saved?.messages, promptCount: saved?.promptCount, usage: saved?.usage,
+    });
+    await resumed.prompt("second");
+    expect(resumed.turns).toBe(2);
+    expect(resumed.usage?.usage.totalTokens).toBe(27);
+    expect((await store.read("usage-restore"))?.promptCount).toBe(2);
+  });
+
+  it("persists a compaction checkpoint and reuses it after resume", async () => {
+    const store = new FileSessionStore(await temporaryHome());
+    const makeAgent = (llm: FakeLLMClient, compactLlm: FakeLLMClient) => ({
+      systemPrompt: "system", maxTurns: 2, llm,
+      tools: [tool("echo", { content: "echoed", isError: false })], workspace, streaming: false,
+      contextManager: new ContextManager({
+        contextWindow: 700, reserveTokens: 100, keepRecentTokens: 100,
+        compactor: new Compactor(compactLlm),
+      }),
+    });
+    const summary = () => new FakeLLMClient([assistant('{"summary":"Earlier requests","decisions":[],"pendingTasks":[]}')]);
+    const first = new AgentSession({
+      agent: makeAgent(new FakeLLMClient([assistant("a"), assistant("b"), assistant("c")]), summary()),
+      store, id: "checkpoint-resume", cwd: "/workspace",
+    });
+    await first.prompt("one".repeat(200));
+    await first.prompt("two".repeat(200));
+    await first.prompt("three".repeat(200));
+    const saved = await store.read("checkpoint-resume");
+    expect(saved?.compaction).toBeDefined();
+    expect(saved?.compaction?.splitIndex).toBeGreaterThan(0);
+    const lines = (await readFile(store.location("checkpoint-resume"), "utf8")).trim().split("\n");
+    const last = JSON.parse(lines.at(-1)!) as Record<string, unknown>;
+    last.compactionTranscriptHash = "stale";
+    lines[lines.length - 1] = JSON.stringify(last);
+    const damaged = parseTranscript(lines.join("\n"));
+    expect(damaged?.compaction).toBeUndefined();
+    expect(damaged?.messages).toEqual(saved?.messages);
+
+    const resumedLlm = new FakeLLMClient([assistant("d")]);
+    const resumed = new AgentSession({
+      agent: makeAgent(resumedLlm, summary()), store, id: "checkpoint-resume", cwd: "/workspace",
+      resumed: true, messages: saved?.messages, compaction: saved?.compaction,
+      promptCount: saved?.promptCount, usage: saved?.usage,
+    });
+    await resumed.prompt("four");
+    expect(resumedLlm.requests[0]?.messages[0]?.content).toContain("Earlier requests");
+    expect((await store.read("checkpoint-resume"))?.promptCount).toBe(4);
+  });
+
+  it("restores an anchored long-run checkpoint after multiple prompts and repeated compaction", async () => {
+    const store = new FileSessionStore(await temporaryHome());
+    const summaryClient = {
+      async complete() {
+        return assistant('{"summary":"prior tool work","decisions":[],"pendingTasks":[]}');
+      },
+    };
+    const contextManager = new ContextManager({
+      contextWindow: 700, reserveTokens: 120, keepRecentTokens: 100,
+      compactor: new Compactor(summaryClient),
+    });
+    const longTool: Tool = {
+      name: "echo",
+      description: "Return a recorded result",
+      inputSchema: { type: "object" },
+      async execute() { return { content: "tool-result ".repeat(45), isError: false }; },
+    };
+    const agentOptions = (llm: FakeLLMClient) => ({
+      systemPrompt: "system", maxTurns: 16, llm, tools: [longTool], workspace, streaming: false,
+      contextManager,
+    });
+    const first = new AgentSession({
+      agent: agentOptions(new FakeLLMClient([assistant("first answer")])),
+      store, id: "anchored-long-run", cwd: "/workspace",
+    });
+    await first.prompt("first prompt");
+
+    const toolResponses = Array.from({ length: 12 }, (_, index) => assistant("", [{
+      id: `long-${index}`, name: "echo", arguments: {},
+    }]));
+    const secondLlm = new FakeLLMClient([...toolResponses, assistant("second answer")]);
+    const running = new AgentSession({ agent: agentOptions(secondLlm), store, id: first.id, cwd: first.cwd, resumed: true,
+      messages: first.messages, promptCount: first.turns, usage: first.usage });
+    await running.prompt("second prompt; keep this instruction");
+    const saved = await store.read(first.id);
+    expect(saved?.compaction).toBeDefined();
+    expect(saved?.compaction?.anchorIndex).toBeGreaterThan(0);
+
+    const expected = await contextManager.build(
+      [...(saved?.messages ?? []), { role: "user", content: "third prompt" }],
+      { previous: saved?.compaction },
+    );
+    const resumedLlm = new FakeLLMClient([assistant("third answer")]);
+    const resumed = new AgentSession({
+      agent: agentOptions(resumedLlm), store, id: first.id, cwd: first.cwd, resumed: true,
+      messages: saved?.messages, compaction: saved?.compaction,
+      promptCount: saved?.promptCount, usage: saved?.usage,
+    });
+    await resumed.prompt("third prompt");
+    expect(resumedLlm.requests[0]?.messages).toEqual(expected.messages);
+    expect(resumedLlm.requests[0]?.messages.some((message) =>
+      message.role === "user" && message.content === "second prompt; keep this instruction")).toBe(true);
   });
 
   it("keeps the error-ending transcript in memory and on disk for the next prompt", async () => {

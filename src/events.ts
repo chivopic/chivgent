@@ -5,6 +5,7 @@ import type {
 } from "./messages.js";
 import type { Usage } from "./llm.js";
 import type { UsageTotal } from "./providers/usage.js";
+import type { AppliedCompaction } from "./context/context-manager.js";
 import type { PlanUpdate } from "./tools/update-plan.js";
 
 /**
@@ -129,6 +130,10 @@ export interface AgentEndEvent {
   /** The run's total, flagged incomplete when a turn reported nothing. */
   readonly usage?: UsageTotal;
   readonly error?: string;
+  readonly compaction?: AppliedCompaction;
+  readonly promptCount?: number;
+  readonly sessionUsage?: UsageTotal;
+  readonly compactionTranscriptHash?: string;
 }
 
 /**
