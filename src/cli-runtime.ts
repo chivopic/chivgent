@@ -86,7 +86,7 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
     resumed: restored.resumed,
     ...(restored.id === undefined ? {} : { id: restored.id }),
     ...(restored.messages === undefined ? {} : { messages: restored.messages }),
-    ...(restored.compaction === undefined ? {} : { compaction: restored.compaction }),
+    ...(options.compaction && restored.compaction !== undefined ? { compaction: restored.compaction } : {}),
     ...(restored.promptCount === undefined ? {} : { promptCount: restored.promptCount }),
     ...(restored.usage === undefined ? {} : { usage: restored.usage }),
     ...(store === undefined ? {} : { store }),
