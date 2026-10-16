@@ -318,6 +318,45 @@ describe("ContextManager", () => {
     expect(client.calls).toBe(0);
   });
 
+  it("carries an existing summary forward across an anchor-only cut", async () => {
+    const client = summarisingClient('{"summary":"new summary"}');
+    const manager = new ContextManager({
+      contextWindow: 120,
+      reserveTokens: 10,
+      keepRecentTokens: 35,
+      compactor: new Compactor(client),
+    });
+    const messages: Message[] = [
+      user("old transcript"),
+      user("active"),
+      { role: "assistant", content: "suffix".repeat(8), toolCalls: [] },
+    ];
+    const previous: AppliedCompaction = {
+      state: {
+        summary: "old history",
+        readFiles: [],
+        modifiedFiles: [],
+        decisions: [],
+        pendingTasks: [],
+      },
+      splitIndex: 2,
+      anchorIndex: 1,
+    };
+
+    const context = await manager.build(messages, {
+      previous,
+      fixedMessages: [user("f".repeat(268))],
+    });
+
+    expect(context.compacted).toBe(true);
+    expect(context.messages[0]).toEqual(messages[1]);
+    expect(context.messages[1]?.content).toContain("new summary");
+    expect(context.messages[1]?.content).not.toContain("old history");
+    expect(context.messages[2]).toEqual(messages[2]);
+    expect(context.compaction?.splitIndex).toBe(2);
+    expect(context.compaction?.anchorIndex).toBe(1);
+  });
+
   it("reports what it dropped", async () => {
     const events: number[] = [];
     const manager = new ContextManager({
