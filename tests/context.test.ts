@@ -244,6 +244,31 @@ describe("ContextManager", () => {
     await expect(manager.build([user("active".repeat(2_000))])).rejects.toThrow(/no safely removable history/);
   });
 
+  it("can compact history when the split lands immediately after the active user", async () => {
+    const client = summarisingClient('{"summary":"older history"}');
+    const manager = new ContextManager({
+      contextWindow: 900,
+      reserveTokens: 100,
+      keepRecentTokens: 400,
+      compactor: new Compactor(client),
+    });
+
+    const messages: Message[] = [
+      user("old".repeat(500)),
+      user("older".repeat(500)),
+      user("active".repeat(250)),
+      assistantWithCall("read_file", "src/a.ts", "call-1"),
+      toolResult("call-1", "read_file", "result".repeat(430)),
+    ];
+
+    const context = await manager.build(messages);
+
+    expect(context.compacted).toBe(true);
+    expect(context.messages[0]).toEqual(messages[2]);
+    expect(context.messages[1]?.content).toContain("older history");
+    expect(context.messages.at(-1)).toEqual(messages[4]);
+  });
+
   it("allows a split immediately after the active user to compact older history", async () => {
     const client = summarisingClient('{"summary":"old history"}');
     const manager = new ContextManager({
