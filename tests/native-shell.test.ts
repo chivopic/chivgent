@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
@@ -21,8 +22,11 @@ describe("native Seatbelt shell", () => {
     expect(readOnly.shell).toBe("/bin/echo");
     expect(readOnly.args.join(" ")).toContain(`(deny file-read* (subpath ${JSON.stringify(await realpath(homedir()))}))`);
     expect(readOnly.args.join(" ")).toContain(`(allow file-read* (subpath ${JSON.stringify(await realpath(root))}))`);
-    expect(readOnly.args.join(" ")).toContain('(deny file-read* (subpath "/Users"))');
-    expect(readOnly.args.join(" ")).toContain('(deny file-read* (subpath "/Volumes"))');
+    for (const rootPath of ["/Users", "/Volumes"]) {
+      const rule = `(deny file-read* (subpath ${JSON.stringify(rootPath)}))`;
+      if (existsSync(rootPath)) expect(readOnly.args.join(" ")).toContain(rule);
+      else expect(readOnly.args.join(" ")).not.toContain(rule);
+    }
     expect(readOnly.args.join(" ")).toContain("(deny file-write*");
     expect(readOnly.args.join(" ")).not.toContain("(allow network*)");
     expect(nativeShellConfig(root, { allowWrites: true, allowNetwork: true, temporaryDirectory: temp, sandboxExecutable: "/bin/echo" }).args.join(" ")).toContain("(allow network*)");
