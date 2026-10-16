@@ -138,24 +138,58 @@ export class ContextManager {
       throw new ContextBudgetError(`The request needs about ${estimatedTokens} tokens, exceeding the available context budget of ${this.budget}; compaction is disabled.`);
     }
 
-    const cut = findSplitIndex(effective, this.estimator, this.keepRecentTokens);
+    let cut = findSplitIndex(effective, this.estimator, this.keepRecentTokens);
     const latestUser = findLastUserIndex(effective, summaryIndex);
-    const anchored = latestUser >= 0 && cut > latestUser;
-    const headStart = anchored ? latestUser + 1 : 0;
+    let anchored = latestUser >= 0 && cut > latestUser;
+    // When the split lands immediately after the active user, that user is
+    // still a safe anchor and older history before it can be compacted.
+    const headStart = anchored ? latestUser : 0;
     if (cut <= headStart) {
       throw new ContextBudgetError(`The request needs about ${estimatedTokens} tokens, exceeding the available context budget of ${this.budget}; there is no safely removable history.`);
     }
 
-    const head = (anchored ? effective.slice(0, cut) : effective.slice(headStart, cut))
+    let head = (anchored ? effective.slice(0, cut) : effective.slice(headStart, cut))
       .filter((_message, index) => !anchored || index !== latestUser);
-    const tail = effective.slice(cut);
-    const { state, usage } = await this.compactor.compact(head, options.signal, previous?.state);
-    const compactedMessages = anchored
+    let tail = effective.slice(cut);
+    let { state, usage } = await this.compactor.compact(head, options.signal, previous?.state);
+    let compactedMessages = anchored
       ? [effective[latestUser]!, summaryMessage(state), ...tail]
       : [summaryMessage(state), ...tail];
-    const tokensAfter = this.estimator.estimateMessages(compactedMessages) + prefixTokens;
+    let tokensAfter = this.estimator.estimateMessages(compactedMessages) + prefixTokens;
+
+    // The configured recent-history target is only a starting point. Fixed
+    // request context can consume enough budget that the target is too large.
+    // Recompute the split once using the actual summary size, then summarise
+    // the additional dropped history so it is not silently lost.
     if (tokensAfter > this.budget) {
-      throw new ContextBudgetError(`The request still needs about ${tokensAfter} tokens after compaction, exceeding the available context budget of ${this.budget}. Reduce the prompt, tool schemas, or context window reserve.`, usage);
+      const summaryTokens = this.estimator.estimateMessage(summaryMessage(state));
+      const anchorTokens = anchored ? this.estimator.estimateMessage(effective[latestUser]!) : 0;
+      const tailBudget = this.budget - prefixTokens - summaryTokens - anchorTokens;
+      if (tailBudget < 0) {
+        throw new ContextBudgetError(`The request still needs about ${tokensAfter} tokens after compaction, exceeding the available context budget of ${this.budget}. Reduce the prompt, tool schemas, or context window reserve.`, usage);
+      }
+
+      const tighterCut = findSplitIndex(effective, this.estimator, tailBudget);
+      const nextCut = Math.max(cut, tighterCut);
+      if (nextCut === cut) {
+        throw new ContextBudgetError(`The request still needs about ${tokensAfter} tokens after compaction, exceeding the available context budget of ${this.budget}. Reduce the prompt, tool schemas, or context window reserve.`, usage);
+      }
+
+      cut = nextCut;
+      anchored = latestUser >= 0 && cut > latestUser;
+      head = (anchored ? effective.slice(0, cut) : effective.slice(headStart, cut))
+        .filter((_message, index) => !anchored || index !== latestUser);
+      tail = effective.slice(cut);
+      const second = await this.compactor.compact(head, options.signal, state);
+      state = second.state;
+      usage = mergeCompactionUsage(usage, second.usage);
+      compactedMessages = anchored
+        ? [effective[latestUser]!, summaryMessage(state), ...tail]
+        : [summaryMessage(state), ...tail];
+      tokensAfter = this.estimator.estimateMessages(compactedMessages) + prefixTokens;
+      if (tokensAfter > this.budget) {
+        throw new ContextBudgetError(`The request still needs about ${tokensAfter} tokens after compaction, exceeding the available context budget of ${this.budget}. Reduce the prompt, tool schemas, or context window reserve.`, usage);
+      }
     }
 
     // Map the cut back onto the full transcript, allowing for the summary
@@ -188,6 +222,25 @@ export class ContextManager {
 
 export class ContextBudgetError extends Error {
   constructor(message: string, readonly compactionUsage?: Usage) { super(message); this.name = "ContextBudgetError"; }
+}
+
+function mergeCompactionUsage(first: Usage | undefined, second: Usage | undefined): Usage | undefined {
+  if (first === undefined || second === undefined) {
+    // A partial usage report must remain visibly partial rather than pretending
+    // that every compaction call was accounted for.
+    return undefined;
+  }
+  return {
+    inputTokens: first.inputTokens + second.inputTokens,
+    outputTokens: first.outputTokens + second.outputTokens,
+    totalTokens: first.totalTokens + second.totalTokens,
+    ...((first.cachedInputTokens !== undefined || second.cachedInputTokens !== undefined)
+      ? { cachedInputTokens: (first.cachedInputTokens ?? 0) + (second.cachedInputTokens ?? 0) }
+      : {}),
+    ...((first.reasoningTokens !== undefined || second.reasoningTokens !== undefined)
+      ? { reasoningTokens: (first.reasoningTokens ?? 0) + (second.reasoningTokens ?? 0) }
+      : {}),
+  };
 }
 
 function findLastUserIndex(messages: readonly Message[], syntheticSummaryIndex: number): number {
