@@ -227,6 +227,34 @@ describe("an Agent run's total", () => {
     });
   });
 
+  it("marks compaction usage incomplete when a retry omits usage", async () => {
+    const summariser = new MeteredClient([
+      { ...assistant('{"summary":"first pass"}') },
+      { ...assistant('{"summary":"second pass"}'), usage: usage(50, 5) },
+    ]);
+    const manager = new ContextManager({
+      contextWindow: 1_000,
+      reserveTokens: 100,
+      keepRecentTokens: 400,
+      compactor: new Compactor(summariser),
+    });
+
+    const messages: Message[] = [
+      { role: "user", content: "x".repeat(2_000) },
+      { role: "user", content: "a".repeat(700) },
+      { role: "user", content: "older" },
+      { role: "assistant", content: "b".repeat(700), toolCalls: [] },
+      { role: "user", content: "continue" },
+    ];
+
+    const context = await manager.build(messages, {
+      fixedMessages: [{ role: "user", content: "schema".repeat(400) }],
+    });
+
+    expect(context.usage).toEqual(usage(50, 5));
+    expect(context.usageComplete).toBe(false);
+  });
+
   it("counts what compaction itself spent", async () => {
     // Compaction trades a call now against smaller inputs later; leaving its
     // cost out would make that trade impossible to judge.
