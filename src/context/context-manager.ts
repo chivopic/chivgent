@@ -300,28 +300,40 @@ export function findSplitIndex(
 ): number {
   let tokens = 0;
   let index = messages.length;
+
   while (index > 0) {
-    const message = messages[index - 1];
-    if (message === undefined) {
-      break;
-    }
-    const cost = estimator.estimateMessage(message);
+    const start = toolGroupStart(messages, index);
+    const cost = estimator.estimateMessages(messages.slice(start, index));
     if (tokens + cost > keepRecentTokens) {
       break;
     }
     tokens += cost;
-    index -= 1;
+    index = start;
   }
 
-  while (index < messages.length && messages[index]?.role === "tool") {
-    index += 1;
-  }
-
-  // Keep a real message after the summary for ordinary cuts.
+  // Keep at least one real message after the summary. If the final tool
+  // exchange is itself larger than the target, keep the whole exchange rather
+  // than splitting its assistant call from its result. The ContextManager can
+  // then reject it if the active exchange cannot fit at all.
   if (index >= messages.length) {
-    index = messages.length - 1;
-    while (index > 0 && messages[index]?.role === "tool") index -= 1;
+    index = toolGroupStart(messages, messages.length);
+    if (index <= 0) {
+      index = Math.max(0, messages.length - 1);
+    }
   }
 
   return index;
+}
+
+function toolGroupStart(messages: readonly Message[], endExclusive: number): number {
+  let start = endExclusive;
+  while (start > 0 && messages[start - 1]?.role === "tool") {
+    start -= 1;
+  }
+
+  const assistant = messages[start - 1];
+  if (assistant?.role === "assistant" && assistant.toolCalls.length > 0) {
+    return start - 1;
+  }
+  return start;
 }
