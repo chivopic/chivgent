@@ -172,9 +172,11 @@ export class ContextManager {
 
     let state: CompactionState;
     let usage: Usage | undefined;
+    let usageComplete = true;
     const first = await this.compactor.compact(head, options.signal, previous?.state);
     state = first.state;
     usage = first.usage;
+    usageComplete = first.usage !== undefined;
     let compactedMessages = anchored
       ? [effective[latestUser]!, summaryMessage(state), ...tail]
       : [summaryMessage(state), ...tail];
@@ -203,6 +205,7 @@ export class ContextManager {
       const second = await this.compactor.compact(head, options.signal, state);
       state = second.state;
       usage = mergeCompactionUsage(usage, second.usage);
+      usageComplete = usageComplete && second.usage !== undefined;
       compactedMessages = anchored
         ? [effective[latestUser]!, summaryMessage(state), ...tail]
         : [summaryMessage(state), ...tail];
@@ -238,7 +241,7 @@ export class ContextManager {
       estimatedTokens: tokensAfter,
       compaction: { state, splitIndex, ...(anchorIndex === undefined ? {} : { anchorIndex }) },
       ...(usage === undefined ? {} : { usage }),
-      usageComplete: usage !== undefined,
+      usageComplete,
     };
   }
 }
