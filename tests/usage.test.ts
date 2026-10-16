@@ -13,6 +13,7 @@ import { AgentSession } from "../src/session.js";
 import { handleSlashCommand } from "../src/repl.js";
 import { assistant, FakeLLMClient, readOnlyWorkspaceWrites } from "./fakes.js";
 import type { LLMClient, LLMRequest, LLMResponse, Usage } from "../src/llm.js";
+import type { Message } from "../src/messages.js";
 import type { AgentEvent } from "../src/events.js";
 import type { Workspace } from "../src/workspace.js";
 
