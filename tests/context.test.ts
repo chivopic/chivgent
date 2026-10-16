@@ -256,9 +256,9 @@ describe("ContextManager", () => {
     const messages: Message[] = [
       user("old".repeat(500)),
       user("older".repeat(500)),
-      user("active".repeat(250)),
+      user("active".repeat(350)),
       assistantWithCall("read_file", "src/a.ts", "call-1"),
-      toolResult("call-1", "read_file", "result".repeat(430)),
+      toolResult("call-1", "read_file", "result".repeat(1200)),
     ];
 
     const context = await manager.build(messages);
