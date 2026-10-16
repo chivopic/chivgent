@@ -244,6 +244,34 @@ describe("ContextManager", () => {
     await expect(manager.build([user("active".repeat(2_000))])).rejects.toThrow(/no safely removable history/);
   });
 
+  it("allows a split immediately after the active user to compact older history", async () => {
+    const client = summarisingClient('{"summary":"old history"}');
+    const manager = new ContextManager({
+      contextWindow: 900,
+      reserveTokens: 100,
+      keepRecentTokens: 400,
+      compactor: new Compactor(client),
+    });
+
+    const messages = [
+      user("x".repeat(200)),
+      user("a".repeat(700)),
+      user("older"),
+      assistant("b".repeat(700)),
+      user("continue"),
+    ];
+
+    const context = await manager.build(messages, {
+      fixedMessages: [user("schema".repeat(400))],
+    });
+
+    expect(context.compacted).toBe(true);
+    expect(context.messages.some((message) => message.content === "continue")).toBe(true);
+    expect(context.messages.some((message) => message.content.includes("old history"))).toBe(true);
+    expect(context.estimatedTokens).toBeLessThanOrEqual(800);
+    expect(client.calls).toBe(2);
+  });
+
   it("reports what it dropped", async () => {
     const events: number[] = [];
     const manager = new ContextManager({
