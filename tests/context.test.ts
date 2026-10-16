@@ -278,7 +278,7 @@ describe("ContextManager", () => {
       compactor: new Compactor(client),
     });
 
-    const messages = [
+    const messages: Message[] = [
       user("x".repeat(200)),
       user("a".repeat(700)),
       user("older"),
