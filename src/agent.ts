@@ -15,10 +15,7 @@ import { ToolExecutionError, type Tool, type ToolDefinition, type ToolOutput } f
 import { isParallelReadTool, MAX_PARALLEL_READS } from "./tools/parallel.js";
 import { UpdatePlanTool, type PlanUpdate } from "./tools/update-plan.js";
 import type { Workspace } from "./workspace.js";
-import type {
-  AppliedCompaction,
-  ContextManager,
-} from "./context/context-manager.js";
+import { ContextBudgetError, type AppliedCompaction, type ContextManager } from "./context/context-manager.js";
 import { INCOMPLETE_PROJECT_GUIDANCE, type ProjectInstructionsProvider } from "./context/project-instructions.js";
 
 export interface AgentOptions {
@@ -47,6 +44,7 @@ export interface AgentRunOptions {
    * given; a session owns its transcript and passes a snapshot in.
    */
   readonly history?: readonly Message[];
+  readonly compaction?: AppliedCompaction;
 }
 
 export type AgentRunResult =
@@ -57,12 +55,14 @@ export type AgentRunResult =
       readonly turnCount: number;
       /** What the run cost, when the Provider reported it. */
       readonly usage?: UsageTotal;
+      readonly compaction?: AppliedCompaction;
     }
   | {
       readonly status: "max_turns" | "aborted";
       readonly messages: readonly Message[];
       readonly turnCount: number;
       readonly usage?: UsageTotal;
+      readonly compaction?: AppliedCompaction;
     };
 
 interface RunState {
@@ -137,6 +137,7 @@ export class Agent {
     // without a corresponding tool result. Repair those pairs before sending
     // any new user message to a Provider.
     const history = structuredClone([...(options.history ?? [])]);
+    const originalHistory = JSON.stringify(history);
     closePendingToolCalls(history);
     const state: RunState = {
       messages: [
@@ -145,6 +146,8 @@ export class Agent {
       ],
       seenToolCallIds: new Set<string>(),
       turnCount: 0,
+      ...(options.compaction === undefined || JSON.stringify(history) !== originalHistory
+        ? {} : { compaction: structuredClone(options.compaction) }),
     };
     const signal = options.signal;
 
@@ -225,6 +228,7 @@ export class Agent {
           messages: snapshotMessages(state.messages),
           turnCount: state.turnCount,
           ...(state.usage === undefined ? {} : { usage: state.usage }),
+          ...(state.compaction === undefined ? {} : { compaction: state.compaction }),
         };
       }
 
@@ -244,6 +248,7 @@ export class Agent {
       messages: snapshotMessages(state.messages),
       turnCount: state.turnCount,
       ...(state.usage === undefined ? {} : { usage: state.usage }),
+      ...(state.compaction === undefined ? {} : { compaction: state.compaction }),
     };
   }
 
@@ -264,11 +269,23 @@ export class Agent {
       return snapshot;
     }
 
-    const context = await this.contextManager.build(snapshot, {
-      ...(state.compaction === undefined ? {} : { previous: state.compaction }),
-      ...(signal === undefined ? {} : { signal }),
-      prefixMessages,
-    });
+    let context;
+    try {
+      context = await this.contextManager.build(snapshot, {
+        ...(state.compaction === undefined ? {} : { previous: state.compaction }),
+        ...(signal === undefined ? {} : { signal }),
+        prefixMessages,
+        fixedMessages: [
+          { role: "user", content: this.systemPrompt },
+          { role: "user", content: JSON.stringify(this.toolDefinitions) },
+        ],
+      });
+    } catch (error: unknown) {
+      if (error instanceof ContextBudgetError && error.compactionUsage !== undefined) {
+        state.usage = addUsage(state.usage, error.compactionUsage);
+      }
+      throw error;
+    }
     if (context.compaction === undefined) {
       delete state.compaction;
     } else {
@@ -523,6 +540,7 @@ export class Agent {
       turnCount: state.turnCount,
       messages: snapshotMessages(state.messages),
       ...(state.usage === undefined ? {} : { usage: state.usage }),
+      ...(state.compaction === undefined ? {} : { compaction: state.compaction }),
       ...(error === undefined ? {} : { error }),
     });
   }
@@ -583,6 +601,7 @@ function abortedResult(state: RunState): AgentRunResult {
     messages: snapshotMessages(state.messages),
     turnCount: state.turnCount,
     ...(state.usage === undefined ? {} : { usage: state.usage }),
+    ...(state.compaction === undefined ? {} : { compaction: state.compaction }),
   };
 }
 

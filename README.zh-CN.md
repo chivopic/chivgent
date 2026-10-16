@@ -329,7 +329,10 @@ ContextManager
 Token 数量按字符长度估算，而不是用真正的 tokenizer：后者与模型强相关，为一个
 只用来决定「何时压缩」的数字引入大依赖并不划算，估算误差由 reserve 预算吸收。
 
-单条超过整个预算的工具结果无法被压缩掉，这种情况应该去限制工具输出本身。
+预算包含 system prompt、工具 schema、项目指导和对话历史，Token 数按字符数近似估算；
+system prompt 或工具 schema 本身超出预算，或压缩后仍放不下请求时，会返回可读错误。
+Session 会保存压缩摘要和 transcript 切分点，`--continue` / `--resume` 会恢复它，
+同时恢复累计 usage 和 prompt 数。`/clear` 会重置这些会话累计状态。
 用 `--no-compaction` 可以关闭压缩。
 
 ### 运行时事件

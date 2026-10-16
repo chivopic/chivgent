@@ -37,6 +37,8 @@ export interface AppliedCompaction {
   readonly state: CompactionState;
   /** Index into the full transcript where verbatim history resumes. */
   readonly splitIndex: number;
+  /** Preserve the active prompt before a compacted run of later tool turns. */
+  readonly anchorIndex?: number;
 }
 
 export interface BuildOptions {
@@ -45,6 +47,8 @@ export interface BuildOptions {
   readonly signal?: AbortSignal;
   /** Extra uncompactable project guidance the caller prepends to the request. */
   readonly prefixMessages?: readonly Message[];
+  /** Request-level fixed context such as the system prompt and tool schemas. */
+  readonly fixedMessages?: readonly Message[];
 }
 
 export interface BuiltContext {
@@ -108,46 +112,62 @@ export class ContextManager {
     options: BuildOptions = {},
   ): Promise<BuiltContext> {
     const previous = options.previous;
-    const effective =
-      previous === undefined
-        ? messages
-        : [summaryMessage(previous.state), ...messages.slice(previous.splitIndex)];
-    const prefixTokens = this.estimator.estimateMessages(options.prefixMessages ?? []);
+    const summaryIndex = previous === undefined ? -1 : previous.anchorIndex === undefined ? 0 : 1;
+    const effective = previous === undefined
+      ? messages
+      : previous.anchorIndex === undefined
+        ? [summaryMessage(previous.state), ...messages.slice(previous.splitIndex)]
+        : [messages[previous.anchorIndex]!, summaryMessage(previous.state), ...messages.slice(previous.splitIndex)];
+    const prefixTokens = this.estimator.estimateMessages([...(options.prefixMessages ?? []), ...(options.fixedMessages ?? [])]);
     const estimatedTokens = this.estimator.estimateMessages(effective) + prefixTokens;
 
-    if (this.compactor === undefined || estimatedTokens <= this.budget) {
+    if (prefixTokens > this.budget) {
+      throw new ContextBudgetError(`System prompt and tool definitions need about ${prefixTokens} tokens, exceeding the available context budget of ${this.budget}.`);
+    }
+
+    if (estimatedTokens <= this.budget) {
       return {
         messages: effective,
         compacted: false,
         estimatedTokens,
         ...(previous === undefined ? {} : { compaction: previous }),
       };
+    }
+
+    if (this.compactor === undefined) {
+      throw new ContextBudgetError(`The request needs about ${estimatedTokens} tokens, exceeding the available context budget of ${this.budget}; compaction is disabled.`);
     }
 
     const cut = findSplitIndex(effective, this.estimator, this.keepRecentTokens);
-    // A cut of zero leaves nothing to summarise; with a previous compaction the
-    // cut must also clear the injected summary for progress to be made.
-    if (cut <= 0 || (previous !== undefined && cut < 1)) {
-      return {
-        messages: effective,
-        compacted: false,
-        estimatedTokens,
-        ...(previous === undefined ? {} : { compaction: previous }),
-      };
+    const latestUser = findLastUserIndex(effective, summaryIndex);
+    const anchored = latestUser >= 0 && cut > latestUser;
+    const headStart = anchored ? latestUser + 1 : 0;
+    if (cut <= headStart) {
+      throw new ContextBudgetError(`The request needs about ${estimatedTokens} tokens, exceeding the available context budget of ${this.budget}; there is no safely removable history.`);
     }
 
-    const head = effective.slice(0, cut);
+    const head = (anchored ? effective.slice(0, cut) : effective.slice(headStart, cut))
+      .filter((_message, index) => !anchored || index !== latestUser);
     const tail = effective.slice(cut);
     const { state, usage } = await this.compactor.compact(head, options.signal, previous?.state);
-    const compactedMessages = [summaryMessage(state), ...tail];
+    const compactedMessages = anchored
+      ? [effective[latestUser]!, summaryMessage(state), ...tail]
+      : [summaryMessage(state), ...tail];
     const tokensAfter = this.estimator.estimateMessages(compactedMessages) + prefixTokens;
+    if (tokensAfter > this.budget) {
+      throw new ContextBudgetError(`The request still needs about ${tokensAfter} tokens after compaction, exceeding the available context budget of ${this.budget}. Reduce the prompt, tool schemas, or context window reserve.`, usage);
+    }
 
     // Map the cut back onto the full transcript, allowing for the summary
     // message that the previous compaction injected at the front.
-    const splitIndex =
-      previous === undefined
-        ? cut
-        : previous.splitIndex + (cut - 1);
+    const mapTranscriptIndex = (index: number): number => {
+      if (previous === undefined) return index;
+      if (previous.anchorIndex === undefined) return previous.splitIndex + Math.max(0, index - 1);
+      if (index === 0) return previous.anchorIndex;
+      return previous.splitIndex + Math.max(0, index - 2);
+    };
+    const splitIndex = mapTranscriptIndex(cut);
+    const anchorIndex = anchored ? mapTranscriptIndex(latestUser) : undefined;
 
     this.onCompaction?.({
       droppedMessages: head.length,
@@ -160,10 +180,21 @@ export class ContextManager {
       messages: compactedMessages,
       compacted: true,
       estimatedTokens: tokensAfter,
-      compaction: { state, splitIndex },
+      compaction: { state, splitIndex, ...(anchorIndex === undefined ? {} : { anchorIndex }) },
       ...(usage === undefined ? {} : { usage }),
     };
   }
+}
+
+export class ContextBudgetError extends Error {
+  constructor(message: string, readonly compactionUsage?: Usage) { super(message); this.name = "ContextBudgetError"; }
+}
+
+function findLastUserIndex(messages: readonly Message[], syntheticSummaryIndex: number): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (index !== syntheticSummaryIndex && messages[index]?.role === "user") return index;
+  }
+  return -1;
 }
 
 function summaryMessage(state: CompactionState): Message {
@@ -201,12 +232,11 @@ export function findSplitIndex(
     index += 1;
   }
 
-  // Always leave at least one real message after the summary.
+  // Keep a real message after the summary for ordinary cuts.
   if (index >= messages.length) {
     index = messages.length - 1;
-    while (index > 0 && messages[index]?.role === "tool") {
-      index -= 1;
-    }
+    while (index > 0 && messages[index]?.role === "tool") index -= 1;
   }
+
   return index;
 }

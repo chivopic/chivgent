@@ -155,6 +155,9 @@ function ignoreBrokenPipe(stream: NodeJS.WriteStream): void {
 interface RestoredSession {
   readonly id?: string;
   readonly messages?: readonly Message[];
+  readonly compaction?: import("./context/context-manager.js").AppliedCompaction;
+  readonly promptCount?: number;
+  readonly usage?: import("./providers/usage.js").UsageTotal;
   readonly resumed: boolean;
 }
 
@@ -608,7 +611,7 @@ async function restoreSession(
   if (transcript === undefined) {
     return `Unknown session: ${id}`;
   }
-  return { id, messages: transcript.messages, resumed: true };
+  return { id, messages: transcript.messages, compaction: transcript.compaction, promptCount: transcript.promptCount, usage: transcript.usage, resumed: true };
 }
 
 async function listSessions(
