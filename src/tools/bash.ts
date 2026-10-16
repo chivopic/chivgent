@@ -2,6 +2,7 @@ import type { Tool, ToolContext, ToolOutput } from "./tool.js";
 import { validateTimeoutSeconds } from "../shell/local.js";
 import { createShellOperations, type ShellBackend } from "../shell/factory.js";
 import type { ShellApproval } from "../shell/approval.js";
+import type { ShellScope } from "../permissions.js";
 import { OutputAccumulator } from "../shell/output.js";
 import { formatSize, type TruncationResult } from "../shell/truncate.js";
 import {
@@ -27,6 +28,8 @@ const inputSchema = {
       description:
         "Optional timeout in seconds. There is no default; set one for commands that may hang.",
     },
+    scope: { type: "string", enum: ["workspace", "host"], description: "Set host for an explicit one-command request to access host files or network outside the workspace." },
+    justification: { type: "string", description: "Required explanation when explicitly setting scope to host." },
   },
   required: ["command"],
   additionalProperties: false,
@@ -35,6 +38,8 @@ const inputSchema = {
 interface BashArguments {
   readonly command: string;
   readonly timeoutSeconds?: number;
+  readonly scope?: ShellScope;
+  readonly justification?: string;
 }
 
 export interface BashToolOptions {
@@ -44,6 +49,9 @@ export interface BashToolOptions {
   readonly backend?: ShellBackend;
   /** Swap in a container or SSH backend without touching the tool. */
   readonly operations?: ShellOperations;
+  /** Rebuild the sandbox from the active permission mode for each call. */
+  readonly operationsForCall?: (scope?: ShellScope) => ShellOperations;
+  readonly defaultScopeForCall?: () => ShellScope;
   /** A human decision (or explicit session-wide approval). Absent means deny. */
   readonly approve?: ShellApproval;
   readonly maxLines?: number;
@@ -60,6 +68,8 @@ export class BashTool implements Tool {
 
   private readonly cwd: string;
   private readonly operations: ShellOperations;
+  private readonly operationsForCall: ((scope?: ShellScope) => ShellOperations) | undefined;
+  private readonly defaultScopeForCall: (() => ShellScope) | undefined;
   private readonly approve: ShellApproval | undefined;
   private readonly maxLines?: number;
   private readonly maxBytes?: number;
@@ -69,6 +79,8 @@ export class BashTool implements Tool {
   constructor(options: BashToolOptions) {
     this.cwd = options.cwd;
     this.operations = options.operations ?? createShellOperations({ backend: options.backend, allowWrites: options.allowWrites, allowNetwork: options.allowNetwork });
+    this.operationsForCall = options.operationsForCall;
+    this.defaultScopeForCall = options.defaultScopeForCall;
     this.approve = options.approve;
     if (options.maxLines !== undefined) {
       this.maxLines = options.maxLines;
@@ -106,6 +118,11 @@ export class BashTool implements Tool {
     if (context.signal?.aborted) {
       throw new ShellAbortError();
     }
+    const scope = parsed.scope ?? this.defaultScopeForCall?.() ?? "workspace";
+    if (parsed.scope === "host" && !parsed.justification?.trim()) {
+      return { content: 'Host scope requires a non-empty "justification".', isError: true };
+    }
+    const operations = this.operationsForCall?.(scope) ?? this.operations;
     // Approval is required even if the caller already exposed the bash tool.
     // Non-interactive/remote callers have no implicit approval channel.
     if (this.approve === undefined) {
@@ -113,7 +130,11 @@ export class BashTool implements Tool {
     }
     let approved: boolean;
     try {
-      approved = await this.approve(parsed.command, context.signal, `Shell context: ${this.operations.backend ?? "custom backend; network policy unknown"}`);
+      const approvalText = scope === "host" && parsed.scope === "host" ? `${parsed.command}\n\nReason requested by model: ${parsed.justification}` : parsed.command;
+      const approvalContext = scope === "host"
+        ? `Expanded host access for this command only: may read/write outside workspace and use network. ${operations.backend ?? "sandbox policy unknown"}`
+        : `Shell context: ${operations.backend ?? "custom backend; network policy unknown"}`;
+      approved = await this.approve(approvalText, context.signal, approvalContext);
     } catch (error: unknown) {
       if (isAbortError(error) || context.signal?.aborted) throw new ShellAbortError();
       return { content: "Shell command denied: approval failed.", isError: true };
@@ -139,7 +160,7 @@ export class BashTool implements Tool {
     try {
       let exitCode: number | null;
       try {
-        const result = await this.operations.exec(parsed.command, this.cwd, {
+        const result = await operations.exec(parsed.command, this.cwd, {
           onData: (chunk) => {
             output.append(chunk);
             publish.schedule();
@@ -311,21 +332,21 @@ function parseArguments(value: unknown): BashArguments | undefined {
 
   const record = value as Record<string, unknown>;
   if (
-    Object.keys(record).some((key) => key !== "command" && key !== "timeout")
+    Object.keys(record).some((key) => !["command", "timeout", "scope", "justification"].includes(key))
   ) {
     return undefined;
   }
   if (typeof record.command !== "string" || record.command.trim().length === 0) {
     return undefined;
   }
-  if (record.timeout === undefined) {
-    return { command: record.command };
-  }
-  if (typeof record.timeout !== "number") {
-    return undefined;
-  }
+  if (record.scope !== undefined && record.scope !== "workspace" && record.scope !== "host") return undefined;
+  if (record.justification !== undefined && (typeof record.justification !== "string" || record.justification.length > 500 || /[\x00-\x1f\x7f]/.test(record.justification))) return undefined;
+  if (record.scope === "host" && (typeof record.justification !== "string" || record.justification.trim().length === 0)) return undefined;
+  if (record.timeout !== undefined && typeof record.timeout !== "number") return undefined;
   return {
     command: record.command,
-    timeoutSeconds: validateTimeoutSeconds(record.timeout),
+    ...(record.timeout === undefined ? {} : { timeoutSeconds: validateTimeoutSeconds(record.timeout) }),
+    ...(record.scope === undefined ? {} : { scope: record.scope }),
+    ...(record.justification === undefined ? {} : { justification: record.justification }),
   };
 }

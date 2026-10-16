@@ -34,6 +34,8 @@ export interface AgentOptions {
   readonly contextManager?: ContextManager;
   /** Scoped repository guidance, read separately from trusted system prompts. */
   readonly projectInstructions?: ProjectInstructionsProvider;
+  /** Additional execution-time boundary for tools such as trusted extensions. */
+  readonly authorizeToolCall?: (name: string, argumentsValue: unknown, signal?: AbortSignal) => Promise<boolean>;
 }
 
 export interface AgentRunOptions {
@@ -96,6 +98,7 @@ export class Agent {
   private readonly streaming: boolean;
   private readonly contextManager?: ContextManager;
   private readonly projectInstructions?: ProjectInstructionsProvider;
+  private readonly authorizeToolCall?: AgentOptions["authorizeToolCall"];
 
   constructor(options: AgentOptions) {
     if (!Number.isSafeInteger(options.maxTurns) || options.maxTurns <= 0) {
@@ -122,6 +125,7 @@ export class Agent {
     if (options.projectInstructions !== undefined) {
       this.projectInstructions = options.projectInstructions;
     }
+    this.authorizeToolCall = options.authorizeToolCall;
   }
 
   get toolNames(): readonly string[] {
@@ -467,45 +471,51 @@ export class Agent {
       };
     } else {
       try {
-        // A model may issue its very first write into a nested folder whose
-        // AGENTS.md wasn't visible at sampling time. Defer the mutation until
-        // the next LLM request has included those scoped instructions.
-        const currentGuidance = this.projectInstructions !== undefined &&
-          ["write_file", "edit_file", "apply_patch"].includes(toolCall.name)
-          ? await this.projectInstructions.load(state.messages, toolCall)
-          : undefined;
-        const unseenGuidance = currentGuidance !== undefined && (
-          currentGuidance.includes(INCOMPLETE_PROJECT_GUIDANCE) ||
-          currentGuidance !== state.projectInstructionsText
-        );
-        if (unseenGuidance) {
-          output = {
-            content: currentGuidance?.includes(INCOMPLETE_PROJECT_GUIDANCE)
-              ? "The current operation's scoped project instructions exceed the safe loading limits. No files were changed; narrow the operation or reduce the instruction size before retrying."
-              : "New scoped AGENTS.md instructions were discovered. No files were changed. Review the new project guidance in the next turn before retrying.",
-            isError: true,
-          };
+        const authorized = this.authorizeToolCall === undefined ||
+          await this.authorizeToolCall(toolCall.name, toolCall.arguments, signal);
+        if (!authorized) {
+          output = { content: `Tool call denied: ${toolCall.name}. Approval was declined or unavailable.`, isError: true };
         } else {
-          output = validateToolOutput(
-            await tool.execute(toolCall.arguments, {
-              workspace: this.workspace,
-              ...(signal === undefined ? {} : { signal }),
-              ...(tool.constructor === UpdatePlanTool ? {
-                onPlanUpdate: (update: PlanUpdate) => {
-                  this.emit({ type: "plan_update", turn, ...update });
-                },
-              } : {}),
-              onUpdate: (content: string) => {
-                this.emit({
-                  type: "tool_execution_update",
-                  turn,
-                  toolCallId: toolCall.id,
-                  toolName: toolCall.name,
-                  content,
-                });
-              },
-            }),
+          // A model may issue its very first write into a nested folder whose
+          // AGENTS.md wasn't visible at sampling time. Defer the mutation until
+          // the next LLM request has included those scoped instructions.
+          const currentGuidance = this.projectInstructions !== undefined &&
+            ["write_file", "edit_file", "apply_patch"].includes(toolCall.name)
+            ? await this.projectInstructions.load(state.messages, toolCall)
+            : undefined;
+          const unseenGuidance = currentGuidance !== undefined && (
+            currentGuidance.includes(INCOMPLETE_PROJECT_GUIDANCE) ||
+            currentGuidance !== state.projectInstructionsText
           );
+          if (unseenGuidance) {
+            output = {
+              content: currentGuidance?.includes(INCOMPLETE_PROJECT_GUIDANCE)
+                ? "The current operation's scoped project instructions exceed the safe loading limits. No files were changed; narrow the operation or reduce the instruction size before retrying."
+                : "New scoped AGENTS.md instructions were discovered. No files were changed. Review the new project guidance in the next turn before retrying.",
+              isError: true,
+            };
+          } else {
+            output = validateToolOutput(
+              await tool.execute(toolCall.arguments, {
+                workspace: this.workspace,
+                ...(signal === undefined ? {} : { signal }),
+                ...(tool.constructor === UpdatePlanTool ? {
+                  onPlanUpdate: (update: PlanUpdate) => {
+                    this.emit({ type: "plan_update", turn, ...update });
+                  },
+                } : {}),
+                onUpdate: (content: string) => {
+                  this.emit({
+                    type: "tool_execution_update",
+                    turn,
+                    toolCallId: toolCall.id,
+                    toolName: toolCall.name,
+                    content,
+                  });
+                },
+              }),
+            );
+          }
         }
       } catch (error: unknown) {
         if (isAbortError(error) || isAborted(signal)) {

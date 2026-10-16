@@ -85,6 +85,7 @@ export class LocalWorkspace implements Workspace {
   async writeTextFile(
     relativePath: string,
     contents: string,
+    _signal?: AbortSignal,
   ): Promise<WriteTextFileResult> {
     this.assertWritesEnabled();
     return writeTextFile(this.limits, relativePath, contents);
@@ -93,6 +94,7 @@ export class LocalWorkspace implements Workspace {
   async editTextFile(
     relativePath: string,
     options: EditTextFileOptions,
+    _signal?: AbortSignal,
   ): Promise<EditTextFileResult> {
     this.assertWritesEnabled();
     return editTextFile(this.limits, relativePath, options);
