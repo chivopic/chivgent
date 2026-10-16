@@ -169,13 +169,20 @@ export class ContextManager {
         throw new ContextBudgetError(`The request still needs about ${tokensAfter} tokens after compaction, exceeding the available context budget of ${this.budget}. Reduce the prompt, tool schemas, or context window reserve.`, usage);
       }
 
-      const tighterCut = findSplitIndex(effective, this.estimator, tailBudget);
-      const nextCut = Math.max(cut, tighterCut);
-      if (nextCut === cut) {
-        throw new ContextBudgetError(`The request still needs about ${tokensAfter} tokens after compaction, exceeding the available context budget of ${this.budget}. Reduce the prompt, tool schemas, or context window reserve.`, usage);
+      cut = findSplitIndexForTailBudget(
+        effective,
+        this.estimator,
+        cut,
+        tailBudget,
+      );
+      if (cut === findSplitIndex(effective, this.estimator, this.keepRecentTokens)) {
+        // The initial cut may already be the tightest safe boundary.
+        const currentTailBudget = tailBudget;
+        if (this.estimator.estimateMessages(effective.slice(cut)) > currentTailBudget) {
+          throw new ContextBudgetError(`The request still needs about ${tokensAfter} tokens after compaction, exceeding the available context budget of ${this.budget}. Reduce the prompt, tool schemas, or context window reserve.`, usage);
+        }
       }
 
-      cut = nextCut;
       anchored = latestUser >= 0 && cut > latestUser;
       head = (anchored ? effective.slice(0, cut) : effective.slice(headStart, cut))
         .filter((_message, index) => !anchored || index !== latestUser);
@@ -188,6 +195,8 @@ export class ContextManager {
         : [summaryMessage(state), ...tail];
       tokensAfter = this.estimator.estimateMessages(compactedMessages) + prefixTokens;
       if (tokensAfter > this.budget) {
+        // A single retry is deliberately bounded. The new summary can itself
+        // grow, so another retry would multiply Provider calls unpredictably.
         throw new ContextBudgetError(`The request still needs about ${tokensAfter} tokens after compaction, exceeding the available context budget of ${this.budget}. Reduce the prompt, tool schemas, or context window reserve.`, usage);
       }
     }
@@ -225,11 +234,8 @@ export class ContextBudgetError extends Error {
 }
 
 function mergeCompactionUsage(first: Usage | undefined, second: Usage | undefined): Usage | undefined {
-  if (first === undefined || second === undefined) {
-    // A partial usage report must remain visibly partial rather than pretending
-    // that every compaction call was accounted for.
-    return undefined;
-  }
+  if (first === undefined) return second;
+  if (second === undefined) return first;
   return {
     inputTokens: first.inputTokens + second.inputTokens,
     outputTokens: first.outputTokens + second.outputTokens,
@@ -243,7 +249,29 @@ function mergeCompactionUsage(first: Usage | undefined, second: Usage | undefine
   };
 }
 
-function findLastUserIndex(messages: readonly Message[], syntheticSummaryIndex: number): number {
+function findSplitIndexForTailBudget(
+  messages: readonly Message[],
+  estimator: TokenEstimator,
+  minimumCut: number,
+  maxTailTokens: number,
+): number {
+  let cut = Math.max(minimumCut, findSplitIndex(messages, estimator, maxTailTokens));
+  while (
+    cut < messages.length &&
+    estimator.estimateMessages(messages.slice(cut)) > maxTailTokens
+  ) {
+    const current = messages[cut];
+    cut += 1;
+    if (current?.role === "assistant" && current.toolCalls.length > 0) {
+      while (cut < messages.length && messages[cut]?.role === "tool") cut += 1;
+    } else if (current?.role === "tool") {
+      while (cut < messages.length && messages[cut]?.role === "tool") cut += 1;
+    }
+  }
+  return cut;
+}
+
+function findLastUserIndex(messages: readonly Message[], syntheticSummaryIndex: number) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (index !== syntheticSummaryIndex && messages[index]?.role === "user") return index;
   }
