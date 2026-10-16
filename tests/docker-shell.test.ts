@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -33,16 +34,32 @@ describe("Docker shell isolation", () => {
     expect(flags).toContain("--pids-limit 64");
     expect(flags).toContain("--memory 512m");
     expect(flags).toContain("--workdir /workspace");
-    expect(flags).toContain(`type=bind,source=${root},target=/workspace`);
+    expect(flags).toContain(`type=bind,source=${realpathSync(root)},target=/workspace,readonly`);
     expect(flags).not.toContain("/var/run/docker.sock");
     expect(flags).not.toContain("--privileged");
     expect(flags).not.toContain("--network host");
     expect(cfg.args.filter(arg => arg === "--mount")).toHaveLength(1);
+    const writeEnabled = dockerShellConfig(root, { allowWrites: true });
+    const writeFlags = writeEnabled.args.join(" ");
+    expect(writeFlags).not.toContain(`source=${realpathSync(root)},target=/workspace,readonly`);
+    expect(writeFlags).toContain("--network none");
+    for (const name of [".git", ".agents", ".codex", ".aws", ".ssh"]) {
+      expect(writeFlags).toContain(`--tmpfs /workspace/${name}:ro,nosuid,nodev,size=1m`);
+    }
   });
 
   it("allows no untrusted Docker image that looks like another option", async () => {
     const root = await cwd();
     expect(() => dockerShellConfig(root, { image: "--privileged" })).toThrow();
+  });
+
+  it("bind-mounts sensitive entries read-only when they already exist", async () => {
+    const root = await cwd();
+    await mkdir(path.join(root, ".ssh"));
+    const cfg = dockerShellConfig(root, { allowWrites: true });
+    const flags = cfg.args.join(" ");
+    expect(flags).toContain(`source=${realpathSync(root)}/.ssh,target=/workspace/.ssh,readonly`);
+    expect(flags).not.toContain("--tmpfs /workspace/.ssh:ro,nosuid,nodev,size=1m");
   });
 
   it("denies all commands unless someone explicitly approves", async () => {

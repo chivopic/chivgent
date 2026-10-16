@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { createLocalShellOperations } from "./local.js";
@@ -16,7 +16,11 @@ export interface DockerShellOptions {
   readonly image?: string;
   readonly dockerExecutable?: string;
   readonly containerName?: string;
+  readonly allowWrites?: boolean;
+  readonly allowNetwork?: boolean;
 }
+
+const PROTECTED_WRITE_PATHS = [".git", ".agents", ".codex", ".aws", ".ssh"] as const;
 
 export function dockerShellConfig(cwd: string, options: DockerShellOptions = {}): ShellConfig {
   const workspace = realpathSync(cwd);
@@ -34,7 +38,7 @@ export function dockerShellConfig(cwd: string, options: DockerShellOptions = {})
     args: [
       "run", "--rm",
       ...(options.containerName === undefined ? [] : ["--name", options.containerName]),
-      "--network", "none",
+      "--network", options.allowNetwork ? "bridge" : "none",
       "--read-only",
       "--cap-drop", "ALL",
       "--security-opt", "no-new-privileges",
@@ -43,7 +47,17 @@ export function dockerShellConfig(cwd: string, options: DockerShellOptions = {})
       "--cpus", "2",
       "--user", user,
       "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m",
-      "--mount", `type=bind,source=${workspace},target=/workspace`,
+      "--mount", `type=bind,source=${workspace},target=/workspace${options.allowWrites ? "" : ",readonly"}`,
+      ...(options.allowWrites ? PROTECTED_WRITE_PATHS.flatMap((name) => {
+        const protectedPath = `${workspace}/${name}`;
+        if (!existsSync(protectedPath)) {
+          return ["--tmpfs", `/workspace/${name}:ro,nosuid,nodev,size=1m`];
+        }
+        const entry = lstatSync(protectedPath);
+        if (entry.isSymbolicLink()) throw new Error(`Protected path is a symlink; refusing write-enabled Docker shell: ${name}`);
+        if (name === ".git" && entry.isFile()) throw new Error("Write-enabled Docker shell cannot safely protect a .git pointer file; use --shell-backend native on macOS or disable shell writes.");
+        return ["--mount", `type=bind,source=${protectedPath},target=/workspace/${name},readonly`];
+      }) : []),
       "--workdir", "/workspace",
       "--env", "HOME=/tmp",
       image, "sh", "-c",
@@ -72,6 +86,7 @@ export function killTrackedDockerContainers(docker = "docker"): void {
 export function createDockerShellOperations(options: DockerShellOptions = {}): ShellOperations {
   const docker = options.dockerExecutable ?? "docker";
   return {
+    backend: `Docker (network ${options.allowNetwork ? "enabled" : "denied"}${options.allowWrites ? ", workspace writes enabled" : ", read-only workspace"})`,
     async exec(command, cwd, execOptions) {
       const containerName = `chivgent-${randomUUID()}`;
       activeContainers.add(containerName);

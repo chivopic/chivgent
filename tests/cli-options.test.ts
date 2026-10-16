@@ -198,6 +198,12 @@ describe("--allow-shell", () => {
     expect(parseCliArgs(["--allow-shell"], {}).approveAllShell).toBe(false);
   });
 
+  it("selects the shell backend and explicit network opt-in", () => {
+    expect(parseCliArgs(["--allow-shell"], {})).toMatchObject({ shellBackend: "auto", shellNetwork: false });
+    expect(parseCliArgs(["--shell-backend", "native", "--shell-network"], {})).toMatchObject({ shellBackend: "native", shellNetwork: true });
+    expect(() => parseCliArgs(["--shell-backend", "unsafe"], {})).toThrow(/must be auto, native, or docker/);
+  });
+
   it("turns the shell on and raises the turn limit", () => {
     const options = parseCliArgs(["--allow-shell", "question"], {});
 

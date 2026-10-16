@@ -146,12 +146,12 @@ export function toolTranscript(
 }
 
 /** Display Shell approvals as bounded, control-safe content instead of raw commands. */
-export function approvalPreview(command: string, columns: number): string {
+export function approvalPreview(command: string, columns: number, context = "Shell command"): string {
   const width = Math.max(12, columns - 1);
   const visibleLines = terminalText(command).split("\n");
   const truncated = visibleLines.length > 8;
   const lines = [
-    "  Shell command · Docker sandbox · network disabled",
+    `  ${context}`,
     "  ──────────────────────────────────────────",
     ...visibleLines.slice(0, 8).map(line => `  │ ${line}`),
     ...(truncated ? [`  │ … ${visibleLines.length - 8} more lines hidden`] : []),

@@ -46,10 +46,12 @@ export function toolsFor(
     tools.push(new WriteFileTool(), new EditFileTool(), new ApplyPatchTool());
   }
   if (capabilities.includes("shell")) {
-    // The CLI has already explicitly granted the shell capability to this
-    // task; Docker still enforces the host/container boundary.
+    // Eval shell remains explicitly in Docker; workspace writes follow the
+    // task's separate writes capability.
     tools.push(new BashTool({
       cwd,
+      backend: "docker",
+      allowWrites: capabilities.includes("writes"),
       approve: async () => true,
       ...(options.shellOperations === undefined ? {} : { operations: options.shellOperations }),
     }));

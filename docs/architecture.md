@@ -11,7 +11,7 @@ User -> CLI -> Agent -> LLMClient |
                  |
                  +-> Tool Registry -> list_files / search_text / read_file -> Workspace
                  |                    write_file / edit_file (--allow-writes)
-                 |                    bash (--allow-shell) -> Docker container (offline)
+                 |                    bash (--allow-shell) -> Seatbelt on macOS / Docker elsewhere
 ```
 
 The Agent runtime owns its own messages. Provider-specific schemas are converted

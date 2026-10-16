@@ -11,6 +11,7 @@ import {
   ProviderRegistry,
 } from "./providers/registry.js";
 import { DEFAULT_CONTEXT_WINDOW } from "./context/context-manager.js";
+import type { ShellBackend } from "./shell/factory.js";
 
 /** A Provider id known to the registry. */
 export type Provider = string;
@@ -51,13 +52,12 @@ export interface CliOptions {
   readonly listSessions: boolean;
   /** Allow the agent to create and modify files in the workspace. */
   readonly allowWrites: boolean;
-  /**
-   * Allow the agent to run shell commands. This implies write access: a shell
-   * can do everything the write tools can and is not bound by the workspace.
-   */
+  /** Allow the agent to run shell commands inside the selected sandbox. */
   readonly allowShell: boolean;
-  /** Explicitly approve every command in this session; Docker isolation still applies. */
+  /** Explicitly approve every command in this session; sandbox isolation still applies. */
   readonly approveAllShell: boolean;
+  readonly shellBackend: ShellBackend;
+  readonly shellNetwork: boolean;
   /** Draw a live status region above the prompt. Interactive terminals only. */
   readonly tui: boolean;
   /** Load extensions from the user and (once trusted) the project directory. */
@@ -103,6 +103,8 @@ export function parseCliArgs(
   let allowWrites = false;
   let allowShell = false;
   let approveAllShell = false;
+  let shellBackend: ShellBackend = "auto";
+  let shellNetwork = false;
   let tui = false;
   let extensions = true;
   let serve = false;
@@ -164,6 +166,13 @@ export function parseCliArgs(
       allowShell = true;
     } else if (argument === "--approve-all-shell") {
       approveAllShell = true;
+    } else if (argument === "--shell-backend") {
+      const value = readOptionValue(argv, index, "--shell-backend");
+      if (value !== "auto" && value !== "native" && value !== "docker") throw new TypeError("--shell-backend must be auto, native, or docker.");
+      shellBackend = value;
+      index += 1;
+    } else if (argument === "--shell-network") {
+      shellNetwork = true;
     } else if (argument === "--serve") {
       serve = true;
     } else if (argument === "--connect") {
@@ -226,6 +235,8 @@ export function parseCliArgs(
     allowWrites,
     allowShell,
     approveAllShell,
+    shellBackend,
+    shellNetwork,
     tui,
     extensions,
     serve,
@@ -264,9 +275,11 @@ Options:
   --resume ID      Resume a specific session
   --sessions       List recorded sessions and exit
   --allow-writes   Let the agent create and change files (default: read-only)
-  --allow-shell    Expose bash inside an offline Docker container (Docker required).
+  --allow-shell    Expose bash inside a native macOS sandbox or Docker (network denied).
                    Interactive commands require individual confirmation.
-  --approve-all-shell  Explicitly approve all Docker shell commands this session;
+  --shell-backend MODE  auto, native, or docker (default: auto; macOS uses native).
+  --shell-network  Allow shell network access (explicit opt-in for either backend).
+  --approve-all-shell  Explicitly approve all shell commands this session;
                    use only with --allow-shell when individual prompts are unavailable.
   --serve          Expose this session on a local socket and keep running
   --connect TARGET Attach to a served session, by id or socket path

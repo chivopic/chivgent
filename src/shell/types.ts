@@ -45,6 +45,7 @@ export interface ShellExecResult {
  * another, and the shell tool never needs to know which it has.
  */
 export interface ShellOperations {
+  readonly backend?: string;
   exec(
     command: string,
     cwd: string,

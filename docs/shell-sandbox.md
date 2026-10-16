@@ -1,40 +1,58 @@
-# Shell safety and approval (P0-C)
+# Shell safety and approval
 
-The `bash` tool runs **inside a Docker container**, not a shell on the host. Enabling the tool with `--allow-shell` does not automatically authorize each command.
+`--allow-shell` exposes a command runner, but commands still require approval.
+Interactive runs ask before every command; headless and socket-server runs deny
+commands unless `--approve-all-shell` was explicitly supplied.
 
-## Modes
+## Backend selection
 
-- Normal interactive use: `chivgent --allow-shell`. Before *each* model-produced command, chivgent displays its literal command and asks `Approve? [y/N]`. Only the exact reply `y` approves. The default is deny.
-- Non-interactive or socket-server use: shell commands are **denied** unless `--approve-all-shell` is also provided. This option explicitly approves all shell commands for this process; it is a high-trust choice, not a sandbox escape.
-- `--approve-all-shell` without `--allow-shell` is an error.
-- Docker is required, including on macOS. If the Docker CLI/daemon is unavailable, commands fail. **There is no fallback to host execution**. Ensure the `node:22-alpine` image is available ahead of time if your Docker daemon cannot download it.
+`--shell-backend auto|native|docker` selects the executor. `auto` uses the
+macOS Seatbelt sandbox on macOS and Docker on other supported platforms. An
+explicit backend that is unavailable fails closed; there is no unsandboxed
+fallback. The shell tool reports which backend and network setting ran the
+command.
 
-## What isolation enforces
+The default policy denies network access and writes to the workspace. Add
+`--allow-writes` to enable workspace writes (this also enables existing direct
+write tools). Add `--shell-network` only when shell commands need network
+access. Protected workspace paths include `.git`, `.agents`, `.codex`, `.aws`,
+and `.ssh`. Direct workspace write tools reject those paths and symlink escapes.
 
-Each command starts a new container with:
+## macOS Seatbelt
 
-- `--network none`: no container network access.
-- One bind mount: the project working directory at `/workspace`, writable by the user's UID.
-- Read-only container root filesystem and a size-limited temporary `/tmp`.
-- Dropped Linux capabilities, no-new-privileges, PID/CPU/memory limits, and a non-root UID/GID.
-- No host home, Docker socket or API keys passed into the container.
-- A unique container name; the CLI force-removes it after completion, error, abort and timeout.
+Native mode uses `/usr/bin/sandbox-exec` to apply an OS-enforced profile and
+launches `/bin/bash` without startup files. It keeps the host toolchain
+available, uses a fresh temporary home for each command, and passes only a
+small non-secret environment (PATH, locale and terminal settings). Provider
+keys and proxy variables are not passed through. The profile permits reads
+from the host, so commands can inspect files your account can read and can
+print their contents to the model. This is write/network containment, not
+confidentiality isolation. macOS Seatbelt behavior depends on OS policy support;
+an unavailable sandbox executable or failed sandbox launch is an error.
+The private home is deleted after each command, so package caches and shell
+configuration do not persist between commands.
 
-Execution is still powerful **inside the project**: shell commands can delete files there or print project secrets to the model. Docker isolation is not proof against vulnerabilities in Docker, kernel features or the VM, and this mechanism does not isolate `write_file`, `edit_file`, or explicitly trusted extension JavaScript. The project is mounted read-write when bash is enabled; do not use this mode on untrusted repositories containing valuable files or credentials. Work on disposable copies and keep sensitive directories outside the workspace.
+## Docker
 
-A Docker image is a development environment, not the host macOS environment. Some host-only tools will be unavailable. CI tests assert the security flags and run a real Docker smoke test on Linux for workspace writes, container environment isolation, and blocked outbound networking. This does **not** establish complete sandbox security or prove macOS Docker Desktop behavior. Run a manual end-to-end smoke test on your Mac before relying on it. Forced process termination (for example SIGKILL) can bypass best-effort cleanup; inspect Docker for orphan containers if needed.
+Docker uses a read-only container root, drops Linux capabilities, disables
+networking by default, and mounts only the workspace. The workspace mount is
+read-only unless `--allow-writes` is set. In write-enabled mode, protected paths
+already present at launch are mounted read-only; absent paths are masked with a
+small read-only temporary filesystem. This prevents shell commands from
+creating protected paths during the run. Docker mode fails closed when a
+protected entry is a symlink or `.git` pointer file.
+Docker is a separate development environment, so host-only tools may not be
+present. Docker daemon or image errors fail the command without running it on
+the host.
 
-## Example
+Docker and Seatbelt are boundaries with practical limits, not proof against
+kernel or runtime vulnerabilities. Shell commands are powerful within the
+access they receive. Use disposable workspaces for untrusted projects and do
+not expose sensitive files to shell-readable paths.
 
 ```bash
-docker pull node:22-alpine
-chivgent --allow-shell
-# When a command appears, type y to allow or n/Enter to deny.
+chivgent --allow-shell                         # interactive; approve each command
+chivgent --allow-shell --approve-all-shell "Run tests" # headless; pre-approve every command
+chivgent --allow-shell --allow-writes --shell-network --approve-all-shell "Install dependencies"
+chivgent --allow-shell --shell-backend docker   # force Docker
 ```
-
-```bash
-# Headless automation, explicitly pre-authorized inside Docker:
-chivgent --allow-shell --approve-all-shell "Run the project tests"
-```
-
-Never pass `--approve-all-shell` just to suppress prompts for an unknown codebase. Eval tasks requesting shell deliberately approve execution because they run in disposable fixtures; the Docker container boundary still applies.

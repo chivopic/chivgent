@@ -13,8 +13,9 @@ function createApprovalSession(command: string, gate: ShellApprovalGate, execute
   let call = 0;
   const shell = new BashTool({
     cwd: process.cwd(),
-    approve: (cmd, signal) => gate.approve(cmd, signal),
+    approve: (cmd, signal, context) => gate.approve(cmd, signal, context),
     operations: {
+      backend: "native (Seatbelt, network denied)",
       async exec(cmd) {
         executed.push(cmd);
         return { exitCode: 0 };
@@ -59,7 +60,7 @@ describe("TUI approval modal terminal integration", () => {
       await vi.waitFor(() => expect(screen.bytes()).toContain("Approve once?"));
       await screen.flush();
       expect(screen.visible().join("\n")).toContain("npm test");
-      expect(screen.bytes()).toContain("network disabled");
+      expect(screen.bytes()).toContain("native (Seatbelt, network denied)");
       screen.input.write("\r"); // The default/Enter is DENY.
       await vi.waitFor(() => expect(screen.bytes()).toContain("Completed"));
       expect(executed).toEqual([]);

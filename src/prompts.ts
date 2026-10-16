@@ -24,6 +24,7 @@ Make the smallest change that satisfies the request, and do not reformat or "tid
 If edit_file reports that old_text is missing or ambiguous, read the file again rather than guessing.
 State plainly which files you changed.`;
 export const SHELL_SYSTEM_PROMPT = `You can also run shell commands with bash.
+The shell runs in an OS sandbox on macOS or Docker elsewhere. Network and workspace writes are denied by default; workspace writes require --allow-writes and network access requires --shell-network. Shell commands can read files available to your user, so do not print sensitive file contents.
 Prefer list_files, search_text and read_file over ls, grep and cat: they are bounded and their output is easier to work with.
 Use bash for what only a shell can do: running tests, builds, linters, package managers and git.
 Commands get no stdin, so never run anything interactive, and never start background or long-lived processes.
