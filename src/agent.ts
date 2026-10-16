@@ -297,8 +297,14 @@ export class Agent {
     // Summarising is a Provider call this run paid for. Only add when there
     // was one: passing undefined would mark the total incomplete on every
     // turn that simply did not need compacting.
-    if (context.usage !== undefined) {
+    if (context.usage !== undefined || context.usageComplete === false) {
       state.usage = addUsage(state.usage, context.usage);
+      if (context.usageComplete === false) {
+        state.usage = {
+          usage: state.usage.usage,
+          complete: false,
+        };
+      }
     }
     return context.messages;
   }
