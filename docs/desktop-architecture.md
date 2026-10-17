@@ -1,6 +1,8 @@
 # chivgent Desktop 产品与实施规划书
 
-更新：2026-10-16。状态：规划，尚未交付 Desktop。
+更新：2026-10-17。状态：M0 Desktop 纵向原型已实现，并通过 macOS arm64 本地打包应用的源码树外验收；P1 及后续能力仍在规划/待实现。
+
+当前 M0 仅提供离线演示 Agent：不连接真实模型、不读取/写入项目文件，也不保存或恢复会话历史。macOS arm64 `.app` 在本机生成但未签名；这是本地验收，不是公开发布，也不代表 CI 已覆盖 Desktop。后续工作：真实 Provider 与项目只读工具见 [#67](https://github.com/chivopic/chivgent/issues/67)，恢复与持久化见 [#68](https://github.com/chivopic/chivgent/issues/68)，UI 后续见 [#69](https://github.com/chivopic/chivgent/issues/69)。
 
 ## 1. 产品目标与参考关系
 
@@ -243,18 +245,18 @@ worktree 首批只做创建、选择、任务绑定与可恢复清理；搬移�
 
 ## 11. 实施顺序与交付关卡
 
-每阶段都产出可运行结果；需要的共享抽象随真实路径提取。以下均未完成。
+每阶段都产出可运行结果；需要的共享抽象随真实路径提取。M0 的桌面纵向原型已在本机完成并验证；P1 及后续阶段尚未交付。
 
-| 阶段 | 交付内容 | 必须通过的验收 |
-| --- | --- | --- |
-| P0 桌面底座 / M0 | 单窗口、utility host、stub Agent、流式显示、停止、最简 .app | 脱离源码/全局 Node 可打开；打包后通信与取消正常；host 出错可见；CLI 包可独立安装 |
-| P1 真实任务 | 提取最小 runtime 配置与诊断；接真实 Provider 和只读工具 | 完成“解释当前项目”；目录正确；工具活动可展开；缺密钥仍能进入界面 |
-| P2 执行控制 | 写入/网络/Shell 设置、审批、取消、关窗/退出、通知 | 允许命令能执行、拒绝无副作用；关窗任务继续；退出清理；新设置只作用下一轮 |
-| P3 历史与会话 | 新格式、历史投影、订阅快照、任务元数据、导入和锁 | 刷新不断任务；重启恢复；崩溃不重放工具；旧日志不覆盖；导入保留来源 |
-| P4 本地可用版 / M1 | 侧栏、设置、凭证、diff、预览、草稿、主题、安装完善 | 完成修复→审批→测试→检查 diff→重启继续；无源码依赖；CLI 回归通过 |
-| P5 工作台 / M2 | 运行中介入、持久终端、review、worktree、并行任务 | 按上一节逐项关卡交付；共用能力进入 CLI 回归 |
+| 阶段 | 状态 | 交付内容 | 验收 / 证据 |
+| --- | --- | --- | --- |
+| P0 桌面底座 / M0 | 已实现并通过本地验证 | 单窗口、utility host、stub Agent、流式显示、停止、macOS arm64 `.app` | `npm run desktop:pack` 成功；复制到源码树外运行 [verify-packaged.mjs](../apps/desktop/scripts/verify-packaged.mjs)，12 项断言全通过：重复 initialize、IME、流式文本、文本出现后取消及光标收起、工具活动/展开、完成、host 退出与启动失败提示、关窗隐藏、退出清理。CLI `npm run check`、`npm run build` 通过；获批原生权限并设置 `TMPDIR=/private/tmp` 后 `npm test`：56 个文件，679 passed、1 skipped。Desktop `npm run desktop:test`：9 passed。产物未签名；上述 Desktop 验收为本地运行，CI 目前未覆盖 Desktop。 |
+| P1 真实任务 | 待实现，跟踪 [#67](https://github.com/chivopic/chivgent/issues/67) | 提取最小 runtime 配置与诊断；接真实 Provider 和只读工具 | 完成“解释当前项目”；目录正确；工具活动可展开；缺密钥仍能进入界面 |
+| P2 执行控制 | 待实现 | 写入/网络/Shell 设置、审批、取消、关窗/退出、通知 | 允许命令能执行、拒绝无副作用；关窗任务继续；退出清理；新设置只作用下一轮 |
+| P3 历史与会话 | 待实现，跟踪 [#68](https://github.com/chivopic/chivgent/issues/68) | 新格式、历史投影、订阅快照、任务元数据、导入和锁 | 刷新不断任务；重启恢复；崩溃不重放工具；旧日志不覆盖；导入保留来源 |
+| P4 本地可用版 / M1 | 待实现，UI 后续跟踪 [#69](https://github.com/chivopic/chivgent/issues/69) | 侧栏、设置、凭证、diff、预览、草稿、主题、安装完善 | 完成修复→审批→测试→检查 diff→重启继续；无源码依赖；CLI 回归通过 |
+| P5 工作台 / M2 | 待实现 | 运行中介入、持久终端、review、worktree、并行任务 | 按上一节逐项关卡交付；共用能力进入 CLI 回归 |
 
-P0 的 stub 通过现有 Agent/事件契约运行，不在 UI 内伪造聊天动画。P1 首次真实模型验证使用用户已配置的凭证并记录范围；自动化测试使用 stub，不消耗模型额度。每阶段跑受影响模块测试；进入 M1 跑完整 CLI 回归与打包安装验证。
+M0 的 stub 通过现有 Agent/事件契约运行，不在 UI 内伪造聊天动画。当前 Desktop 没有真实模型凭证接入、项目历史或会话恢复。P1 首次真实模型验证使用用户已配置的凭证并记录范围；自动化测试使用 stub，不消耗模型额度。每阶段跑受影响模块测试；进入 M1 跑完整 CLI 回归与打包安装验证。
 
 有副作用的 P2 依赖最小持久运行记录与保存失败门控，随 P2 先落地；P3 再完成全部历史界面、导入和恢复能力。不能等到 P3 才知道 P2 的工具执行是否留有记录。
 
@@ -264,17 +266,17 @@ P0 的 stub 通过现有 Agent/事件契约运行，不在 UI 内伪造聊天动
 
 ## 12. 首批变更与完成标准
 
-首批落实 P0，并为 P1 留好接入点：
+首批 P0 Desktop 原型已实现；本地收口验证记录如下：
 
-1. 创建私有 Desktop 包、独立构建配置与开发/打包脚本，固定依赖版本。
-2. 完成 main、preload、host，建立 initialize/start/event/interrupt 最小协议。
-3. 用现有 Agent 和 stub Provider 验证真实事件链与取消；仅提取必要共享代码。
-4. 实现任务主界面骨架、多行输入、活动展示和停止按钮。
-5. 生成本地 .app，复制到源码树外启动；验证资源、运行时和子进程生命周期。
-6. 检查 CLI tarball 安装结果，记录验证证据与下一阶段缺口。
+1. 已创建私有 Desktop 包、独立构建配置与开发/打包脚本。
+2. 已完成 main、preload、host 与 initialize/start/event/interrupt 最小协议。
+3. 已通过现有 Agent 和 stub Provider 验证事件流、停止和 host 故障展示。
+4. 已实现任务主界面、多行输入、中文输入法处理、工具活动与停止；对话状态更新和 host failure 时收束流式指示。
+5. 已生成 macOS arm64 未签名 `.app`，复制到源码树外运行并通过上述 12 项验收。`npm run desktop:pack` 的 `identity: null` 明确跳过代码签名；未执行公证或发布。
+6. CLI 检查、构建、完整测试通过；本轮未将 CLI tarball 安装到独立目录做发布验证。CI 当前只覆盖 CLI，不覆盖 Desktop 打包和 Electron GUI。
 
 M1 完成标准：用户可以安装应用，在自己的项目中完成一次受控代码修改，看到执行过程和验证结果，检查改动，并在重启后继续同一任务。
 
 M2 完成标准：进一步在隔离工作区推进多个任务、运行中介入、操作持久终端并审查结果。
 
-第一项实现任务：**P0——可打包的 Electron + chivgent Agent 纵向原型。**
+下一项实现任务：**P1——提取真实 Runtime 配置与诊断，连接真实 Provider 和项目只读工具**（[#67](https://github.com/chivopic/chivgent/issues/67)）。

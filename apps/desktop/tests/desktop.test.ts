@@ -121,6 +121,21 @@ describe("host service", () => {
 });
 
 describe("composer and scroll", () => {
+  it("settles partial text on cancellation and host failure without losing the text", () => {
+    const streaming = reduceDesk(
+      { ...initialDeskState, phase: "running", runId: "run-1" },
+      { type: "agent", runId: "run-1", sequence: 1, event: { type: "message_update", turn: 1, delta: "未完成的回答" } },
+    );
+    const stopped = reduceDesk(streaming, {
+      type: "agent", runId: "run-1", sequence: 2, event: { type: "agent_end", status: "aborted" },
+    });
+    expect(stopped.phase).toBe("stopped");
+    expect(stopped.items[0]).toMatchObject({ text: "未完成的回答", streaming: false });
+    const crashed = reduceDesk(streaming, { type: "host", status: { phase: "exited" } });
+    expect(crashed.phase).toBe("error");
+    expect(crashed.items[0]).toMatchObject({ text: "未完成的回答", streaming: false });
+  });
+
   it("does not submit while an IME composition is confirming", () => {
     expect(shouldSubmitOnEnter({
       key: "Enter",

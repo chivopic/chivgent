@@ -23,6 +23,7 @@ export function App(): JSX.Element {
   const [draft, setDraft] = useState("");
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [stuck, setStuck] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const timelineRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const ignoreEnter = useRef(false);
@@ -139,36 +140,36 @@ export function App(): JSX.Element {
   const label = phaseLabel(state.phase, state.host);
 
   return (
-    <div className="desk">
-      <aside className="sidebar">
+    <div className={`desk ${state.items.length === 0 ? "desk-home" : "desk-chat"} ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`}>
+      <aside className="sidebar" inert={!sidebarOpen}>
         <div className="brand">
           <Mark />
           <div>
             <div className="wordmark">chivgent</div>
             <div className="brand-note">本地工作台</div>
           </div>
+          <button className="sidebar-toggle" type="button" aria-label="折叠侧栏" title="折叠侧栏" onClick={() => setSidebarOpen(false)}>‹</button>
         </div>
+        <button className="new-task" type="button" onClick={() => composerRef.current?.focus()}><span>＋</span> 撰写消息</button>
+        <div className="side-nav"><span className="nav-icon">⌂</span><span>工作台</span><span className="nav-current">本地</span></div>
         <section className="side-block">
-          <h2>项目</h2>
+          <h2><span>项目</span><span className="section-count">01</span></h2>
           <div className="side-card">
-            <strong>离线演示</strong>
-            <p>stub provider。只读工具不读写工作区，也不调用模型。</p>
+            <span className="project-glyph">C</span><div><strong>离线演示</strong>
+            <p>本地 Agent 工作区</p></div>
           </div>
         </section>
         <section className="side-block grow">
-          <h2>任务</h2>
-          <div className="task current" data-testid="task-row">
+          <h2><span>最近任务</span><span className="section-count">01</span></h2>
+          <div className="task current" data-testid="task-row" title="当前会话">
             <span className={`dot ${statusTone(state)}`} />
-            <span className="task-title">当前会话</span>
-            <span className="task-phase" data-testid="run-status">{label}</span>
+            <span className="task-copy"><span className="task-title">当前会话</span><span className="task-phase" data-testid="run-status">{label}</span></span>
           </div>
         </section>
-        <footer className="host-foot" data-testid="host-status">
-          <span className={`dot ${state.host.phase === "ready" ? "ready" : "bad"}`} />
-          <span>{hostLabel(state.host)}</span>
-        </footer>
+        <footer className="sidebar-foot"><div className="profile-mark">C</div><div className="profile-copy"><strong>chivgent</strong><span>桌面版 · 离线模式</span></div><span className={`host-indicator ${state.host.phase === "ready" ? "ready" : "bad"}`} title={hostLabel(state.host)} /></footer>
       </aside>
       <main className="stage">
+        {!sidebarOpen && <button className="reopen-sidebar" type="button" aria-label="展开侧栏" title="展开侧栏" onClick={() => setSidebarOpen(true)}>☰</button>}
         <header className="stage-head">
           <div>
             <h1>当前会话</h1>
@@ -191,7 +192,10 @@ export function App(): JSX.Element {
           }}
         >
           {state.items.length === 0 ? (
-            <Empty />
+            <Empty onPrompt={(prompt) => {
+              setDraft(prompt);
+              composerRef.current?.focus();
+            }} />
           ) : (
             state.items.map((item) => (
               <ItemView
@@ -239,6 +243,7 @@ export function App(): JSX.Element {
           <textarea
             ref={composerRef}
             data-testid="composer"
+            aria-label="撰写消息"
             rows={2}
             value={draft}
             placeholder="描述你想让 chivgent 做的事"
@@ -286,6 +291,7 @@ export function App(): JSX.Element {
             )}
           </div>
         </form>
+        <div className="host-foot" data-testid="host-status"><span className={`dot ${state.host.phase === "ready" ? "ready" : "bad"}`} /><span>{hostLabel(state.host)}</span></div>
       </main>
     </div>
   );
@@ -332,15 +338,20 @@ function ItemView(props: {
   );
 }
 
-function Empty(): JSX.Element {
+function Empty(props: { onPrompt: (prompt: string) => void }): JSX.Element {
   return (
     <div className="empty">
-      <Mark />
-      <h2>从一条消息开始</h2>
+      <div className="welcome-mark"><Mark /></div>
+      <p className="eyebrow">CHIVGENT · 本地工作台</p>
+      <h2>今天想从哪里开始？</h2>
+      <div className="demo-note"><span className="demo-note-dot" />离线演示 · 暂未连接模型</div>
       <p>
-        回答经过现有 Agent 执行链。你会看到流式文本，以及一次只读工具调用。
-        停止会取消这次运行，不会改动文件。
+        试试流式回复与只读工具调用。当前演示不会调用模型或修改文件。
       </p>
+      <div className="suggestions" aria-label="提示词示例">
+        <button type="button" onClick={() => props.onPrompt("帮我梳理一个问题的解决思路")}>✳ <span>梳理一个问题的解决思路</span><b>↗</b></button>
+        <button type="button" onClick={() => props.onPrompt("解释这段代码的工作方式")}>⌘ <span>解释一段代码的工作方式</span><b>↗</b></button>
+      </div>
     </div>
   );
 }

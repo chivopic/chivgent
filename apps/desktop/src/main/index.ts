@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, Menu } from "electron";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { IPC } from "../protocol/channels.js";
 import {
   validateMainToHost,
@@ -70,7 +71,7 @@ function assertSender(sender: Electron.WebContents): void {
 function installIpc(): void {
   ipcMain.handle(IPC.initialize, async (event) => {
     assertSender(event.sender);
-    return callHost({ type: "initialize", requestId: "boot" });
+    return callHost({ type: "initialize", requestId: `boot-${randomUUID()}` });
   });
   ipcMain.handle(IPC.start, async (event, payload: unknown) => {
     assertSender(event.sender);

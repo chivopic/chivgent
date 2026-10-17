@@ -71,7 +71,7 @@ export function reduceDesk(state: DeskState, action: DeskAction): DeskState {
     case "started":
       return { ...state, phase: "running", runId: action.runId, notice: null };
     case "fail":
-      return { ...state, phase: "error", notice: action.message };
+      return { ...state, items: settleStreaming(state.items), phase: "error", notice: action.message };
     case "agent":
       return applyEvent(state, action.runId, action.sequence, action.event);
   }
@@ -104,6 +104,7 @@ function applyHost(state: DeskState, status: HostStatus): DeskState {
       ...state,
       host: status,
       phase: "error",
+      items: settleStreaming(state.items),
       notice: status.message ?? "Agent host 已退出。进行中的运行结果未知。",
     };
   }
@@ -160,6 +161,7 @@ function applyEvent(
       return {
         ...next,
         phase: phaseFromAgent(event.status),
+        items: settleStreaming(next.items, runId),
         notice: event.status === "error"
           ? event.error ?? "运行失败。"
           : next.notice,
@@ -167,6 +169,14 @@ function applyEvent(
     default:
       return next;
   }
+}
+
+function settleStreaming(items: readonly TimelineItem[], runId?: string): readonly TimelineItem[] {
+  return items.map((item) =>
+    item.kind === "assistant" && item.streaming && (runId === undefined || item.runId === runId)
+      ? { ...item, streaming: false }
+      : item,
+  );
 }
 
 function appendDelta(state: DeskState, runId: string, turn: number, delta: string): DeskState {

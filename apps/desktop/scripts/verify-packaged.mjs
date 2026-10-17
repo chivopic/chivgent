@@ -32,6 +32,8 @@ const report = {
   hostGoneAfterQuit: false,
   compositionIgnored: false,
   closeHidesWindow: false,
+  concurrentInitialize: false,
+  partialTextSettled: false,
 };
 
 const app = await electron.launch({
@@ -46,6 +48,11 @@ const app = await electron.launch({
 try {
   const page = await app.firstWindow();
   await page.getByTestId("host-status").getByText("已连接", { exact: false }).waitFor({ timeout: 20_000 });
+  const initializeResults = await page.evaluate(async () =>
+    Promise.all([window.chivgent.initialize(), window.chivgent.initialize()]),
+  );
+  report.concurrentInitialize = initializeResults.every((result) => result.ok);
+
   await page.getByTestId("composer").fill("组合输入");
   await page.getByTestId("composer").evaluate((element) => {
     element.dispatchEvent(new CompositionEvent("compositionstart"));
@@ -55,9 +62,21 @@ try {
   await page.getByTestId("composer").evaluate((element) => {
     element.dispatchEvent(new CompositionEvent("compositionend"));
   });
+
+  await page.getByTestId("composer").fill("文本出现后立即取消");
+  await page.getByTestId("send").click();
+  const partialAnswer = page.getByTestId("assistant-message").last();
+  await partialAnswer.getByText("我会", { exact: false }).waitFor({ timeout: 15_000 });
+  const partialText = await partialAnswer.innerText();
+  await page.getByTestId("stop").click();
+  await page.getByTestId("run-status").getByText("已停止").waitFor({ timeout: 15_000 });
+  await page.locator(".caret").waitFor({ state: "detached", timeout: 5_000 });
+  const settledText = await partialAnswer.innerText();
+  report.partialTextSettled = partialText.length > 0 && settledText.length > 0 && await page.locator(".caret").count() === 0;
+
   await page.getByTestId("composer").fill("检查当前任务");
   await page.getByTestId("send").click();
-  await page.getByTestId("assistant-message").getByText("我会", { exact: false }).waitFor({ timeout: 15_000 });
+  await page.getByTestId("assistant-message").last().getByText("我会", { exact: false }).waitFor({ timeout: 15_000 });
   await page.getByTestId("tool-activity").getByText("demo_progress").waitFor({ timeout: 15_000 });
   report.streaming = true;
   report.tool = true;
