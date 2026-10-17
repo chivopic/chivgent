@@ -3,6 +3,7 @@ import { nextRequestId, shouldSubmitOnEnter } from "./input.js";
 import { initialDeskState, phaseLabel, reduceDesk, type TimelineItem } from "./reduce.js";
 import { isNearBottom } from "./scroll.js";
 import type { HostStatus, HostToMain, IpcResult } from "../protocol/messages.js";
+import { avatarText, readPreferences, Settings, type Preferences } from "./Settings.js";
 
 interface DesktopApi {
   initialize(): Promise<IpcResult<HostToMain>>;
@@ -24,11 +25,55 @@ export function App(): JSX.Element {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [stuck, setStuck] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [preferences, setPreferences] = useState<Preferences>(readPreferences);
+  const profileRef = useRef<HTMLDivElement>(null);
+  const profileTriggerRef = useRef<HTMLButtonElement>(null);
+  const menuSettingsRef = useRef<HTMLButtonElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const ignoreEnter = useRef(false);
   const runIdRef = useRef<string | null>(null);
   runIdRef.current = state.runId;
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("chivgent.preferences", JSON.stringify(preferences));
+    } catch {
+      // Preferences still apply for this session when storage is unavailable.
+    }
+  }, [preferences]);
+
+  useEffect(() => {
+    if (!profileOpen) return;
+    const frame = window.requestAnimationFrame(() => menuSettingsRef.current?.focus());
+    const dismiss = (event: PointerEvent): void => {
+      if (event.target instanceof Node && !profileRef.current?.contains(event.target)) setProfileOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        setProfileOpen(false);
+        window.requestAnimationFrame(() => profileTriggerRef.current?.focus());
+      }
+    };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [profileOpen]);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") closeSettings();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [settingsOpen]);
 
   useEffect(() => {
     const api = window.chivgent;
@@ -138,10 +183,14 @@ export function App(): JSX.Element {
 
   const running = state.phase === "running";
   const label = phaseLabel(state.phase, state.host);
+  const closeSettings = (): void => {
+    setSettingsOpen(false);
+    window.requestAnimationFrame(() => profileTriggerRef.current?.focus());
+  };
 
   return (
-    <div className={`desk ${state.items.length === 0 ? "desk-home" : "desk-chat"} ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`}>
-      <aside className="sidebar" inert={!sidebarOpen}>
+    <div className={`desk ${state.items.length === 0 ? "desk-home" : "desk-chat"} ${sidebarOpen ? "sidebar-open" : "sidebar-closed"} ${preferences.compact ? "compact-layout" : ""}`} data-theme={preferences.theme}>
+      <aside className="sidebar" inert={!sidebarOpen || settingsOpen}>
         <div className="brand">
           <Mark />
           <div>
@@ -169,7 +218,14 @@ export function App(): JSX.Element {
           <span>{hostLabel(state.host)}</span>
         </footer>
       </aside>
-      <main className="stage">
+      <main className="stage" inert={settingsOpen}>
+        <div className="profile-anchor" ref={profileRef}>
+          <button ref={profileTriggerRef} className="profile-trigger" type="button" aria-label="打开个人菜单" aria-expanded={profileOpen} aria-haspopup="menu" onClick={() => setProfileOpen((open) => !open)}>{avatarText(preferences.displayName)}</button>
+          {profileOpen && <div className="profile-popover" role="menu">
+            <div className="profile-summary"><span className="profile-avatar">{avatarText(preferences.displayName)}</span><span><strong>{preferences.displayName || "用户"}</strong><small>本机资料</small></span></div>
+            <button ref={menuSettingsRef} type="button" role="menuitem" onClick={() => { setSettingsOpen(true); setProfileOpen(false); }}>设置</button>
+          </div>}
+        </div>
         {!sidebarOpen && <button className="reopen-sidebar" type="button" aria-label="展开侧栏" title="展开侧栏" onClick={() => setSidebarOpen(true)}>☰</button>}
         <header className="stage-head">
           <div>
@@ -242,8 +298,8 @@ export function App(): JSX.Element {
             ref={composerRef}
             data-testid="composer"
             aria-label="撰写消息"
-            aria-description="Enter 发送，Shift+Enter 换行。"
-            title="Enter 发送，Shift+Enter 换行"
+            aria-description={preferences.sendOnEnter ? "Enter 发送，Shift+Enter 换行。" : "Enter 换行，使用发送按钮发送。"}
+            title={preferences.sendOnEnter ? "Enter 发送，Shift+Enter 换行" : "Enter 换行，使用发送按钮发送"}
             rows={2}
             value={draft}
             placeholder="描述你想让 chivgent 做的事"
@@ -259,7 +315,7 @@ export function App(): JSX.Element {
               }, 0);
             }}
             onKeyDown={(event) => {
-              if (
+              if (preferences.sendOnEnter &&
                 shouldSubmitOnEnter({
                   key: event.key,
                   shiftKey: event.shiftKey,
@@ -292,6 +348,9 @@ export function App(): JSX.Element {
           </div>
         </form>
       </main>
+      {settingsOpen && <div className="settings-overlay" role="dialog" aria-label="设置" aria-modal="true">
+        <Settings preferences={preferences} onChange={setPreferences} onBack={closeSettings} />
+      </div>}
     </div>
   );
 }
