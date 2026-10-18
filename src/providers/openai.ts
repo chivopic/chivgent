@@ -18,28 +18,46 @@ import type {
   ToolResultMessage,
 } from "../messages.js";
 import { fromResponsesUsage } from "./usage.js";
+import { oauthApiFetch } from "../auth/oauth.js";
 
 interface OpenAIContinuation {
   readonly provider: "openai-responses";
   readonly previousResponseId: string;
 }
 
+interface OAuthStatelessContinuation {
+  readonly provider: "openai-oauth-stateless";
+  /** Message boundary for identifying only newly returned tool outputs. */
+  readonly messageCount: number;
+  /** Accumulated input sent before the response, since response storage is off. */
+  readonly priorInput: ResponseInput;
+  /** Keep the complete output, including encrypted reasoning items, for stateless tool continuation. */
+  readonly responseOutput: OpenAIResponse["output"];
+}
+
 export interface OpenAIClientOptions {
   readonly apiKey: string;
   readonly model: string;
   readonly client?: OpenAI;
+  /** ChatGPT plan tokens require streamed, non-stored Responses requests. */
+  readonly oauth?: boolean;
 }
 
 export class OpenAIClient implements LLMClient {
   private readonly client: OpenAI;
   private readonly model: string;
+  private readonly oauth: boolean;
 
   constructor(options: OpenAIClientOptions) {
-    this.client = options.client ?? new OpenAI({ apiKey: options.apiKey });
+    const oauth = options.oauth ?? false;
+    this.client = options.client ?? new OpenAI({ apiKey: options.apiKey,
+      ...(oauth ? { baseURL: "https://api.openai.com/v1", fetch: oauthApiFetch("https://api.openai.com") } : {}) });
     this.model = options.model;
+    this.oauth = oauth;
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
+    if (this.oauth) return this.stream(request, { onTextDelta: () => undefined });
     const parameters = { ...this.createParameters(request), stream: false as const };
     const response =
       request.signal === undefined
@@ -70,34 +88,40 @@ export class OpenAIClient implements LLMClient {
       } else if (event.type === "response.completed") {
         completed = event.response;
       } else if (event.type === "response.failed") {
-        throw new TypeError(
-          `OpenAI stream failed: ${event.response.error?.message ?? "unknown error"}`,
-        );
+        throw new TypeError(this.oauth
+          ? "OpenAI subscription request failed."
+          : `OpenAI stream failed: ${event.response.error?.code ?? "unknown error"}`);
       }
     }
 
     if (completed === undefined) {
       throw new TypeError("OpenAI stream ended without a completed response.");
     }
-    return toLLMResponse(completed);
+    return this.oauth
+      ? toOAuthLLMResponse(completed, request.messages.length, (parameters.input ?? []) as ResponseInput)
+      : toLLMResponse(completed);
   }
 
   private createParameters(
     request: LLMRequest,
   ): Omit<ResponseCreateParamsNonStreaming, "stream"> {
-    const continuation = parseContinuation(request.continuation);
+    const continuation = this.oauth ? undefined : parseContinuation(request.continuation);
     return {
       model: this.model,
+      ...(this.oauth ? { store: false } : {}),
+      ...(this.oauth ? { include: ["reasoning.encrypted_content"] } : {}),
       instructions: request.systemPrompt,
       input:
-        continuation === undefined
-          ? toInitialInput(request.messages)
-          : toContinuationInput(request.messages),
+        this.oauth
+          ? toOAuthStatelessInput(request.messages, parseOAuthContinuation(request.continuation))
+          : continuation === undefined
+            ? toInitialInput(request.messages)
+            : toContinuationInput(request.messages),
       tools: request.tools.map(toOpenAITool),
       parallel_tool_calls: false,
-      ...(continuation === undefined
-        ? {}
-        : { previous_response_id: continuation.previousResponseId }),
+      ...(!this.oauth && continuation !== undefined
+        ? { previous_response_id: continuation.previousResponseId }
+        : {}),
     };
   }
 }
@@ -111,6 +135,20 @@ function toLLMResponse(response: OpenAIResponse): LLMResponse {
       provider: "openai-responses",
       previousResponseId: response.id,
     } satisfies OpenAIContinuation,
+  };
+}
+
+function toOAuthLLMResponse(response: OpenAIResponse, messageCount: number, priorInput: ResponseInput): LLMResponse {
+  const usage = fromResponsesUsage((response as { usage?: unknown }).usage);
+  return {
+    message: fromOpenAIResponse(response),
+    ...(usage === undefined ? {} : { usage }),
+    continuation: {
+      provider: "openai-oauth-stateless",
+      messageCount,
+      priorInput,
+      responseOutput: response.output,
+    } satisfies OAuthStatelessContinuation,
   };
 }
 
@@ -129,6 +167,43 @@ function parseContinuation(value: unknown): OpenAIContinuation | undefined {
     throw new TypeError("OpenAIClient received an incompatible continuation.");
   }
   return value as OpenAIContinuation;
+}
+
+function parseOAuthContinuation(value: unknown): OAuthStatelessContinuation | undefined {
+  if (value === undefined) return undefined;
+  // A continuation from the API-key Responses flow is intentionally ignored:
+  // OAuth must never use previous_response_id and can replay the transcript.
+  if (typeof value !== "object" || value === null ||
+      !("provider" in value) || value.provider !== "openai-oauth-stateless") return undefined;
+  if (
+      !("messageCount" in value) || !Number.isSafeInteger(value.messageCount) ||
+      (value.messageCount as number) < 0 ||
+      !("priorInput" in value) || !Array.isArray(value.priorInput) ||
+      !("responseOutput" in value) || !Array.isArray(value.responseOutput)) {
+    throw new TypeError("OpenAI OAuth received an incompatible continuation.");
+  }
+  return value as OAuthStatelessContinuation;
+}
+
+function toOAuthStatelessInput(
+  messages: readonly Message[],
+  continuation: OAuthStatelessContinuation | undefined,
+): ResponseInput {
+  if (continuation === undefined) return toInitialInput(messages);
+  if (continuation.messageCount > messages.length) {
+    throw new TypeError("OpenAI OAuth continuation does not match the transcript.");
+  }
+  // With store:false, replay accumulated input, the prior response output
+  // (including reasoning), and only newly-added tool results. Prior assistant
+  // calls are already in responseOutput, so transcript assistant messages are
+  // omitted to avoid duplicating them.
+  const newMessages = messages.slice(continuation.messageCount).filter((message) => message.role !== "assistant");
+  const toolResults = newMessages.filter((message) => message.role === "tool");
+  return [
+    ...continuation.priorInput,
+    ...continuation.responseOutput as unknown as ResponseInput,
+    ...toInitialInput(toolResults),
+  ];
 }
 
 /**

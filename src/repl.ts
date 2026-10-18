@@ -87,6 +87,8 @@ export interface SignIn {
   needsApiKey?(): Promise<boolean>;
   /** Saves the key and puts it to use, or returns why it could not. */
   submit(apiKey: string): Promise<string | undefined>;
+  oauth?(provider: "openai" | "xai", signal?: AbortSignal): Promise<string | undefined>;
+  signOut?(): Promise<string | undefined>;
   unavailableMessage?(): string;
 }
 
@@ -109,6 +111,7 @@ export const BUILT_IN_COMMANDS = [
   "exit",
   "quit",
   "login",
+  "logout",
   "provider",
   "model",
   "endpoint",
@@ -134,6 +137,8 @@ const HELP = `Commands:
   /model     Show or change the current model: /model MODEL
   /endpoint  Set the URL for an OpenAI-compatible Provider
   /login     Store a key for the current Provider; /login NAME switches first
+  /login oauth [openai|xai]  Sign in with a subscription
+  /logout    Sign out of the current OAuth subscription
   /exit      Leave chivgent (Ctrl+C or Ctrl+D also works)
 
 Anything else is sent to the model. Ctrl+C stops a running answer; at the prompt it exits.
@@ -304,6 +309,13 @@ export function handleSlashCommand(
         return "handled";
       }
       return { kind: "login", providerArgument: trimmed.slice("/login".length).trim() };
+
+    case "/logout":
+      if (context.signIn?.signOut === undefined) {
+        context.write("OAuth sign-out is unavailable in this session.\n");
+        return "handled";
+      }
+      return { kind: "login", providerArgument: "__logout__" };
 
     case "/exit":
     case "/quit":
@@ -919,6 +931,38 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         break;
       }
       if (typeof outcome === "object" && outcome.kind === "login") {
+        if (outcome.providerArgument === "__logout__") {
+          const result = await options.signIn?.signOut?.();
+          write(`${result ?? "Signed out of the current OAuth subscription."}\n`);
+          showPrompt();
+          continue;
+        }
+        if (outcome.providerArgument === "oauth" || /^oauth\s+(openai|xai)$/.test(outcome.providerArgument)) {
+          const [, requested] = outcome.providerArgument.split(/\s+/, 2);
+          const target = requested ?? options.providers?.provider ?? options.providerName;
+          if (target !== "openai" && target !== "xai") {
+            write("Use /login oauth openai or /login oauth xai.\n");
+            showPrompt();
+            continue;
+          }
+          if (options.signIn?.oauth === undefined) {
+            write("OAuth sign-in is unavailable in this session.\n");
+            showPrompt();
+            continue;
+          }
+          if (options.providers && options.providers.provider !== target) {
+            const selected = await options.providers.select(target);
+            write(selected.message);
+            if (!selected.ok) { showPrompt(); continue; }
+          }
+          controller = new AbortController();
+          try {
+            const failure = await options.signIn.oauth(target, controller.signal);
+            write(failure ?? `Signed in to ${target} subscription for this session. API keys remain preferred on the next launch.\n`);
+          } finally { controller = undefined; }
+          showPrompt();
+          continue;
+        }
         if (outcome.providerArgument.length > 0) {
           if (options.providers === undefined) {
             write("Provider switching is unavailable in this session.\n");
