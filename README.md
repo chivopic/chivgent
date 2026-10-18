@@ -31,6 +31,15 @@ You need Node.js 22 or newer.
 npm install -g chivgent
 ```
 
+Or, on macOS/Linux, use the [official website installer](https://chivgent-web.vercel.app/install.sh). It still requires Node.js 22+ and npm; it installs the same npm package, without using `sudo` or changing your shell configuration.
+
+```bash
+curl -fsSL https://chivgent-web.vercel.app/install.sh | bash
+```
+
+This runs a script from the Internet. To inspect it first, download it with `curl -fsSLo install.sh https://chivgent-web.vercel.app/install.sh`, read it, then run `bash install.sh`. If npm's global bin directory is missing from PATH, the installer shows the directory to add.
+
+
 Already installed? `chivgent update --check`, then `chivgent update`.
 
 Start it in the project.

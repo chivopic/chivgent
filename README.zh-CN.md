@@ -31,6 +31,15 @@ chivgent 是跑在你打开的目录里的本地 agent。它要做的，是 [Cla
 npm install -g chivgent
 ```
 
+macOS/Linux 用户也可以通过[官网一键安装脚本](https://chivgent-web.vercel.app/install.sh)安装。仍需提前装好 Node.js 22+ 和 npm；脚本安装的是同一个 npm 包，不会自动调用 `sudo` 或修改 Shell 配置。
+
+```bash
+curl -fsSL https://chivgent-web.vercel.app/install.sh | bash
+```
+
+这会直接执行从网上下载的脚本。更稳妥的做法是先运行 `curl -fsSLo install.sh https://chivgent-web.vercel.app/install.sh`，阅读内容后再运行 `bash install.sh`。如果 npm 全局命令目录不在 PATH 里，脚本会提示需要添加的目录。
+
+
 已经安装过？先 `chivgent update --check`，再 `chivgent update`。
 
 在项目目录里启动。
