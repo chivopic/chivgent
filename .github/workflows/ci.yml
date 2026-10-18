@@ -46,3 +46,27 @@ jobs:
 
       - name: Package dry run
         run: npm pack --dry-run
+
+  desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Desktop unit and integration tests
+        run: npm run desktop:test
+
+      - name: Build Electron app
+        run: npm run desktop:build
+
+      - name: Electron read-only end-to-end verification (offline fixture)
+        run: xvfb-run -a node apps/desktop/scripts/verify-readonly.mjs
