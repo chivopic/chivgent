@@ -196,6 +196,49 @@ describe("desktop real runtime", () => {
     await new Promise(setImmediate);
     expect(prompted).toEqual([]);
   });
+  it("exposes startup Provider and compatible endpoint before any prompt, without URL credentials", () => {
+    const messages: HostToMain[] = [];
+    const service = new HostService({
+      send: (message) => messages.push(message),
+      createAgent: () => { throw new Error("not used"); },
+      defaultProvider: "openai-compatible",
+      compatibleBaseURL: "https://user:password@proxy.example.test/v1?token=secret",
+    });
+    service.handle({ type: "initialize", requestId: "boot" });
+    expect(messages[0]).toMatchObject({
+      type: "initialized",
+      defaultProvider: "openai-compatible",
+      compatibleBaseURL: "https://proxy.example.test/v1",
+    });
+    expect(JSON.stringify(messages[0])).not.toContain("password");
+    expect(JSON.stringify(messages[0])).not.toContain("secret");
+  });
+
+  it("keeps accepting real project prompts after the 100-request demo limit", async () => {
+    const first = temporaryProject();
+    const second = temporaryProject();
+    const messages: HostToMain[] = [];
+    const service = new HostService({
+      send: (message) => messages.push(message),
+      createAgent: () => { throw new Error("demo fallback"); },
+      createSession: async () => ({
+        provider: "openai", model: "fixture",
+        session: { messages: [], subscribe: () => () => {}, prompt: async () => {} },
+      }),
+    });
+    await select(service, messages, first);
+    for (let i = 0; i < 105; i++) {
+      service.handle({ type: "start", requestId: `prompt-${i}`, prompt: "hello" });
+      await new Promise(setImmediate);
+    }
+    await select(service, messages, second, "switch-project");
+    service.handle({ type: "start", requestId: "after-switch", prompt: "still works" });
+    await new Promise(setImmediate);
+    expect(messages.filter((message) => message.type === "started")).toHaveLength(106);
+    expect(messages.some((message) => message.type === "error" && message.code === "request_log_full")).toBe(false);
+    await service.shutdown();
+  });
+
 });
 
 async function until(predicate: () => boolean): Promise<void> {
