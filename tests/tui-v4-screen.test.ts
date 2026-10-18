@@ -7,8 +7,10 @@ import type { LLMRequest } from "../src/llm.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
-function setup(prompts: string[]) {
+function setup(prompts: string[], id?: string, title?: string) {
   return new AgentSession({
+    ...(id === undefined ? {} : { id }),
+    ...(title === undefined ? {} : { title }),
     cwd: process.cwd(),
     agent: {
       systemPrompt: "test", tools: [], maxTurns: 1,
@@ -32,7 +34,7 @@ describe("default inline TUI composer in a real terminal", () => {
     const session = setup(prompts);
     const result = runRepl({ session, ...screen, tui: true, inlineComposer: true, stderr: screen.output });
     try {
-      await vi.waitFor(() => expect(screen.bytes()).toContain("Enter send"));
+      await vi.waitFor(() => expect(screen.bytes()).toContain("/help for shortcuts"));
       screen.input.write("first line\u000fsecond line\r");
       await vi.waitFor(() => expect(prompts).toEqual(["first line\nsecond line"]));
       await vi.waitFor(() => expect(session.messages.some(message => message.role === "assistant")).toBe(true));
@@ -52,7 +54,7 @@ describe("default inline TUI composer in a real terminal", () => {
     const session = setup(prompts);
     const result = runRepl({ session, ...screen, tui: true, inlineComposer: true, stderr: screen.output });
     try {
-      await vi.waitFor(() => expect(screen.bytes()).toContain("Enter send"));
+      await vi.waitFor(() => expect(screen.bytes()).toContain("/help for shortcuts"));
       screen.input.write("Refactor API\r");
       await vi.waitFor(() => expect(prompts).toEqual(["Refactor API"]));
       await vi.waitFor(() => expect(session.messages.some(message => message.role === "assistant")).toBe(true));
@@ -77,18 +79,46 @@ describe("default inline TUI composer in a real terminal", () => {
     const result = runRepl({ session: setup(prompts), ...screen,
       tui: true, inlineComposer: true, stderr: screen.output });
     try {
-      await vi.waitFor(() => expect(screen.bytes()).toContain("Enter send"));
+      await vi.waitFor(() => expect(screen.bytes()).toContain("/help for shortcuts"));
       screen.input.write("do not send");
-      const beforeCancel = screen.bytes().length;
       screen.input.write("\u001b");
       // Wait for Escape to actually discard the draft, not the intermediate
       // repaint while it is being disambiguated from an arrow sequence.
-      await vi.waitFor(() => expect(screen.bytes().slice(beforeCancel)).toContain("1 lines · 0 bytes"));
+      await vi.waitFor(async () => {
+        await screen.flush();
+        expect(screen.visible().join("\n")).not.toContain("do not send");
+        expect(screen.visible().join("\n")).toContain("›");
+      });
       expect(prompts).toEqual([]);
       screen.input.write("\u0004");
       await vi.waitFor(() => expect(screen.input.raw).toBe(false)).catch(() => {
         throw new Error(`Terminal exit diagnostic: ${JSON.stringify(screen.bytes().slice(-1400))}`);
       });
+      expect(await result).toBe(0);
+    } finally { screen.input.end(); await result; screen.dispose(); }
+  });
+
+  it("keeps local session IDs out of new and resume confirmations", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const screen = terminalHarness(75, 22);
+    const prompts: string[] = [];
+    const result = runRepl({ session: setup(prompts), ...screen,
+      tui: true, inlineComposer: true, stderr: screen.output,
+      sessionOptions: {
+        create: async () => setup(prompts, "created-id-hidden-from-normal-output", "new topic"),
+        resume: async () => setup(prompts, "resumed-id-hidden-from-normal-output", "older topic"),
+      },
+    });
+    try {
+      screen.input.write("/new new topic\r");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("Started a new session · new topic"));
+      screen.input.write("/resume selected-by-user\r");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("Resumed saved session · older topic"));
+      expect(screen.bytes()).not.toContain("created-id-hidden-from-normal-output");
+      expect(screen.bytes()).not.toContain("resumed-id-hidden-from-normal-output");
+      screen.input.write("/session\r");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("id:        resumed-id-hidden-from-normal-output"));
+      screen.input.write("\u0004");
       expect(await result).toBe(0);
     } finally { screen.input.end(); await result; screen.dispose(); }
   });

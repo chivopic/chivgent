@@ -87,7 +87,10 @@ describe("CLI terminal UI wiring", () => {
       allowWrites: false,
       allowShell: false,
     });
+    expect(harness.createLocalSession.mock.calls[0]?.[0].permissionPolicy).toMatchObject({ mode: "ask-first" });
+    expect(harness.runRepl.mock.calls[0]?.[0].permissionPolicy).toMatchObject({ mode: "ask-first" });
     expect(harness.createLocalSession.mock.calls[0]?.[0].options).not.toHaveProperty("permissionMode");
+    expect(harness.runRepl.mock.calls[0]?.[0].banner).not.toContain("session-test");
   });
 
   it("keeps --simple on the append-only renderer and stdout REPL", async () => {
@@ -100,6 +103,8 @@ describe("CLI terminal UI wiring", () => {
       inlineComposer: false,
       output: harness.process.stdout,
     });
+    expect(harness.createLocalSession.mock.calls[0]?.[0].permissionPolicy).toBeUndefined();
+    expect(harness.runRepl.mock.calls[0]?.[0].banner).not.toContain("session-test");
   });
 
   it("keeps explicit --tui working with redirected stdout", async () => {
@@ -111,6 +116,21 @@ describe("CLI terminal UI wiring", () => {
       inlineComposer: true,
       output: harness.process.stderr,
     });
+  });
+
+  it.each([
+    { flags: ["--allow-writes"], label: "--allow-writes" },
+    { flags: ["--allow-shell"], label: "--allow-shell" },
+    { flags: ["--allow-shell", "--approve-all-shell"], label: "--approve-all-shell" },
+    { flags: ["--allow-shell", "--shell-network"], label: "--shell-network" },
+  ])("keeps legacy permission flag $label in the rich TUI", async ({ flags }) => {
+    expect(await main([...flags, "--no-session", "--no-extensions"])).toBe(0);
+    expect(harness.createLocalSession.mock.calls[0]?.[0].permissionPolicy).toBeUndefined();
+  });
+
+  it("honors an explicit modern permission mode", async () => {
+    expect(await main(["--permission-mode", "workspace", "--no-session", "--no-extensions"])).toBe(0);
+    expect(harness.createLocalSession.mock.calls[0]?.[0].permissionPolicy).toMatchObject({ mode: "workspace" });
   });
 
   it("leaves the rich interface active under NO_COLOR without passing ANSI color", async () => {

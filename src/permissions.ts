@@ -8,6 +8,21 @@ export type PermissionMode = typeof PERMISSION_MODES[number];
 export type ShellScope = "workspace" | "host";
 export type PermissionApproval = (action: string, signal?: AbortSignal, context?: string) => Promise<boolean>;
 
+/** Selects the policy for one interactive process; saved sessions never supply it. */
+export function initialPermissionMode(options: {
+  readonly interactive: boolean;
+  readonly tui: boolean;
+  readonly permissionMode?: PermissionMode;
+  readonly allowWrites: boolean;
+  readonly allowShell: boolean;
+  readonly approveAllShell: boolean;
+  readonly shellNetwork: boolean;
+}): PermissionMode | undefined {
+  if (options.permissionMode !== undefined) return options.permissionMode;
+  if (!options.interactive || !options.tui || options.allowWrites || options.allowShell || options.approveAllShell || options.shellNetwork) return undefined;
+  return "ask-first";
+}
+
 /** Session-process policy. It is deliberately not restored from transcript data. */
 export class PermissionPolicy {
   private modeValue: PermissionMode;

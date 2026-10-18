@@ -24,7 +24,7 @@ describe("consent and real-terminal git diff review", () => {
     const repl = runRepl({session:session(), ...screen, tui:true, inlineComposer:true,
       stderr:screen.output, gitDiffReader:read});
     try {
-      await vi.waitFor(() => expect(screen.bytes()).toContain("Enter send"));
+      await vi.waitFor(() => expect(screen.bytes()).toContain("/help for shortcuts"));
       screen.input.write("/gitdiff\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("Approve once?"));
       screen.input.write("n"); // single-key denial
@@ -43,7 +43,7 @@ describe("consent and real-terminal git diff review", () => {
     const repl = runRepl({session:session(), ...screen, tui:true, inlineComposer:true,
       stderr:screen.output, gitDiffReader:read});
     try {
-      await vi.waitFor(() => expect(screen.bytes()).toContain("Enter send"));
+      await vi.waitFor(() => expect(screen.bytes()).toContain("/help for shortcuts"));
       screen.input.write("/gitdiff --staged\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("Approve once?"));
       expect(read).not.toHaveBeenCalled();
@@ -52,7 +52,7 @@ describe("consent and real-terminal git diff review", () => {
       expect(read.mock.calls[0]?.[1]).toBe("staged");
       await vi.waitFor(() => expect(screen.bytes()).toContain("live Git diff"));
       screen.input.write("q");
-      await vi.waitFor(() => expect(screen.bytes().split("Enter send").length).toBeGreaterThan(2));
+      await vi.waitFor(() => expect(screen.bytes().split("/help for shortcuts").length).toBeGreaterThan(2));
       screen.input.write("\u0004");
       expect(await repl).toBe(0);
     } finally {screen.input.end(); await repl; screen.dispose();}

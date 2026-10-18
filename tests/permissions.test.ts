@@ -2,10 +2,11 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PermissionPolicy, PermissionWorkspace } from "../src/permissions.js";
+import { initialPermissionMode, PermissionPolicy, PermissionWorkspace } from "../src/permissions.js";
 import { BashTool } from "../src/tools/bash.js";
 import type { ShellOperations } from "../src/shell/types.js";
 import { AgentSession } from "../src/session.js";
+import { FileSessionStore } from "../src/session-store.js";
 import { assistant, FakeLLMClient } from "./fakes.js";
 
 const roots: string[] = [];
@@ -15,6 +16,50 @@ async function root(): Promise<string> {
   return value;
 }
 afterEach(async () => { await Promise.all(roots.splice(0).map((value) => rm(value, { recursive: true, force: true }))); });
+
+describe("initial TUI permission selection", () => {
+  const ordinaryTui = {
+    interactive: true, tui: true, allowWrites: false, allowShell: false,
+    approveAllShell: false, shellNetwork: false,
+  } as const;
+
+  it("starts an ordinary interactive TUI in Ask for me", () => {
+    expect(initialPermissionMode(ordinaryTui)).toBe("ask-first");
+  });
+
+  it("keeps non-TUI and non-interactive sessions on the legacy read-only path", () => {
+    expect(initialPermissionMode({ ...ordinaryTui, tui: false })).toBeUndefined();
+    expect(initialPermissionMode({ ...ordinaryTui, interactive: false })).toBeUndefined();
+  });
+
+  it.each([
+    ["allowWrites", { allowWrites: true }],
+    ["allowShell", { allowShell: true }],
+    ["approveAllShell", { approveAllShell: true }],
+    ["shellNetwork", { shellNetwork: true }],
+  ] as const)("does not override the explicit legacy %s capability", (_name, change) => {
+    expect(initialPermissionMode({ ...ordinaryTui, ...change })).toBeUndefined();
+  });
+
+  it.each(["ask-first", "workspace", "unrestricted"] as const)("respects explicit --permission-mode %s", permissionMode => {
+    expect(initialPermissionMode({ ...ordinaryTui, permissionMode })).toBe(permissionMode);
+  });
+
+  it("does not persist a broader process policy in the session record", async () => {
+    const cwd = await root();
+    const store = new FileSessionStore(await root());
+    const agent = {
+      systemPrompt: "test", maxTurns: 1, llm: new FakeLLMClient([]), tools: [],
+      workspace: new PermissionWorkspace(cwd, new PermissionPolicy("unrestricted")), streaming: false,
+    };
+    const session = new AgentSession({ agent, cwd, store });
+    await session.initialize();
+    const saved = await store.read(session.id);
+    expect(saved).toBeDefined();
+    expect(saved).not.toHaveProperty("permissionMode");
+    expect(initialPermissionMode(ordinaryTui)).toBe("ask-first");
+  });
+});
 
 describe("permission policy", () => {
   it("asks before each ask-first file change and does not mutate on denial", async () => {

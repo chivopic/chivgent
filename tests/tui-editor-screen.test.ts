@@ -27,9 +27,9 @@ describe("interactive TUI editor", () => {
     const session = fixture(prompts);
     const run = runRepl({ session, ...screen, stderr: screen.output, tui: true, inlineComposer: true });
     try {
-      await vi.waitFor(() => expect(screen.bytes()).toContain("Enter send"));
+      await vi.waitFor(() => expect(screen.bytes()).toContain("/help for shortcuts"));
       screen.input.write("/he");
-      await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("/help"));
+      await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("› /help"));
       screen.input.write("\r");
       await screen.flush();
       expect(prompts).toEqual([]);

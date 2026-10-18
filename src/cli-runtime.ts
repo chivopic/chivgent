@@ -53,7 +53,7 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
   const allowShell = modernPolicy || options.allowShell;
   if (allowWrites) prompt.push(WRITE_SYSTEM_PROMPT);
   if (allowShell) prompt.push(SHELL_SYSTEM_PROMPT);
-  if (modernPolicy) prompt.push(`Permission mode: ${config.permissionPolicy!.mode}. For files or network outside the workspace, request bash with scope "host" and explain why in justification; this asks for one-command broad host access. Never retry denied actions using another tool.`);
+  if (modernPolicy) prompt.push(`A process-local permission policy governs file changes, shell commands, and extension tools; its mode can change during the conversation and is not restored from a saved session. For files or network outside the workspace, request bash with scope "host" and explain why in justification; this asks for one-command broad host access. Never retry denied actions using another tool.`);
   prompt.push(...(extensions?.systemPromptContributions ?? []));
 
   const contextManager = new ContextManager({
