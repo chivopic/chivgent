@@ -140,6 +140,18 @@ describe("composer and scroll", () => {
     expect(cancelled.items[0]).toMatchObject({ text: "未完成的回答", streaming: false });
   });
 
+  it("does not let stale run events or late acknowledgements overwrite the active run", () => {
+    const active = { ...initialDeskState, phase: "running" as const, runId: "run-new" };
+    const staleEnd = reduceDesk(active, { type: "agent", runId: "run-old", sequence: 9, event: { type: "agent_end", status: "aborted" } });
+    expect(staleEnd).toEqual(active);
+    const staleError = reduceDesk(active, { type: "run-error", runId: "run-old", message: "old run failed" } as Parameters<typeof reduceDesk>[1]);
+    expect(staleError).toEqual(active);
+    const complete = reduceDesk(active, { type: "agent", runId: "run-new", sequence: 1, event: { type: "agent_end", status: "completed" } });
+    expect(complete.phase).toBe("completed");
+    expect(reduceDesk(complete, { type: "started", runId: "run-new" }).phase).toBe("completed");
+    expect(reduceDesk(active, { type: "run-error", runId: "run-new", message: "current failed" } as Parameters<typeof reduceDesk>[1]).phase).toBe("error");
+  });
+
   it("does not submit while an IME composition is confirming", () => {
     expect(shouldSubmitOnEnter({
       key: "Enter",
