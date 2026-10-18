@@ -1,5 +1,7 @@
 # From an issue to a reviewable pull request
 
+[中文](issue-workflow.zh-CN.md)
+
 This page is the order of work for a reported issue. [Code standards](code-standards.md)
 is the acceptance bar: what a change must contain, what a test must prove, and how
 a review is run. [Contributors](contributors.md) says what stops a review before it
