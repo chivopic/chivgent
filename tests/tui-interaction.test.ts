@@ -39,10 +39,12 @@ it("keeps the welcome panel within very narrow and Unicode terminal widths", () 
 
 it("shows a compact wordmark without a session id", () => {
   const banner = welcome({ version: "test", provider: "openai", model: "gpt-test", cwd: "/project", resumed: false, signedOut: true, width: 80 });
-  expect(banner).toContain("Start with /provider");
+  expect(banner).toContain("Set up a Provider with /provider");
   expect(banner).not.toContain("╭");
   expect(banner).not.toContain("demo");
-  expect(banner.split("\n").filter(Boolean)).toHaveLength(6);
+  expect(banner).toContain("openai · gpt-test · /project");
+  expect(banner).not.toContain("session-");
+  expect(banner.split("\n").filter(Boolean)).toHaveLength(3);
   expect(welcome({ version: "test", provider: "openai", model: "gpt-test", cwd: "/project", resumed: false, signedOut: true, width: 80, color: true }))
     .toContain("\u001b[1;36m");
 });
@@ -51,6 +53,14 @@ it("keeps the workspace name visible when the welcome path is long", () => {
   const banner = welcome({ version: "test", provider: "demo", model: "model", cwd: "/very/long/parent/directory/chivgent", resumed: false, signedOut: false, width: 40 });
   expect(banner).toContain("chivgent");
   expect(banner).toContain("…");
+  const narrow = welcome({ version: "test", provider: "a-very-long-provider", model: "a-very-long-model", cwd: "/parent/chivgent", resumed: false, signedOut: false, width: 24 });
+  expect(narrow).toContain("chivgent");
+});
+
+it("sanitizes workspace control characters before displaying the welcome", () => {
+  const banner = welcome({ version: "test", provider: "demo", model: "model", cwd: "/safe/\u001b[2Jworkspace", resumed: false, signedOut: false, width: 60 });
+  expect(banner).toContain("workspace");
+  expect(banner).not.toContain("\u001b[2J");
 });
 
 it("keeps reading Ctrl+C while dropping busy input and restores raw mode", async () => {

@@ -234,7 +234,10 @@ export function editorFrame(document: EditorDocument, width: number, height: num
     }
     return {
       row: (() => {
-        const baseline = fitLine(`│ ${display}`, cellWidth);
+        const prefix = submitOnEnter
+          ? (index + first === position.row ? "› " : "  ")
+          : "│ ";
+        const baseline = fitLine(`${prefix}${display}`, cellWidth);
         const selection = document.selectionRange();
         if (selection === undefined || display !== original) return baseline;
         const rowIndex = first + index;
@@ -244,22 +247,23 @@ export function editorFrame(document: EditorDocument, width: number, height: num
         if (hi <= lo) return baseline;
         // ANSI reverse video applies only after width clipping, so it does
         // not affect terminal columns or permit untrusted escape injection.
-        return `│ ${original.slice(0, lo)}\u001b[7m${original.slice(lo, hi)}\u001b[0m${original.slice(hi)}`;
+        return `${prefix}${original.slice(0, lo)}\u001b[7m${original.slice(lo, hi)}\u001b[0m${original.slice(hi)}`;
       })(),
       caret: Math.min(cellWidth - 1, 2 + Math.max(0, caret - scrollCells) + (scrollCells > 0 ? 1 : 0)),
       scrollCells,
     };
   });
   const header = fitLine(submitOnEnter
-    ? "┌─ Enter send · Ctrl+O newline · Ctrl+R history"
+    ? "─".repeat(cellWidth)
     : "┌─ Ctrl+S send · Esc cancel · Enter newline", cellWidth);
   const popup = displayedSuggestions.map((item, index) => fitLine(`  ${index === selectedSuggestion ? "›" : " "} /${item}`, cellWidth));
-  const footer = fitLine(
-    document.warning || (footerStatus ?? (document.selectionRange() === undefined
-      ? `└─ ${rows.length} lines · ${Buffer.byteLength(document.text, "utf8")} bytes · ↑↓←→ move`
-      : `└─ Selected ${document.selectionRange()!.end - document.selectionRange()!.start} code units · type to replace`)),
-    cellWidth,
-  );
+  const selection = document.selectionRange();
+  const footerText = document.warning || (selection !== undefined
+    ? `${submitOnEnter ? "" : "└─ "}Selected ${selection.end - selection.start} code units · type to replace`
+    : footerStatus ?? (submitOnEnter
+      ? "/help for shortcuts"
+      : `└─ ${rows.length} lines · ${Buffer.byteLength(document.text, "utf8")} bytes · ↑↓←→ move`));
+  const footer = fitLine(footerText, cellWidth);
   return {
     lines: [header, ...body.map(item => item.row), ...popup, footer],
     cursorRow: 1 + (position.row - first),

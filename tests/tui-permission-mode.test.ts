@@ -71,6 +71,9 @@ describe("TUI permission mode shortcut", () => {
 
     try {
       await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("Ask for me"));
+      expect(screen.visible().join("\n")).toContain("Ask for me · Shift+Tab Plan · /help");
+      screen.input.write("/help\r");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("Shift+Tab cycles Plan → Auto mode → Ask for me"));
 
       screen.input.write("write-plan");
       screen.input.write("\u001b[Z");

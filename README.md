@@ -21,7 +21,7 @@ The same category as Claude Code and Codex. You bring the model.
 
 chivgent is a local agent for the directory you have open. The category is the one [Claude Code](https://code.claude.com) and [Codex](https://github.com/openai/codex) occupy: read the project, change it, run it, and come back to the session. The model is yours. An API key, or a ChatGPT or xAI subscription.
 
-The default that category expects is auto mode. Ordinary reads, workspace edits, and sandboxed commands proceed. The agent stops when an action leaves the workspace, or when a command needs the host. Here that policy is `workspace`. It is not a second model reviewing each action, and it is not a bypass. A regular terminal session still opens read-only. An interactive `--tui` session without legacy capability flags starts in Ask for me, where file changes and commands require approval; Shift+Tab cycles through Plan, Auto mode, and Ask for me. Other interactive and headless starts keep their existing defaults.
+The default that category expects is auto mode. Ordinary reads, workspace edits, and sandboxed commands proceed. The agent stops when an action leaves the workspace, or when a command needs the host. Here that policy is `workspace`. It is not a second model reviewing each action, and it is not a bypass. Local interactive rich-TUI sessions start in Ask for me unless a permission mode or legacy capability flag was selected; file changes and commands require approval. Shift+Tab cycles through Plan, Auto mode, and Ask for me. Headless, simple, and remote starts keep their existing defaults.
 
 ## Getting started
 
@@ -64,7 +64,9 @@ chivgent --permission-mode ask-first "Review this project"
 chivgent --allow-writes "Rename sayHi to greet"         # older flag, not with a mode
 chivgent --allow-shell "Run the tests"                  # asks, then Seatbelt or Docker
 chivgent --provider deepseek "Explain src/"
-chivgent --tui                                           # live region, multi-line editor
+chivgent                                                 # rich TUI in a local interactive terminal
+chivgent --simple                                        # append-only interface
+chivgent --tui                                           # explicitly request the rich TUI
 chivgent --continue                                      # last session in this directory
 ```
 
@@ -73,9 +75,9 @@ chivgent --continue                                      # last session in this 
 | Mode | What proceeds | This build |
 | --- | --- | --- |
 | `workspace` | Workspace edits and sandboxed commands. Network stays off. A command that needs the host asks once, for that command only. | Auto mode in the TUI cycle, or `--permission-mode workspace`. |
-| `ask-first` | Reads. Each file change and each command asks. No answer means no action. | Ordinary `--tui` start, or `--permission-mode ask-first`. |
+| `ask-first` | Reads. Each file change and each command asks. No answer means no action. | Ordinary local rich-TUI start, or `--permission-mode ask-first`. |
 | `unrestricted` | Shell commands run with broad host file access and network, inside the OS sandbox. File tools stay in the workspace. | Explicit opt-in. |
-| none | Reads. Writes and shell wait for a flag. Each command asks. | Regular terminal and headless starts. An ordinary `--tui` start uses Ask for me. |
+| none | Reads. Writes and shell wait for a flag. Commands need interactive approval or explicit approval-all. | `--simple`, headless, and remote starts unless a mode or legacy flag is selected. |
 
 `--permission-mode` replaces the flags for this process. It cannot be combined with `--allow-writes`, `--allow-shell`, `--approve-all-shell`, or `--shell-network`, and it cannot be used with `--serve` or `--connect`. `/permissions` inspects or changes the mode, only in a session that started with one. The choice is not saved in the transcript. Resuming a session uses the mode you selected at startup, not a broader one from last time.
 
@@ -125,12 +127,12 @@ Run `chivgent` with no question for an interactive session. It is saved under `~
 
 `/compact` summarizes older turns and keeps the full transcript to resume later. `/status` shows the model, the permissions, and token usage. `/help` lists the rest.
 
-`--tui` adds a live status region and a multi-line editor. Without legacy capability flags, it selects Ask for me for that interactive process. Use Shift+Tab at the idle inline prompt to cycle Plan → Auto mode → Ask for me; the footer shows the current mode. Explicit `--permission-mode` choices remain available, and legacy capability flags keep their existing behavior. [TUI](docs/tui-v5.md). A long session stays within the context window by summarizing older turns and keeping the list of files read and changed. [Context](docs/architecture.md#context-management).
+Local interactive terminals use the rich TUI by default. `--simple` selects the append-only interface; `--tui` remains available to request the rich TUI explicitly, including when stdout is redirected. Piped input or output, JSON, one-shot runs, `--serve`, and `--connect` keep their existing simple output. `TERM=dumb` selects the simple interface; `NO_COLOR` keeps the rich TUI and disables color. Without legacy capability flags or an explicit permission mode, rich TUI sessions start in Ask for me. Shift+Tab at the idle inline prompt cycles Plan → Auto mode → Ask for me; the footer shows the current mode. The compact welcome omits the session ID; use `/session` or `/status` for full session details. `/help` lists commands and keyboard controls. Explicit `--permission-mode` choices and legacy capability flags retain their behavior. [TUI](docs/tui.md). A long session stays within the context window by summarizing older turns and keeping the list of files read and changed. [Context](docs/architecture.md#context-management).
 
 ## Boundaries
 
 - Paths outside the workspace are rejected, including `..` and symlink escapes. Common credential paths are denied. Tool output is capped.
-- With no mode selected, regular terminal and headless starts retain the read-only default; `--allow-shell` asks before each command. An interactive `--tui` start without legacy capability flags selects `ask-first` for that process. A served session denies commands unless you also pass `--approve-all-shell`. If the sandbox cannot start, the command does not run unsandboxed.
+- Without a mode or legacy flag, `--simple`, headless, and remote starts retain the read-only default. A local rich-TUI start selects `ask-first` for that process unless a legacy capability flag was given. `--allow-shell` needs interactive approval; non-interactive commands are denied unless `--approve-all-shell` was set. A served session denies commands unless you also pass `--approve-all-shell`. If the sandbox cannot start, the command does not run unsandboxed.
 - `workspace` runs workspace edits and sandboxed commands on its own, and asks once when a command wants host file and network access. `unrestricted` is the explicit opt-in for broad host access and network. Neither is saved with the session. [Shell safety](docs/shell-sandbox.md).
 - The macOS sandbox can still read files your user can read. It restricts writes and network access. It is not confidentiality isolation.
 - There is no per-command allowlist, and no native Windows shell. `workspace` is not the start mode of this build.
@@ -149,7 +151,7 @@ This repository also has an Electron desktop app. It opens a project through the
 | [Architecture](docs/architecture.md) | The loop, providers, context, and where the source lives |
 | [Shell safety](docs/shell-sandbox.md) | Seatbelt, Docker, and what a command can still read |
 | [Subscription sign-in](docs/subscription-oauth.md) | ChatGPT and xAI: what is stored, and what a key still does |
-| [TUI](docs/tui-v5.md) | The live region, the editor, and diff review |
+| [TUI](docs/tui.md) | The live region, the editor, and diff review |
 | [Evals](docs/evals.md) | Whether the agent finishes the task, separate from the unit tests |
 | [Extensions and remote sessions](docs/extensions-and-remote.md) | Tools you add, and attaching another terminal |
 

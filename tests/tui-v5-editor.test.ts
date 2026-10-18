@@ -239,4 +239,15 @@ describe("mouse caret and selected text", () => {
     expect(frame.lines.length).toBeLessThanOrEqual(9);
     expect(frame.lines.join("\n")).toContain("› /gitstatus");
   });
+
+  it("keeps the inline prompt quiet while the explicit editor keeps its instructions", () => {
+    const doc = new EditorDocument();
+    doc.insert("draft");
+    const inline = editorFrame(doc, 40, 12, true, [], 0, "Ask for me · Shift+Tab Plan · /help");
+    expect(inline.lines.join("\n")).toContain("› draft");
+    expect(inline.lines.join("\n")).toContain("Ask for me · Shift+Tab Plan · /help");
+    expect(inline.lines.join("\n")).not.toContain("Enter send");
+    const modal = editorFrame(doc, 40, 12, false);
+    expect(modal.lines.join("\n")).toContain("Ctrl+S send · Esc cancel · Enter ne…");
+  });
 });
