@@ -8,8 +8,7 @@
 
 ### 终端里的 coding agent。
 
-**问这个仓库是做什么的。它去读文件。它不动文件。**<br>
-写入需要显式开启。shell 等你确认后，才进沙箱运行。
+和 Claude Code、Codex 同一类。模型你自己带。
 
 [![npm](https://img.shields.io/npm/v/chivgent?color=111111)](https://www.npmjs.com/package/chivgent)
 [![CI](https://img.shields.io/github/actions/workflow/status/chivopic/chivgent/ci.yml?label=CI&color=111111)](https://github.com/chivopic/chivgent/actions/workflows/ci.yml)
@@ -20,28 +19,13 @@
 
 </div>
 
-<br>
+chivgent 是跑在你打开的目录里的本地 agent。它要做的，是 [Claude Code](https://code.claude.com) 和 [Codex](https://github.com/openai/codex) 那一类事：读这个项目，改它，跑它，会话还能回来。模型是你的。一把 API key，或者 ChatGPT、xAI 订阅。
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/turn-zh-dark.svg">
-  <img src="docs/assets/turn-zh-light.svg" width="920" alt="一个问题，三个只读工具，一个回答。工作区没有改动。">
-</picture>
-
-## 适合你吗
-
-你打开了一个项目，有问题要弄明白。chivgent 用你选的模型，看当前目录里的文件。
-
-- **先读。** 列出、搜索、读取默认开着。什么都不写。
-- **模型你自己带。** 一把 API key，或者登录你的 ChatGPT、xAI 订阅。
-- **边界是开关，不是意外。** 写入需要显式开启。每条 shell 命令先确认，再进入 Seatbelt 或 Docker。也可以为整个进程选一种权限模式。
-
-它跑在你的机器上，不是托管产品。它还没有细粒度权限，没有原生 Windows shell，也还没有一个今天就能开工的桌面版。桌面工作台在这个仓库里已经开始了。今天用 chivgent，用终端。
+这一类现在的默认是 auto mode。工作区内的读取、编辑，以及沙箱里的命令，直接进行。动作离开工作区，或者命令要用宿主机，就停。这里这个策略叫 `workspace`。它不是另一个模型在逐条审查，也不是跳过所有边界。这一版还不是这样启动的。会话仍然只读打开。加上 `--permission-mode workspace`，或用原来的开关。
 
 ## 快速开始
 
 需要 Node.js 22 或更高版本。
-
-**1 · 安装。**
 
 ```bash
 npm install -g chivgent
@@ -49,51 +33,64 @@ npm install -g chivgent
 
 已经安装过？先 `chivgent update --check`，再 `chivgent update`。
 
-**2 · 配一把 key，或稍后登录。**
+在项目目录里启动。
+
+```bash
+cd /path/to/project
+chivgent
+```
+
+没有 key 也能打开会话。输入 `/provider`，按提示填入，或先导出一把。key 只给当前用户读，保存在 `~/.chivgent/auth.json`。
 
 ```bash
 export OPENAI_API_KEY="your-api-key"
 ```
 
-没有 key 也没关系。直接运行 `chivgent`，输入 `/provider`，按提示填入。key 只给当前用户读，保存在 `~/.chivgent/auth.json`。
-
-**3 · 在项目目录里问。**
-
-```bash
-chivgent "入口在哪？"
-```
-
-回答流式输出到 stdout。工具名出现在 stderr。项目没有改动。
-
-```bash
-chivgent --provider deepseek "讲讲 src/"           # 换 DeepSeek，问法一样
-chivgent --allow-writes "把 sayHi 改成 greet"      # 只有加上这个参数才会改文件
-chivgent --allow-shell "跑测试"                    # 每条命令先确认，再进沙箱
-chivgent --permission-mode workspace "跑测试并修掉" # 用一种策略代替上面的开关
-chivgent --permission-mode ask-first "审这个项目"   # 每次改文件、每条命令都要确认
-chivgent --tui                                     # 交互会话，带一块实时状态
-chivgent --continue                                # 恢复这个目录里的上一次会话
-```
-
 在交互会话里，`/login oauth openai` 或 `/login oauth xai` 用订阅登录。平常启动时，key 仍然优先。[订阅登录](docs/subscription-oauth.md)。
+
+```bash
+chivgent "入口在哪？"                                # 读完再答
+chivgent --permission-mode workspace "跑测试并修掉"
+chivgent --permission-mode ask-first "审这个项目"
+chivgent --allow-writes "把 sayHi 改成 greet"        # 旧开关，不能和模式一起用
+chivgent --allow-shell "跑测试"                      # 先确认，再进 Seatbelt 或 Docker
+chivgent --provider deepseek "讲讲 src/"
+chivgent --tui                                       # 实时状态区，多行编辑器
+chivgent --continue                                  # 这个目录里的上一次会话
+```
+
+## 模式
+
+| 模式 | 能直接进行的 | 这一版 |
+| --- | --- | --- |
+| `workspace` | 工作区内的修改和沙箱命令。网络关着。命令要用宿主机时，只为这一条问一次。 | 我们要的 auto 式默认。用 `--permission-mode workspace` 打开。 |
+| `ask-first` | 读取。每次改文件、每条命令都要确认。没有答复就没有动作。 | `--permission-mode ask-first` |
+| `unrestricted` | shell 命令带着宽宿主机文件访问和网络运行，仍在操作系统沙箱里。文件工具不出工作区。 | 显式选择。 |
+| 无 | 读取。写入和 shell 等开关。每条命令要确认。 | 现在的 `chivgent`。 |
+
+`--permission-mode` 在这个进程里代替那些开关。不能和 `--allow-writes`、`--allow-shell`、`--approve-all-shell`、`--shell-network` 一起用，也不能和 `--serve`、`--connect` 一起用。`/permissions` 查看或更改模式，但只有启动时选了模式的会话才行。这个选择不写进会话记录。恢复会话时用的是启动时选的模式，不是上次更宽的那个。
+
+`/plan` 是另一件事。它让 agent 停在只读工具和一份计划上。即使模型要求，写入、shell 和扩展工具也会被挡住。
 
 ## 它怎么接在一起
 
-你在终端里打字。chivgent 调用你选的模型。文件工具不出当前目录。shell 只有打开才运行，在沙箱里，拿不到你的模型 key。
+你在终端里打字。chivgent 调用你选的模型。文件工具不出当前目录。shell 在沙箱里运行，拿不到你的模型 key。默认启动时，shell 要打开才出现。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/fit-zh-dark.svg">
-  <img src="docs/assets/fit-zh-light.svg" width="920" alt="你、chivgent、你选的模型、当前目录，以及只有打开 shell 才出现的沙箱。">
+  <img src="docs/assets/fit-zh-light.svg" width="920" alt="默认启动：你、chivgent、你选的模型、当前目录，以及只有打开 shell 才出现的沙箱。">
 </picture>
 
 ## 它能碰到什么
 
-| | 参数 | 能碰到什么 |
+下面是这一版，不是上面那个 auto 式默认。
+
+| | 怎么开 | 能碰到什么 |
 | --- | --- | --- |
-| 读这个项目 | 默认 | 当前目录。被忽略的、生成的和凭据路径会跳过。 |
+| 读这个项目 | 开着 | 当前目录。被忽略的、生成的和凭据路径会跳过。 |
 | 改文件 | `--allow-writes` | 工作区内的文件。修改必须精确匹配，写入是原子的。 |
 | 跑命令 | `--allow-shell` | macOS 用 Seatbelt，其他系统用 Docker。默认没有网络。每条命令都要确认。 |
-| 选一种策略 | `--permission-mode` | `ask-first`、`workspace` 或 `unrestricted`。在这个进程里代替上面的开关。`/permissions` 查看或更改。 |
+| 选一种策略 | `--permission-mode` | `ask-first`、`workspace` 或 `unrestricted`。在这个进程里代替上面的开关。 |
 
 费用付给你选的供应商，按他们的价格。chivgent 显示 token 数，不折算成费用。
 
@@ -117,27 +114,24 @@ chivgent --continue                                # 恢复这个目录里的上
 
 不带问题运行 `chivgent`，就是一次交互会话。会话保存在 `~/.chivgent/sessions`。`--continue` 恢复这个目录里最近的一次。`/resume` 列出其余的，并且只打开这里的会话。
 
-`/plan` 让 agent 停在只读工具和一份计划上。即使模型要求，写入、shell 和扩展工具也会被挡住。`/compact` 压缩较早的轮次，完整记录仍留着，方便恢复。`/status` 显示模型、权限和 token 用量。`/permissions` 查看或更改这个进程的模式。其余的，`/help`。
-
-权限模式不写进会话记录。恢复会话时用的是启动时选的模式，不是上次更宽的那个。
+`/compact` 压缩较早的轮次，完整记录仍留着，方便恢复。`/status` 显示模型、权限和 token 用量。其余的，`/help`。
 
 `--tui` 加上实时状态区和多行编辑器。[TUI](docs/tui-v5.md)。长会话会压缩较早的轮次，并留下读过和改过的文件列表，从而留在上下文窗口里。[上下文](docs/architecture.md#context-management)。
-
-## 桌面版开始了
-
-这个仓库里还有一个 Electron 应用。目标是同一个 agent 上的本地工作台：一个项目，一项任务，手头的工作，做完后的 diff。当前构建是原型。今天不要用它来开工。[桌面规划](docs/desktop-architecture.md)。
 
 ## 边界
 
 - 工作区以外的路径会被拒绝，包括 `..` 和符号链接逃逸。常见凭据路径会被拒绝。工具输出有上限。
-- `--allow-shell` 在每条命令前确认。没有终端的运行，以及 `--serve` 起来的会话，除非同时加上 `--approve-all-shell`，否则拒绝命令。沙箱起不来，命令不会改到无沙箱运行。
-- `--permission-mode` 是另一种开关，不是更细的开关，也不能和 `--allow-writes`、`--allow-shell` 一起用。`ask-first` 每次改文件、每条命令都要确认。`workspace` 自动执行工作区内的修改和沙箱命令，命令要访问宿主机文件和网络时问一次。`unrestricted` 是显式选择的宽宿主机访问和网络。这些都不随会话保存。[Shell 安全](docs/shell-sandbox.md)。
-- macOS 沙箱仍然能读当前用户能读的文件。它限制的是写入和网络，不是机密隔离。[Shell 安全](docs/shell-sandbox.md)。
+- 没有选模式时，`--allow-shell` 在每条命令前确认。没有终端的运行，以及 `--serve` 起来的会话，除非同时加上 `--approve-all-shell`，否则拒绝命令。沙箱起不来，命令不会改到无沙箱运行。
+- `workspace` 自动执行工作区内的修改和沙箱命令，命令要访问宿主机文件和网络时问一次。`unrestricted` 是显式选择的宽宿主机访问和网络。这些都不随会话保存。[Shell 安全](docs/shell-sandbox.md)。
+- macOS 沙箱仍然能读当前用户能读的文件。它限制的是写入和网络，不是机密隔离。
+- 还没有按命令的允许列表，也没有原生 Windows shell。`workspace` 不是这一版的启动模式。
 - 扩展是跑在 chivgent 进程里的 JavaScript。信任一个项目，就是允许它的作者以你的身份执行代码。每个目录问一次；没有终端可问时，不加载。
 - key、订阅凭据和会话日志只对文件所有者可读，而且是明文。日志里有提示词、回答和文件摘录。
 - `--serve` 把会话放在仅所有者可进的目录里的 Unix socket 上。谁能打开这个 socket，谁就拿到服务器启动时的全部能力。没有 TCP 监听。
 
 在已提交的代码上工作。不信任的仓库，用一份副本。
+
+这个仓库里还有一个 Electron 应用。目标是同一个 agent 上的本地工作台。当前构建是原型。今天不要用它来开工。[桌面规划](docs/desktop-architecture.md)。
 
 ## 文档
 
