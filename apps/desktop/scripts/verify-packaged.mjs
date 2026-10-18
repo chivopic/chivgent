@@ -42,12 +42,19 @@ const app = await electron.launch({
   env: {
     ...process.env,
     CHIVGENT_DESKTOP_HOST_PID_FILE: pidFile,
+    CHIVGENT_DESKTOP_DEMO: "1",
   },
 });
 
 try {
   const page = await app.firstWindow();
+  await app.evaluate(({ dialog }, projectPath) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [projectPath] });
+  }, root);
   await page.getByTestId("host-status").getByText("已连接", { exact: false }).waitFor({ timeout: 20_000 });
+  await page.getByTestId("demo-notice").getByText("离线演示", { exact: false }).waitFor();
+  await page.getByRole("button", { name: "选择项目目录" }).click();
+  await page.locator(".project-path").filter({ hasText: root }).waitFor({ timeout: 5_000 });
   const initializeResults = await page.evaluate(async () =>
     Promise.all([window.chivgent.initialize(), window.chivgent.initialize()]),
   );
@@ -108,11 +115,16 @@ report.hostGoneAfterQuit = leftover.status !== 0;
 const exitApp = await electron.launch({
   executablePath: executable,
   cwd: root,
-  env: { ...process.env, CHIVGENT_DESKTOP_HOST_PID_FILE: pidFile },
+  env: { ...process.env, CHIVGENT_DESKTOP_HOST_PID_FILE: pidFile, CHIVGENT_DESKTOP_DEMO: "1" },
 });
 try {
   const page = await exitApp.firstWindow();
+  await exitApp.evaluate(({ dialog }, projectPath) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [projectPath] });
+  }, root);
   await page.getByTestId("host-status").getByText("已连接", { exact: false }).waitFor({ timeout: 20_000 });
+  await page.getByRole("button", { name: "选择项目目录" }).click();
+  await page.locator(".project-path").filter({ hasText: root }).waitFor({ timeout: 5_000 });
   await page.getByTestId("composer").fill("中途退出 host");
   await page.getByTestId("send").click();
   await page.getByTestId("tool-activity").waitFor({ timeout: 15_000 });

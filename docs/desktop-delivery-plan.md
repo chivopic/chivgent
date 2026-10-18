@@ -1,0 +1,75 @@
+# Desktop 近期交付安排
+
+日期：2026-10-18。检查基线：`653a1dc`。本页记录任务排序与验收安排；现有行为和接口以 [Desktop 契约](desktop-architecture.md)为准，Agent 的责任以[内核架构](architecture.md)为准。
+
+## 先完成一个真实任务
+
+第一项交付是：打开自己的项目，选择模型，要求“解释这个项目的入口和执行流程”，看到真实文件读取、流式回答，并能停止和继续追问。
+
+检查基线中的 Desktop 已有 Electron 窗口、utilityProcess host、消息时间线、工具展开与取消；host 使用离线 Provider。首页视觉不代表真实 Agent 已接通。先交付这条路径，才有依据改进任务管理与编码工作流。
+
+## 功能顺序
+
+| 顺序 | 用户能完成什么 | 工作内容 | 过关条件 |
+| --- | --- | --- | --- |
+| 1 · 真实只读任务 | 在选定项目里提问并继续追问 | 原生目录选择、真实 Provider、AgentSession、只读工具、配置与错误展示、停止 | 临时项目文件内容进入工具结果；追问带上下文；缺凭证可重试；停止后可继续；越界读取失败；无写入和 Shell 工具 |
+| 2 · 任务保存与恢复 | 切换任务、重启后继续 | 项目/任务元数据、版本化历史、订阅快照、草稿、标题与归档、异常恢复 | 刷新不重跑；重启不重放命令；损坏记录明确提示；权限不随历史恢复；保存失败可见 |
+| 3 · 受控编码 | 请求修改、回应审批、运行验证 | 有效权限、写工具、Shell broker、逐动作审批、取消与退出清理 | 先持久记录再执行副作用；拒绝无副作用；过期回复无效；取消清理进程；新配置只影响后续运行 |
+| 4 · 检查结果 | 理解改了什么、确认验证结果 | 工作区 diff、已暂存/未暂存分组、文件预览、编辑器打开、测试结果与用量 | 工作区已有改动不冒充本轮改动；非 Git、二进制、大文件有状态；预览遵守项目边界 |
+| 5 · 日常使用与安装 | 安装后稳定完成整个修复流程 | 配置与凭证界面、主题、键盘导航、通知、面板、安装验证 | 从安装到修复、检查 diff、重启继续全程可操作；包在源码目录外运行；签名与平台支持分别验收 |
+| 6 · 多任务工作台 | 隔离推进多个任务并执行中介入 | worktree 生命周期、按目录调度、持久终端、queue/steering、结构化提问与 review | 每项先有内核语义和测试，再提供对应 UI；隔离任务可并行且工作可恢复 |
+
+第 2 项优先完成最小可恢复记录；第 3 项依赖它。完整历史界面可以继续迭代，执行副作用前的记录和保存失败门控不能后补。diff 与预览可在只读阶段提前开发，但不替代第 3 项的执行约束。
+
+## Agent 如何接入
+
+```text
+React 界面（配置、输入、时间线）
+  ↕ 窄 preload API / Electron IPC
+Main（原生目录选择与发送者校验）
+  ↕ utilityProcess 协议
+HostService（运行关联、单活动运行、取消）
+  → 中立 runtime（配置、凭证解析、会话组装）
+  → AgentSession（当前项目的多轮上下文）
+  → 现有 Agent → Provider / 只读工具 → LocalWorkspace
+```
+
+复用已有内核和事件，不把 CLI 终端输出当桌面协议，也不在 React 内实现第二套 Agent 循环。目录来自用户的原生选择；模型配置仅传递必要的非敏感字段。凭证在 Node 侧解析，Renderer 不接收密钥。
+
+本轮只接 API key；桌面订阅登录另列任务，避免普通项目查询隐式触发 OAuth 刷新与凭证写回。演示 Provider 保留为显式离线验证路径。第一项不承诺重启恢复、Shell、文件修改或多任务。
+
+## Luna 的本轮工单
+
+Luna 负责第 1 项实现及行为测试；主代理负责检查边界、复核改动、补充端到端验收并汇总证据。首批按独立分支和 PR 交付；发布与合并由维护者决定。
+
+范围包括 runtime、Desktop 协议与 host、目录选择、最小模型配置、时间线和契约文档。沿用已有依赖、Provider 地址及只读默认。测试使用临时项目、临时凭证目录与 fake Provider。
+
+验收记录至少包含：
+
+1. 输入至真实文件读取再到时间线结果的完整路径，以及多轮上下文。
+2. 无凭证、非法协议、重复请求、初始化失败后重试、运行中切项目与取消。
+3. 新测试移除对应实现后确实失败的反证。
+4. `npm run check`、`npm test`、`npm run build`、`npm run desktop:test`、`npm run desktop:build` 的实际结果。
+5. Electron 实际交互、打包应用和真实供应商调用分别记录；没执行的不能写成通过。
+
+按[代码规范](code-standards.md)检查；桌面测试不在根 `npm test` 或现有 CI 中。完成首批后，以第 2 项继续，避免同时堆入多个未验收功能。
+
+## 本轮交付与验证记录
+
+首批已完成，本次提交包含基于 `653a1dc` 实现并验证的改动；PR 基于合并代码规范后的 `main`，两者源文件树相同。Luna 完成实现与内核回归，主代理补充桌面行为测试、凭证边界修正要求、布局、Electron 验收及打包检查。应用尚未公开发布。
+
+| 检查 | 实际结果 |
+| --- | --- |
+| `npm run check`、`npm run build` | 通过 |
+| `TMPDIR=/private/tmp npm test` | 获批在原生环境运行后：59 个文件，712 passed、1 skipped。普通沙箱运行受 Unix socket/Seatbelt 限制失败，不能当作通过 |
+| `npm run desktop:build`、`npm run desktop:test` | 通过；桌面 2 个文件、15 项测试通过 |
+| `node apps/desktop/scripts/verify-readonly.mjs` | 9 项断言通过；5 次请求全部发往临时 localhost 模拟模型。验证真实 adapter、实际项目文件读取、工具结果展示、多轮、缺凭证恢复、停止后继续、无项目/凭证写入与最小窗口布局 |
+| macOS arm64 本地打包 | 默认 `npm run desktop:pack` 在下载 Electron 时因 GitHub 不可达失败。使用现有构建，改以 Desktop 目录中的 `CSC_IDENTITY_AUTO_DISCOVERY=false ./node_modules/.bin/electron-builder --mac dir --publish never --config.electronDist=./node_modules/electron/dist` 成功打包 |
+| `node apps/desktop/scripts/verify-packaged.mjs apps/desktop/release/mac-arm64/chivgent.app` | 将最终应用复制到源码目录外，显式使用 demo；12 项断言通过。首次运行因新增路径文本在两处出现而触发定位歧义，已收窄定位并重新通过 |
+| `git diff --check` | 通过 |
+
+测试反证在临时源码副本执行，不修改开发中的源文件：移除模型切换时的 transcript 传递，`keeps context when changing model and clears it when selecting a different project` 在“保留最初提问”的断言失败；移除项目切换时的 session 清空，同一测试在“新项目不含旧提问”的断言失败。正常实现的完整桌面测试通过。
+
+兼容端点的凭证隔离另有先红后绿证据：新增测试先捕获 OpenAI 的启动 key 被错误继承；修正后，只有明确以 compatible 启动时继承共享环境 key，普通切换使用 compatible 自己的 auth 条目。测试全部使用假 key 和临时文件。
+
+GUI 运行和打包均在本机 macOS arm64 完成。真实供应商账号调用、签名、公证、其他平台、CLI tarball 仓库外安装、live eval 与 Docker smoke 未执行。模型接入的自动化证据来自实际 adapter 与本地模拟服务，不代表实号模型质量已验收。

@@ -45,7 +45,10 @@ export type DeskAction =
   | { readonly type: "submit"; readonly text: string }
   | { readonly type: "started"; readonly runId: string }
   | { readonly type: "agent"; readonly runId: string; readonly sequence: number; readonly event: AgentEventPayload }
-  | { readonly type: "fail"; readonly message: string };
+  | { readonly type: "run-error"; readonly runId: string; readonly message: string; readonly cancelled?: boolean }
+  | { readonly type: "fail"; readonly message: string }
+  | { readonly type: "cancelled" }
+  | { readonly type: "reset" };
 
 export const initialDeskState: DeskState = {
   host: { phase: "starting", message: "正在连接 Agent host。" },
@@ -61,17 +64,29 @@ export function reduceDesk(state: DeskState, action: DeskAction): DeskState {
   switch (action.type) {
     case "host":
       return applyHost(state, action.status);
+    case "reset":
+      return { ...initialDeskState, host: state.host };
     case "submit":
       return {
         ...state,
         phase: "running",
+        runId: null,
         notice: null,
         items: [...state.items, { kind: "user", id: `user-${state.items.length}`, text: action.text }],
       };
     case "started":
-      return { ...state, phase: "running", runId: action.runId, notice: null };
+      // An asynchronous ACK must not resurrect an already completed run.
+      if (state.phase !== "running" || (state.runId !== null && state.runId !== action.runId)) return state;
+      return { ...state, runId: action.runId, notice: null };
+    case "run-error":
+      if (state.phase !== "running" || state.runId !== action.runId) return state;
+      return action.cancelled
+        ? { ...state, items: settleStreaming(state.items), phase: "stopped", runId: null, notice: "运行已停止。" }
+        : { ...state, items: settleStreaming(state.items), phase: "error", notice: action.message };
     case "fail":
       return { ...state, items: settleStreaming(state.items), phase: "error", notice: action.message };
+    case "cancelled":
+      return { ...state, items: settleStreaming(state.items), phase: "stopped", runId: null, notice: "运行已停止。" };
     case "agent":
       return applyEvent(state, action.runId, action.sequence, action.event);
   }
@@ -125,6 +140,8 @@ function applyEvent(
   sequence: number,
   event: AgentEventPayload,
 ): DeskState {
+  // Only the active run may modify the visible timeline or terminal status.
+  if (state.phase !== "running" || state.runId !== runId) return state;
   const gap = state.lastSequence !== 0 && sequence !== state.lastSequence + 1;
   const next: DeskState = {
     ...state,

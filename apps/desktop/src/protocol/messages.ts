@@ -8,7 +8,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 1 as const;
 
-export const HOST_CAPABILITIES = ["stub-agent", "start", "interrupt"] as const;
+export const HOST_CAPABILITIES = ["project-select", "start", "interrupt"] as const;
 
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,80}$/;
 const MAX_PROMPT_LENGTH = 32_000;
@@ -32,6 +32,14 @@ export interface StartRequest {
   readonly type: "start";
   readonly requestId: string;
   readonly prompt: string;
+  readonly provider?: string;
+  readonly model?: string;
+}
+
+export interface SelectProjectRequest {
+  readonly type: "select-project";
+  readonly requestId: string;
+  readonly path: string;
 }
 
 export interface InterruptRequest {
@@ -47,6 +55,7 @@ export interface ShutdownRequest {
 
 export type MainToHost =
   | InitializeRequest
+  | SelectProjectRequest
   | StartRequest
   | InterruptRequest
   | ShutdownRequest;
@@ -57,6 +66,8 @@ export interface InitializedMessage {
   readonly protocolVersion: number;
   readonly hostInstanceId: string;
   readonly capabilities: readonly string[];
+  readonly defaultProvider: string;
+  readonly compatibleBaseURL?: string;
 }
 
 export interface StartedMessage {
@@ -65,6 +76,18 @@ export interface StartedMessage {
   readonly runId: string;
   /** True when this requestId was already accepted and the original run is returned. */
   readonly replayed: boolean;
+}
+
+export interface ProjectSelectedMessage {
+  readonly type: "project-selected";
+  readonly requestId: string;
+  readonly path: string;
+}
+export interface RuntimeConfigMessage {
+  readonly type: "runtime-config";
+  readonly provider: string;
+  readonly model: string;
+  readonly baseURL?: string;
 }
 
 export interface InterruptedMessage {
@@ -100,6 +123,8 @@ export interface DesktopEventMessage {
 
 export type HostToMain =
   | InitializedMessage
+  | ProjectSelectedMessage
+  | RuntimeConfigMessage
   | StartedMessage
   | InterruptedMessage
   | ShutdownAckMessage
@@ -168,6 +193,11 @@ export function validateMainToHost(value: unknown): MainToHost | string {
     case "initialize":
     case "shutdown":
       return { type: record.type, requestId: record.requestId };
+    case "select-project":
+      if (typeof record.path !== "string" || record.path.length === 0 || record.path.length > 4_096) {
+        return "path must be a non-empty directory path.";
+      }
+      return { type: "select-project", requestId: record.requestId, path: record.path };
     case "start":
       if (typeof record.prompt !== "string" || record.prompt.trim().length === 0) {
         return "prompt must be a non-empty string.";
@@ -175,10 +205,14 @@ export function validateMainToHost(value: unknown): MainToHost | string {
       if (record.prompt.length > MAX_PROMPT_LENGTH) {
         return `prompt exceeds ${MAX_PROMPT_LENGTH} characters.`;
       }
+      if (record.provider !== undefined && (typeof record.provider !== "string" || !/^[a-z0-9-]{1,80}$/.test(record.provider))) return "provider is invalid.";
+      if (record.model !== undefined && (typeof record.model !== "string" || record.model.trim().length === 0 || record.model.length > 160)) return "model must be 1-160 non-empty characters.";
       return {
         type: "start",
         requestId: record.requestId,
         prompt: record.prompt,
+        ...(record.provider === undefined ? {} : { provider: record.provider as string }),
+        ...(record.model === undefined ? {} : { model: (record.model as string).trim() }),
       };
     case "interrupt":
       if (!isRequestId(record.runId)) {
@@ -205,8 +239,15 @@ export function isHostToMain(value: unknown): value is HostToMain {
         isRequestId(record.requestId) &&
         record.protocolVersion === DESKTOP_PROTOCOL_VERSION &&
         isRequestId(record.hostInstanceId) &&
-        Array.isArray(record.capabilities)
+        Array.isArray(record.capabilities) &&
+        record.capabilities.every((capability) => typeof capability === "string") &&
+        typeof record.defaultProvider === "string" &&
+        (record.compatibleBaseURL === undefined || typeof record.compatibleBaseURL === "string")
       );
+    case "project-selected":
+      return isRequestId(record.requestId) && typeof record.path === "string" && record.path.length > 0;
+    case "runtime-config":
+      return typeof record.provider === "string" && record.provider.length > 0 && typeof record.model === "string" && record.model.length > 0 && (record.baseURL === undefined || typeof record.baseURL === "string");
     case "started":
       return (
         isRequestId(record.requestId) &&

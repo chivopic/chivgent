@@ -78,6 +78,11 @@ export class AgentSession {
     return this.transcript;
   }
 
+  /** Preserves the ContextManager checkpoint when Desktop rebinds a Provider. */
+  get compactionCheckpoint(): AppliedCompaction | undefined {
+    return this.compaction === undefined ? undefined : structuredClone(this.compaction);
+  }
+
   get turns(): number {
     return this.promptCount;
   }

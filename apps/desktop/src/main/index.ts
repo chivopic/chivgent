@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { IPC } from "../protocol/channels.js";
@@ -72,6 +72,12 @@ function installIpc(): void {
   ipcMain.handle(IPC.initialize, async (event) => {
     assertSender(event.sender);
     return callHost({ type: "initialize", requestId: `boot-${randomUUID()}` });
+  });
+  ipcMain.handle(IPC.selectProject, async (event) => {
+    assertSender(event.sender);
+    const choice = await dialog.showOpenDialog(mainWindow!, { properties: ["openDirectory", "createDirectory"] });
+    if (choice.canceled || choice.filePaths[0] === undefined) return failure("cancelled", "未选择项目目录。");
+    return callHost({ type: "select-project", requestId: `project-${randomUUID()}`, path: choice.filePaths[0] });
   });
   ipcMain.handle(IPC.start, async (event, payload: unknown) => {
     assertSender(event.sender);

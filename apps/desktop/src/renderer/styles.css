@@ -18,9 +18,9 @@
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
-button, textarea { font: inherit; color: inherit; }
+button, textarea, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
-button:focus-visible, textarea:focus-visible { outline: 2px solid #bc8067; outline-offset: 2px; }
+button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #bc8067; outline-offset: 2px; }
 .desk { display: grid; grid-template-columns: 256px minmax(0, 1fr); height: 100%; background: var(--paper); color: var(--ink); transition: grid-template-columns .2s ease; }
 .desk.sidebar-closed { grid-template-columns: 0 minmax(0, 1fr); }
 .sidebar { display: flex; flex-direction: column; background: var(--sidebar); border-right: 1px solid var(--line); padding: 17px 13px 12px; min-height: 0; overflow: hidden; transition: opacity .18s, padding .2s; }
@@ -32,6 +32,8 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #bc8067; outli
 .new-task { display: flex; align-items: center; gap: 9px; margin: 0 2px 13px; padding: 9px 11px; border: 1px solid #e3dfd5; border-radius: 9px; background: #eeece5; text-align: left; font-size: 13px; font-weight: 550; box-shadow: 0 1px 1px #3d34230a; }
 .new-task:hover { background: #e8e5dc; }
 .new-task > span { font-size: 19px; color: #716d64; line-height: 1; }
+.new-task:disabled { opacity: .6; cursor: default; }
+.project-path { min-width: 0; margin: 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--mute); font-size: 11px; }
 .side-block { margin-top: 0; min-width: 228px; }
 .side-block h2 { margin: 0 9px 8px; color: #88847b; font-size: 11px; font-weight: 550; letter-spacing: .045em; }
 .side-card, .task { border-radius: 9px; padding: 9px 10px; }
@@ -46,10 +48,19 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #bc8067; outli
 .sidebar-foot { display: flex; align-items: center; gap: 8px; padding: 12px 7px 4px; border-top: 1px solid var(--line); min-width: 228px; color: var(--mute); font-size: 10px; }
 .stage { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
 .stage-head { display: flex; justify-content: space-between; align-items: center; padding: 17px 29px 10px; }
+.stage-head > div { min-width: 0; }
 .stage-head h1 { margin: 0; font-size: 14px; font-weight: 550; letter-spacing: .01em; }
 .stage-head p { color: var(--mute); font-size: 11px; }
-.stage-head p { margin: 1px 0 0; }
-.pill { border-radius: 999px; padding: 4px 10px; font-size: 11px; background: #eeece5; color: #625e56; }
+.stage-head p { margin: 1px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runtime-settings { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; padding: 10px 29px 13px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.runtime-settings label { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--mute); }
+.runtime-settings select, .runtime-settings input { min-width: 0; max-width: 100%; padding: 6px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--sidebar); color: var(--ink); }
+.runtime-settings input { width: 220px; }
+.runtime-settings input::placeholder { color: var(--mute); }
+.runtime-settings select:disabled, .runtime-settings input:disabled { opacity: .6; }
+.runtime-settings > span { flex-basis: 100%; color: var(--mute); font-size: 11px; overflow-wrap: anywhere; }
+.desk-home .runtime-settings { padding-top: 20px; }
+.pill { flex-shrink: 0; margin-left: 12px; border-radius: 999px; padding: 4px 10px; font-size: 11px; background: #eeece5; color: #625e56; }
 .pill.ready { background: #e7eee8; color: #557363; }
 .pill.run { background: #f4e9e1; color: #9b6043; }
 .pill.stop { background: #f2ede1; color: #896e40; }
@@ -107,6 +118,7 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #bc8067; outli
   .desk { grid-template-columns: 220px minmax(0, 1fr); }
   .sidebar { padding-left: 9px; padding-right: 9px; }
   .stage-head { padding-left: 18px; padding-right: 18px; }
+  .runtime-settings { padding-left: 18px; padding-right: 18px; }
   .timeline { padding-left: 18px; padding-right: 18px; }
   .composer { width: calc(100% - 32px); }
   .desk-home .timeline { padding-left: 16px; padding-right: 16px; }
