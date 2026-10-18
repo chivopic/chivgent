@@ -1,8 +1,9 @@
-import { useEffect, useId, useLayoutEffect, useReducer, useRef, useState, type JSX } from "react";
+import { useEffect, useLayoutEffect, useReducer, useRef, useState, type JSX } from "react";
 import { nextRequestId, shouldSubmitOnEnter } from "./input.js";
 import { initialDeskState, phaseLabel, reduceDesk, type TimelineItem } from "./reduce.js";
 import { isNearBottom } from "./scroll.js";
 import type { HostStatus, HostToMain, IpcResult } from "../protocol/messages.js";
+import leafMark from "./assets/chivgent-leaf-mark.png";
 
 interface DesktopApi {
   initialize(): Promise<IpcResult<HostToMain>>;
@@ -150,13 +151,6 @@ export function App(): JSX.Element {
           <button className="sidebar-toggle" type="button" aria-label="折叠侧栏" title="折叠侧栏" onClick={() => setSidebarOpen(false)}>‹</button>
         </div>
         <button className="new-task" type="button" onClick={() => composerRef.current?.focus()}><span>＋</span> 撰写消息</button>
-        <section className="side-block">
-          <h2>项目</h2>
-          <div className="side-card">
-            <span className="project-glyph">C</span><div><strong>离线演示</strong>
-            </div>
-          </div>
-        </section>
         <section className="side-block grow">
           <h2>最近任务</h2>
           <div className="task current" data-testid="task-row" title="当前会话">
@@ -347,19 +341,11 @@ function Empty(): JSX.Element {
 }
 
 function Mark(props: { small?: boolean }): JSX.Element {
-  const raw = useId().replace(/:/g, "");
   const size = props.small ? 22 : 28;
   return (
-    <svg className="mark" width={size} height={size} viewBox="0 0 32 32" aria-hidden="true">
-      <defs>
-        <linearGradient id={raw} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#ff5fc8" />
-          <stop offset="0.55" stopColor="#a45cf0" />
-          <stop offset="1" stopColor="#6aa8f5" />
-        </linearGradient>
-      </defs>
-      <path fill={`url(#${raw})`} d="M6 8h12l8 8-8 8H6l8-8z" />
-    </svg>
+    <span className="mark" style={{ width: size, height: size }} aria-hidden="true">
+      <img className="mark-image" src={leafMark} alt="" />
+    </span>
   );
 }
 

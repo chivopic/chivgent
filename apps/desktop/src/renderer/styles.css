@@ -93,7 +93,8 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #bc8067; outli
 .dot.ready { background: #779783; }.dot.run { background: #bd8061; }.dot.stop { background: #a58b56; }.dot.bad { background: #b96c61; }
 .reopen-sidebar { position: absolute; z-index: 2; top: 13px; left: 15px; width: 31px; height: 31px; border: 1px solid var(--line); border-radius: 8px; background: #f7f6f1; color: #77736b; }
 .sidebar-closed .stage-head { padding-left: 60px; }
-.mark { display: block; flex: none; }
+.mark { position: relative; display: block; flex: none; overflow: hidden; border-radius: 7px; background: #fffaf0; }
+.mark-image { position: absolute; top: 50%; left: 50%; width: 172%; height: 172%; max-width: none; transform: translate(-50%, -50%); }
 .desk-home .stage-head { display: none; }
 .desk-home .timeline { display: flex; flex: 1; align-items: center; justify-content: center; width: 100%; min-height: 0; padding: 0 28px; margin: 0; }
 .desk-home .empty { margin: 0 auto; transform: translateY(-3vh); }
