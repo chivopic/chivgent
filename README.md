@@ -1,193 +1,148 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/chivgent-banner-dark.svg">
-    <img src="docs/assets/chivgent-banner-light.svg" alt="chivgent: terminal coding agent. Read-only by default, sandboxed shell, OpenAI-compatible." width="100%">
-  </picture>
+  <img src="docs/assets/chivgent-leaf-mark.png" width="88" alt="">
 </p>
+
+<div align="center">
 
 # chivgent
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+### A coding agent in your terminal.
 
-[![npm](https://img.shields.io/npm/v/chivgent)](https://www.npmjs.com/package/chivgent)
-[![CI](https://github.com/chivopic/chivgent/actions/workflows/ci.yml/badge.svg)](https://github.com/chivopic/chivgent/actions/workflows/ci.yml)
-![Node.js >=22](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=nodedotjs&logoColor=white)
+**Ask what this repo does. It reads the files. It does not touch them.**<br>
+Writes wait for a flag. The shell waits for a yes, inside a sandbox.
 
-chivgent is a terminal coding agent you can read end to end. It asks an LLM
-(OpenAI, DeepSeek, or any OpenAI-compatible endpoint) about the project in your
-current directory, using read-only file tools by default. Writes and shell
-commands are separate opt-in flags, and shell commands run in a macOS Seatbelt
-sandbox or an offline Docker container with per-command approval.
+[![npm](https://img.shields.io/npm/v/chivgent?color=111111)](https://www.npmjs.com/package/chivgent)
+[![CI](https://img.shields.io/github/actions/workflow/status/chivopic/chivgent/ci.yml?label=CI&color=111111)](https://github.com/chivopic/chivgent/actions/workflows/ci.yml)
+![Node.js >=22](https://img.shields.io/badge/Node.js-%3E%3D22-111111)
+[![License](https://img.shields.io/badge/license-MIT-111111)](LICENSE)
 
-It is small on purpose: a TypeScript CLI with four runtime dependencies, where
-the agent loop, Provider adapters, context compaction, and tool sandboxing are
-each a few hundred lines you can study.
+[Architecture](docs/architecture.md) · [Shell](docs/shell-sandbox.md) · [Sign in](docs/subscription-oauth.md) · **English** · [简体中文](README.zh-CN.md)
 
-**Use it if** you want a coding agent whose every mechanism you can inspect and
-change, or a reference implementation for building your own.
-**Look elsewhere if** you want the most capable agent for daily work, a hosted
-product, a fine-grained permission system, or native Windows shell support.
+</div>
+
+<br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/turn-dark.svg">
+  <img src="docs/assets/turn-light.svg" width="920" alt="One question, three read tools, an answer. The workspace is not changed.">
+</picture>
+
+## Is this for you?
+
+You have a project open and a question about it. chivgent asks a model you choose, using the files in the current directory.
+
+- **It starts by reading.** Listing, searching, and reading are on. Nothing is written.
+- **You bring the model.** An API key, or a ChatGPT or xAI subscription you sign in with.
+- **The boundary is a switch, not a surprise.** Writes require a flag. Each shell command asks, then runs in Seatbelt or Docker.
+
+It runs on your machine. It is not a hosted product. It does not yet support fine-grained permissions, a native Windows shell, or a desktop app you can work in today. Work on a desktop workbench has started in this repository. The terminal is how you use chivgent.
 
 ## Quick start
 
-You need Node.js 22 or newer and an API key for one Provider.
+You need Node.js 22 or newer.
+
+**1 · Install.**
 
 ```bash
 npm install -g chivgent
-chivgent --version
 ```
 
-This prints the installed version, such as `1.0.0`. Then, from the project you want to ask
-about:
+Already installed? `chivgent update --check`, then `chivgent update`.
+
+**2 · Provide a key, or sign in later.**
 
 ```bash
 export OPENAI_API_KEY="your-api-key"
-chivgent "What does this project do, and where is its entry point?"
 ```
 
-The answer streams to stdout. Tool activity (`list_files`, `search_text`,
-`read_file`) is shown on stderr. Nothing in the project is changed.
+No key is fine. Run `chivgent`, type `/provider`, and enter one when asked. Keys are saved for your user only, in `~/.chivgent/auth.json`.
 
-Prefer DeepSeek or another Provider? Swap the key and add `--provider`:
+**3 · Ask, from the project.**
 
 ```bash
-export DEEPSEEK_API_KEY="your-api-key"
-chivgent --provider deepseek "Explain the architecture in src/"
+chivgent "Where is the entry point?"
 ```
 
-Run `chivgent` with no question for an interactive session. If no key is set,
-the session still starts: type `/provider`, pick one, and enter its key when
-asked. Keys are saved owner-only in `~/.chivgent/auth.json`.
+The answer streams to stdout. Tool names appear on stderr. The project is unchanged.
 
-**Try it without a key or network:** from a source checkout, `npm run demo:tui`
-runs the TUI against a stub Provider and does not touch the workspace.
+```bash
+chivgent --provider deepseek "Explain src/"        # DeepSeek, same kind of question
+chivgent --allow-writes "Rename sayHi to greet"    # files change only with this flag
+chivgent --allow-shell "Run the tests"             # asks before each command, then runs in the sandbox
+chivgent --tui                                     # interactive, with a live region
+chivgent --continue                                # resume the last session in this directory
+```
 
-## What it can do, and what it needs from you
+In an interactive session, `/login oauth openai` or `/login oauth xai` signs in with a subscription. On normal startup, a key still takes precedence. [Subscription sign-in](docs/subscription-oauth.md).
 
-| Capability | Flag | What it can touch |
+## How it fits together
+
+You type in the terminal. chivgent calls the provider you picked. File tools stay inside the current directory. The shell, only if you turned it on, runs in a sandbox and does not receive your provider keys.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/fit-dark.svg">
+  <img src="docs/assets/fit-light.svg" width="920" alt="You, chivgent, the provider you picked, this directory, and a sandbox only if shell is on.">
+</picture>
+
+## What it can touch
+
+| | Flag | What it can reach |
 | --- | --- | --- |
-| Discover, search, and read files | default | The current directory only. `.gitignore`d, generated, and credential paths (such as `.env`, `id_rsa`) are skipped. |
-| Create and edit files (`write_file`, `edit_file`, `apply_patch`) | `--allow-writes` | Files inside the workspace. Edits are exact-match and atomic. |
-| Run shell commands (`bash`) | `--allow-shell` | macOS Seatbelt sandbox by default on macOS; Docker on other supported platforms. Network and workspace writes are denied unless explicitly enabled. Each command needs a `y` to run. |
-| Load project extensions | trust prompt on first run | Anything you can: extensions are in-process JavaScript. |
+| Read the project | default | This directory. Ignored, generated, and credential paths are skipped. |
+| Change files | `--allow-writes` | Files inside the workspace. An edit has to match exactly, and it is written atomically. |
+| Run a command | `--allow-shell` | Seatbelt on macOS, Docker elsewhere. Network is off. Each command requires confirmation. |
 
-Costs: chivgent calls the Provider you choose with your key, so you pay that
-Provider's normal token prices. It reports token counts per turn and per
-session (`/session`) but never converts them to money.
-
-OpenAI ChatGPT plan and xAI subscription OAuth sign-in are also available in
-interactive sessions with `/login oauth openai` or `/login oauth xai`. See the
-[subscription sign-in guide](docs/subscription-oauth.md) for credential handling,
-provider behavior, and protocol sources.
+You pay the provider you picked, at their prices. chivgent shows token counts; it does not convert them into costs.
 
 ## Providers
 
-| Provider | `--provider` | API key variable | Default model |
+| Provider | `--provider` | Key | Model |
 | --- | --- | --- | --- |
-| OpenAI (Responses API) | `openai` (default) | `OPENAI_API_KEY` | `gpt-5.6` |
+| OpenAI, Responses API | `openai` (default) | `OPENAI_API_KEY` | `gpt-5.6` |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-v4-flash` |
-| Any OpenAI-compatible endpoint | `openai-compatible` | `OPENAI_API_KEY` + `OPENAI_BASE_URL` | set `OPENAI_MODEL` |
+| Any compatible endpoint | `openai-compatible` | `OPENAI_API_KEY` and `OPENAI_BASE_URL` | set `OPENAI_MODEL` |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | set `OPENROUTER_MODEL` |
 | Groq | `groq` | `GROQ_API_KEY` | set `GROQ_MODEL` |
 | xAI | `xai` | `XAI_API_KEY` | set `XAI_MODEL` |
 | Moonshot | `moonshot` | `MOONSHOT_API_KEY` | set `MOONSHOT_MODEL` |
 
-`--model` overrides the model variable. Keys resolve in this order: `--api-key`,
-then the environment variable, then `~/.chivgent/auth.json` (literal keys only;
-no `$VAR` expansion or command substitution). A custom `OPENAI_BASE_URL`
-receives your key and prompts, so point it only at endpoints you trust.
+`--model` overrides the model variable. Keys resolve in this order: `--api-key`, then the environment variable, then `~/.chivgent/auth.json`. A custom base URL receives your key and your prompts. Point it only at an endpoint you trust.
 
-Compatible endpoints must implement `POST /chat/completions` with function tool
-calling. Changing only the base URL does not guarantee full compatibility; see
-[architecture](docs/architecture.md#openai-compatible-providers).
+A compatible endpoint must implement `POST /chat/completions` with tool calling. Changing the base URL does not guarantee full compatibility. [Architecture](docs/architecture.md#openai-compatible-providers).
 
-## Everyday use
+## A session you can come back to
 
-```bash
-chivgent                                   # interactive session
-chivgent --continue                        # resume the latest session here
-chivgent --allow-writes "Rename sayHi to greet everywhere"
-chivgent --allow-shell --approve-all-shell "Run the tests and explain the failure"
-chivgent --json "List the CLI flags" > run.jsonl   # machine-readable events
-```
+Run `chivgent` with no question for an interactive session. It is saved under `~/.chivgent/sessions`. `--continue` resumes the latest one in this directory. `/resume` lists the others, and only opens sessions from here.
 
-Select a shell backend with `--shell-backend auto|native|docker` (`auto` uses
-Seatbelt on macOS and Docker elsewhere). Shell writes require `--allow-writes`;
-network access requires `--shell-network`. The native macOS sandbox uses host
-tools and withholds provider credentials, while shell commands can still read
-files available to your user. It constrains writes and network access; it is not
-confidentiality isolation. See [shell safety](docs/shell-sandbox.md).
+`/plan` keeps the agent on read tools and a plan. Writes, shell, and extension tools stay blocked even if the model asks for them. `/compact` summarizes older turns and keeps the full transcript to resume later. `/status` shows the model, the permissions, and token usage. `/help` lists the rest.
 
-- **Interactive sessions** keep history across prompts and are saved as JSON
-  lines under `~/.chivgent/sessions` (`--no-session` to skip). `/help` lists
-  slash commands such as `/provider`, `/model`, `/login`, `/session`, `/diff`,
-  `/status`, `/compact`, `/plan`, `/new`, `/resume`, and `/rename`. `/new` saves
-  the current session and starts a fresh one; `/resume` lists IDs when omitted
-  and only switches to sessions from the current workspace. Ctrl+C stops a
-  running answer; at an idle prompt it exits.
-- **Plan Mode** (`/plan`, `/plan on`, `/plan off`) persists with the session.
-  The agent can use exact built-in read tools and `update_plan`; the execution
-  layer blocks writes, Shell, and extension tools even if a Provider requests
-  them. New sessions start with Plan Mode off.
-- **Manual compaction** (`/compact`) saves a model-facing checkpoint while
-  retaining the complete transcript for resume. It is unavailable with
-  `--no-compaction`. `/status` shows the active model, permissions, session
-  state, usage, and an approximate token estimate scoped to transcript messages.
-- **`--tui`** adds a live status region and a multi-line editor with history,
-  an inline `/` command menu, and `/gitdiff` review. See the
-  [TUI guide](docs/tui-v5.md).
-- **Long sessions** stay inside the context window: older turns are summarised,
-  while the list of files read and changed is kept from the tool calls
-  themselves. See [architecture](docs/architecture.md#context-management).
-- **Exit codes:** `0` answered, `1` configuration or Provider failure, `2` turn
-  limit reached, `130` interrupted.
-- **Updating:** `chivgent update --check`, then `chivgent update`. See
-  [updating](docs/updating.md).
+`--tui` adds a live status region and a multi-line editor. [TUI](docs/tui-v5.md). A long session stays within the context window by summarizing older turns and keeping the list of files read and changed. [Context](docs/architecture.md#context-management).
 
-`chivgent --help` prints every flag.
+## A desktop app is started
 
-## Security model
+This repository also has an Electron app, aimed at a local workbench on the same agent: a project, a task, the work in front of you, the diff after. The current build is a prototype. It is not how you use chivgent today. [Desktop plan](docs/desktop-architecture.md).
 
-chivgent states its boundaries rather than pretending to enforce fine-grained
-ones. Capabilities are coarse, session-level switches.
+## Boundaries
 
-- File tools reject paths outside the workspace, including `..` traversal and
-  symlink escapes, and deny common credential and private-key paths. Tool output
-  is capped at 64 KiB.
-- `--allow-shell` runs each command in a macOS Seatbelt sandbox or fresh Docker
-  container and asks before each one. Writes and network are denied by default;
-  use `--allow-writes` and `--shell-network` to opt in. Headless and served
-  sessions deny commands unless you also pass `--approve-all-shell`. Native
-  commands can read files available to your user. Details:
-  [shell sandbox](docs/shell-sandbox.md).
-- Writes and trusted extensions are **not** inside the container. Trusting a
-  project's extensions means letting its authors run code as you, so chivgent
-  asks once per directory and never loads them when there is no terminal to ask.
-- `auth.json`, session logs, and `trust.json` are written owner-only but in
-  plain text. Session logs contain prompts, answers, and file excerpts.
-- `--serve` exposes a session on a Unix socket in an owner-only directory.
-  Anyone who can open the socket gets every capability the server started with.
-  There is no TCP listener; use SSH forwarding for another machine.
+- Paths outside the workspace are rejected, including `..` and symlink escapes. Common credential paths are denied. Tool output is capped.
+- `--allow-shell` asks before each command. A headless or served session denies commands unless you also pass `--approve-all-shell`. If the sandbox cannot start, the command does not run unsandboxed.
+- The macOS sandbox can still read files your user can read. It restricts writes and network access. It is not confidentiality isolation. [Shell safety](docs/shell-sandbox.md).
+- Extensions are JavaScript in the chivgent process. Trusting a project means letting its authors run code as you. chivgent prompts once per directory, and does not load extensions when there is no terminal to prompt.
+- Keys, subscription credentials, and session logs are owner-only and stored in plain text. Logs contain prompts, answers, and file excerpts.
+- `--serve` puts the session on a Unix socket in an owner-only directory. Anyone who can open the socket gets every capability the server started with. There is no TCP listener.
 
-Work on committed code, and use a disposable copy for repositories you don't
-trust.
+Work on committed code. Use a copy for a repository you do not trust.
 
-## Going deeper
+## Documentation
 
-- [Architecture](docs/architecture.md): agent loop, runtime events, context
-  compaction, Provider adapters, the TUI live region, and the source layout.
-- [Evals and token usage](docs/evals.md): ten deterministic task suites that
-  measure pass rates over repeated attempts, separate from the free, offline
-  unit tests.
-- [Extensions and remote sessions](docs/extensions-and-remote.md): adding
-  tools and slash commands, project trust, and attaching several terminals to
-  one session.
-- [Patch format](docs/apply-patch.md), [scoped `AGENTS.md`](docs/scoped-agents-md.md),
-  [parallel read tools](docs/parallel-read-tools.md),
-  [plan tracking](docs/agent-plan-progress.md).
-- Design notes for each build stage, from
-  [stage 1](docs/stage-1-minimal-agent.md) to [stage 14](docs/stage-14-tui.md),
-  and the [release process](docs/releasing.md).
+| | |
+| --- | --- |
+| [Architecture](docs/architecture.md) | The loop, providers, context, and where the source lives |
+| [Shell safety](docs/shell-sandbox.md) | Seatbelt, Docker, and what a command can still read |
+| [Subscription sign-in](docs/subscription-oauth.md) | ChatGPT and xAI: what is stored, and what a key still does |
+| [TUI](docs/tui-v5.md) | The live region, the editor, and diff review |
+| [Evals](docs/evals.md) | Whether the agent finishes the task, separate from the unit tests |
+| [Extensions and remote sessions](docs/extensions-and-remote.md) | Tools you add, and attaching another terminal |
 
 ## Development
 
@@ -195,17 +150,10 @@ trust.
 git clone https://github.com/chivopic/chivgent.git
 cd chivgent
 npm install
-npm run check
 npm test
-npm run build
 ```
 
-Tests use scripted LLM clients and never spend API credits.
-`npm run release:check` runs the full gate, including an `npm pack` dry run.
-To try the checkout as a global command: `npm install -g .`
-
-Issues and focused pull requests are welcome. Keep Provider-specific types in
-`src/providers/` so the agent runtime stays independent of vendor SDKs.
+Tests use scripted model clients and do not spend API credits. Issues and focused pull requests are welcome. Keep provider-specific types in `src/providers/`, so the agent does not depend on a vendor SDK.
 
 ## License
 
