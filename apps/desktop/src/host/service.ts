@@ -23,7 +23,9 @@ export interface AcceptedStart {
 
 export interface HostServiceOptions {
   readonly send: (message: HostToMain) => void;
-  readonly createAgent: (onEvent: (event: AgentEvent) => void) => Agent;
+  readonly createAgent: (onEvent: (event: AgentEvent) => void, projectPath?: string) => Agent;
+  readonly defaultProvider?: string;
+  readonly compatibleBaseURL?: string;
   readonly createSession?: SessionFactory;
   readonly createId?: () => string;
 }
@@ -38,6 +40,7 @@ export interface RuntimeSessionResult {
   readonly session: RuntimeSession;
   readonly provider: string;
   readonly model: string;
+  readonly baseURL?: string;
 }
 
 export type SessionFactory = (
@@ -57,6 +60,8 @@ export class HostService {
   private readonly createAgent: HostServiceOptions["createAgent"];
   private readonly createSession: HostServiceOptions["createSession"];
   private readonly createId: () => string;
+  private readonly defaultProvider: string;
+  private readonly compatibleBaseURL: string | undefined;
   private readonly accepted = new Map<string, AcceptedStart>();
   private active: ActiveRun | undefined;
   private sequence = 0;
@@ -70,6 +75,8 @@ export class HostService {
     this.createAgent = options.createAgent;
     this.createSession = options.createSession;
     this.createId = options.createId ?? (() => randomBytes(8).toString("hex"));
+    this.defaultProvider = options.defaultProvider || "openai";
+    this.compatibleBaseURL = safeEndpoint(options.compatibleBaseURL);
     this.instanceId = `host-${this.createId()}`;
   }
 
@@ -96,6 +103,8 @@ export class HostService {
           protocolVersion: DESKTOP_PROTOCOL_VERSION,
           hostInstanceId: this.instanceId,
           capabilities: [...HOST_CAPABILITIES, this.createSession === undefined ? "demo-agent" : "real-agent"],
+          defaultProvider: this.defaultProvider,
+          ...(this.compatibleBaseURL === undefined ? {} : { compatibleBaseURL: this.compatibleBaseURL }),
         });
         return;
       case "start":
@@ -145,6 +154,11 @@ export class HostService {
         replayed: true,
       });
       return;
+    }
+    if (this.createSession !== undefined && this.accepted.size >= acceptedRequestLimit()) {
+      // Real conversations are long-lived: retain only the recent idempotency window.
+      const oldest = this.accepted.keys().next().value;
+      if (oldest !== undefined) this.accepted.delete(oldest);
     }
     if (this.accepted.size >= acceptedRequestLimit()) {
       this.send({
@@ -216,7 +230,9 @@ export class HostService {
           if (this.active?.runId !== runId || controller.signal.aborted || this.closed) return;
           this.session = initialized.value;
           this.sessionConfigKey = configKey;
-          this.send({ type: "runtime-config", provider: this.session.provider, model: this.session.model });
+          const baseURL = safeEndpoint(this.session.baseURL);
+          this.send({ type: "runtime-config", provider: this.session.provider, model: this.session.model,
+            ...(baseURL === undefined ? {} : { baseURL }) });
         }
         if (controller.signal.aborted) {
           this.send({ type: "error", requestId: request.requestId, runId, code: "cancelled", message: "运行已取消。" });
@@ -226,7 +242,7 @@ export class HostService {
         try { await this.session.session.prompt(request.prompt, { signal: controller.signal }); }
         finally { unsubscribe(); }
       } else {
-        await this.createAgent(onEvent).run(request.prompt, { signal: controller.signal });
+        await this.createAgent(onEvent, this.projectPath).run(request.prompt, { signal: controller.signal });
       }
     };
     void run()
@@ -310,4 +326,20 @@ async function awaitWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Prom
       (error: unknown) => { signal.removeEventListener("abort", onAbort); reject(error); },
     );
   });
+}
+
+/** Display endpoint location, but never forward URL credentials, query tokens or fragments. */
+function safeEndpoint(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return undefined;
+  }
 }
