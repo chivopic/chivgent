@@ -73,7 +73,7 @@ try {
   });
   const endpoint = `http://127.0.0.1:${server.address().port}/v1`;
   const environment = {};
-  for (const key of ["PATH", "TMPDIR", "LANG", "LC_ALL", "SystemRoot"]) {
+  for (const key of ["PATH", "TMPDIR", "LANG", "LC_ALL", "SystemRoot", "DISPLAY", "XAUTHORITY"]) {
     if (process.env[key] !== undefined) environment[key] = process.env[key];
   }
   activeApp = await electron.launch({
