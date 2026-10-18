@@ -278,6 +278,72 @@ describe("mouse caret and selected text", () => {
     c.cancel();
   });
 
+  it("hands the wheel above the draft to the terminal and re-arms on the next key", () => {
+    const out: string[] = [];
+    const c = new EditorController({ columns: 80, rows: 24, write: part => out.push(part) }, () => {}, {
+      submitOnEnter: true, mouse: true,
+    });
+    c.begin();
+    c.receive(Buffer.from("draft"));
+    // The caret is on the draft's only row, reported at screen row 12.
+    c.receive(Buffer.from("\u001b[12;4R"));
+    out.length = 0;
+    // A wheel-up over an earlier transcript row is not the editor's to consume.
+    c.receive(Buffer.from("\u001b[<64;10;5M"));
+    const handoff = out.join("");
+    expect(handoff).toContain("\u001b[?1006l");
+    expect(handoff).not.toContain("\u001b[6n");
+    expect(c.document.text).toBe("draft");
+    // Queued wheel reports (including a release) must not take the mouse back.
+    c.receive(Buffer.from("\u001b[<64;10;5m"));
+    c.receive(Buffer.from("\u001b[<65;10;5M"));
+    expect(out.join("")).toBe(handoff);
+    // The next real keystroke re-enables reporting and edits the draft.
+    c.receive(Buffer.from("X"));
+    expect(out.join("")).toContain("\u001b[?1000h");
+    expect(c.document.text).toBe("draftX");
+    c.cancel();
+  });
+
+  it("keeps wheel movement inside a multi-line draft", () => {
+    const out: string[] = [];
+    const c = new EditorController({ columns: 40, rows: 24, write: part => out.push(part) }, () => {}, {
+      submitOnEnter: true, mouse: true,
+    });
+    c.begin();
+    c.receive(Buffer.from("one\u000ftwo\u000fthree"));
+    expect(c.document.position.row).toBe(2);
+    c.receive(Buffer.from("\u001b[12;4R"));
+    out.length = 0;
+    // The wheel is over the third input row, so it still moves the caret.
+    c.receive(Buffer.from("\u001b[<64;5;12M"));
+    expect(c.document.position.row).toBe(0);
+    expect(c.document.text).toBe("one\ntwo\nthree");
+    expect(out.join("")).not.toContain("\u001b[?1006l");
+    c.cancel();
+  });
+
+  it("restores mouse reporting from the process exit hook and removes it on cancel", () => {
+    const out: string[] = [];
+    const before = process.listenerCount("exit");
+    const c = new EditorController({ columns: 40, rows: 12, write: part => out.push(part) }, () => {}, {
+      submitOnEnter: true, mouse: true,
+    });
+    c.begin();
+    try {
+      expect(process.listenerCount("exit")).toBe(before + 1);
+      const restore = process.listeners("exit").at(-1) as () => void;
+      out.length = 0;
+      restore();
+      expect(out.join("")).toContain("\u001b[?1006l");
+    } finally {
+      out.length = 0;
+      c.cancel();
+    }
+    expect(process.listenerCount("exit")).toBe(before);
+    expect(out.join("")).toContain("\u001b[?1006l");
+  });
+
   it("renders suggestions without exceeding terminal height", () => {
     const doc = new EditorDocument();
     doc.insert("/gi");

@@ -42,6 +42,85 @@ describe("interactive TUI editor", () => {
     } finally { screen.input.end(); await run; screen.dispose(); }
   });
 
+  it("picks a Provider for /login before reading the hidden key", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const screen = terminalHarness(56, 18);
+    const prompts: string[] = [];
+    const session = fixture(prompts);
+    const selected: string[] = [];
+    const submitted: string[] = [];
+    let provider = "openai";
+    const control = {
+      get provider() { return provider; },
+      authFile: "/unused",
+      ready: () => false,
+      submit: async (key: string) => { submitted.push(`${provider}:${key}`); return undefined; },
+      describe: () => "openai · deepseek\n",
+      providerIds: () => ["openai", "deepseek"],
+      select: async (argument: string) => {
+        selected.push(argument);
+        provider = argument;
+        return { ok: true as const, message: `Selected ${provider}\n` };
+      },
+      changeModel: async (value: string) => ({ ok: true as const, message: `Selected model ${value}\n` }),
+      changeEndpoint: async () => ({ ok: true as const, message: "endpoint changed\n" }),
+    };
+    const run = runRepl({ session, ...screen, stderr: screen.output, tui: true,
+      inlineComposer: true, signIn: control, providers: control });
+    try {
+      await vi.waitFor(() => expect(screen.bytes()).toContain("/help for shortcuts"));
+      screen.input.write("/login\r");
+      await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("Select a Provider for /login"));
+      expect(screen.bytes()).not.toContain("API key for openai");
+      screen.input.write("\u001b[B\r");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("API key for deepseek"));
+      screen.input.write("sk-inline\r");
+      await vi.waitFor(() => expect(submitted).toEqual(["deepseek:sk-inline"]));
+      expect(selected).toEqual(["deepseek"]);
+      expect(screen.bytes()).not.toContain("sk-inline");
+      screen.input.write("\u0004");
+      expect(await run).toBe(0);
+    } finally { screen.input.end(); await run; screen.dispose(); }
+  });
+
+  it("releases mouse tracking when the wheel is over the transcript", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const screen = terminalHarness(56, 16);
+    const prompts: string[] = [];
+    const session = fixture(prompts);
+    const run = runRepl({ session, ...screen, stderr: screen.output, tui: true, inlineComposer: true });
+    try {
+      await vi.waitFor(() => expect(screen.bytes()).toContain("/help for shortcuts"));
+      await screen.flush();
+      // Answer the composer's cursor-position query so it can map screen rows.
+      const cursor = screen.terminal.buffer.active;
+      screen.input.write(`\u001b[${cursor.cursorY + 1};${cursor.cursorX + 1}R`);
+      await screen.flush();
+      screen.input.write("draft");
+      await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("draft"));
+
+      const beforeWheel = screen.bytes().length;
+      screen.input.write("\u001b[<64;3;1M"); // wheel-up over the transcript
+      await screen.flush();
+      const handoff = screen.bytes().slice(beforeWheel);
+      expect(handoff).toContain("\u001b[?1006l");
+      expect(handoff).not.toContain("\u001b[6n");
+      expect(screen.visible().join("\n")).toContain("draft");
+
+      const beforeKey = screen.bytes().length;
+      screen.input.write("X");
+      await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("draftX"));
+      expect(screen.bytes().slice(beforeKey)).toContain("\u001b[?1000h");
+      expect(prompts).toEqual([]);
+
+      // Ctrl+D only exits an empty composer.
+      screen.input.write("\u007f".repeat("draftX".length));
+      await screen.flush();
+      screen.input.write("\u0004");
+      expect(await run).toBe(0);
+    } finally { screen.input.end(); await run; screen.dispose(); }
+  });
+
   it("edits earlier rows, submits with Ctrl+S, and restores readline input", async () => {
     vi.stubEnv("TERM", "xterm-256color");
     const screen = terminalHarness(56, 18);

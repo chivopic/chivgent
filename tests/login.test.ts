@@ -8,7 +8,7 @@ import {
   DeferredLLMClient,
   NotSignedInError,
 } from "../src/providers/deferred-client.js";
-import { handleSlashCommand, runRepl, type SignIn } from "../src/repl.js";
+import { handleSlashCommand, runRepl, type ProviderControl, type SignIn } from "../src/repl.js";
 import { AgentSession } from "../src/session.js";
 import { assistant, FakeLLMClient, readOnlyWorkspaceWrites } from "./fakes.js";
 import type { Workspace } from "../src/workspace.js";
@@ -211,6 +211,7 @@ describe("the REPL without a key", () => {
     lines: readonly string[],
     signIn: SignIn,
     llm = new FakeLLMClient([assistant("answered")]),
+    providers?: ProviderControl,
   ): Promise<{ session: AgentSession; output: string }> {
     const input = new PassThrough();
     const output = new PassThrough();
@@ -224,6 +225,7 @@ describe("the REPL without a key", () => {
       output,
       stderr: { write: (chunk: string) => { text += chunk; } },
       signIn,
+      ...(providers === undefined ? {} : { providers }),
     });
     for (const line of lines) {
       input.write(`${line}\n`);
@@ -301,5 +303,91 @@ describe("the REPL without a key", () => {
 
     expect(submitted).toEqual([]);
     expect(output).toContain("no key was stored");
+  });
+});
+
+describe("the REPL /login Provider picker", () => {
+  function pickerControl() {
+    const selected: string[] = [];
+    const submitted: string[] = [];
+    let provider = "openai";
+    const control: SignIn & ProviderControl = {
+      get provider() { return provider; },
+      authFile: "/tmp/auth.json",
+      ready: () => true,
+      needsApiKey: async () => false,
+      submit: async (key) => { submitted.push(`${provider}:${key}`); return undefined; },
+      describe: () => "providers\n",
+      providerIds: () => ["openai", "deepseek"],
+      select: async (id) => {
+        selected.push(id);
+        provider = id;
+        return { ok: true, message: `Selected ${id}\n` };
+      },
+      changeModel: async (model) => ({ ok: true, message: `Selected model ${model}\n` }),
+      changeEndpoint: async () => ({ ok: true, message: "endpoint changed\n" }),
+    };
+    return { control, selected, submitted, active: () => provider };
+  }
+
+  /** Drives the plain REPL without a TUI. */
+  async function drivePicker(lines: readonly string[], control: SignIn & ProviderControl) {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    output.resume();
+    let text = "";
+    const session = createSession();
+    const finished = runRepl({
+      session, input, output,
+      stderr: { write: (chunk: string) => { text += chunk; } },
+      signIn: control,
+      providers: control,
+    });
+    for (const line of lines) input.write(`${line}\n`);
+    input.end();
+    await finished;
+    return text;
+  }
+
+  it("lists Providers and stores the key for the chosen one", async () => {
+    const { control, selected, submitted } = pickerControl();
+    const output = await drivePicker(["/login", "2", "sk-deepseek"], control);
+
+    expect(output).toContain("Select a Provider for /login");
+    expect(output).toContain("1. openai (current)");
+    expect(output).not.toContain("API key for openai");
+    expect(selected).toEqual(["deepseek"]);
+    expect(submitted).toEqual(["deepseek:sk-deepseek"]);
+    expect(output).toContain("Stored the key for deepseek");
+  });
+
+  it("accepts a Provider name and prompts even when its key is already stored", async () => {
+    const { control, selected, submitted } = pickerControl();
+    const output = await drivePicker(["/login", "deepseek", "replacement"], control);
+
+    expect(selected).toEqual(["deepseek"]);
+    expect(output).toContain("API key for deepseek");
+    expect(submitted).toEqual(["deepseek:replacement"]);
+  });
+
+  it("cancels on a blank or unknown choice without switching or storing", async () => {
+    for (const answer of ["", "nope"]) {
+      const { control, selected, submitted, active } = pickerControl();
+      const output = await drivePicker(["/login", answer], control);
+
+      expect(output).toContain("No Provider selected; no key was stored.");
+      expect(selected).toEqual([]);
+      expect(submitted).toEqual([]);
+      expect(active()).toBe("openai");
+    }
+  });
+
+  it("keeps /login NAME as the typed shortcut without a picker", async () => {
+    const { control, selected, submitted } = pickerControl();
+    const output = await drivePicker(["/login deepseek", "sk-typed"], control);
+
+    expect(output).not.toContain("Select a Provider for /login");
+    expect(selected).toEqual(["deepseek"]);
+    expect(submitted).toEqual(["deepseek:sk-typed"]);
   });
 });
