@@ -66,6 +66,8 @@ export interface InitializedMessage {
   readonly protocolVersion: number;
   readonly hostInstanceId: string;
   readonly capabilities: readonly string[];
+  readonly defaultProvider: string;
+  readonly compatibleBaseURL?: string;
 }
 
 export interface StartedMessage {
@@ -85,6 +87,7 @@ export interface RuntimeConfigMessage {
   readonly type: "runtime-config";
   readonly provider: string;
   readonly model: string;
+  readonly baseURL?: string;
 }
 
 export interface InterruptedMessage {
@@ -237,12 +240,14 @@ export function isHostToMain(value: unknown): value is HostToMain {
         record.protocolVersion === DESKTOP_PROTOCOL_VERSION &&
         isRequestId(record.hostInstanceId) &&
         Array.isArray(record.capabilities) &&
-        record.capabilities.every((capability) => typeof capability === "string")
+        record.capabilities.every((capability) => typeof capability === "string") &&
+        typeof record.defaultProvider === "string" &&
+        (record.compatibleBaseURL === undefined || typeof record.compatibleBaseURL === "string")
       );
     case "project-selected":
       return isRequestId(record.requestId) && typeof record.path === "string" && record.path.length > 0;
     case "runtime-config":
-      return typeof record.provider === "string" && record.provider.length > 0 && typeof record.model === "string" && record.model.length > 0;
+      return typeof record.provider === "string" && record.provider.length > 0 && typeof record.model === "string" && record.model.length > 0 && (record.baseURL === undefined || typeof record.baseURL === "string");
     case "started":
       return (
         isRequestId(record.requestId) &&
