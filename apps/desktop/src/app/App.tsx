@@ -29,6 +29,8 @@ export function App(): JSX.Element {
   const [projectPath, setProjectPath] = useState("");
   const [projectError, setProjectError] = useState("");
   const [runtimeConfig, setRuntimeConfig] = useState("");
+  const [compatibleEndpoint, setCompatibleEndpoint] = useState("");
+  const [demoMode, setDemoMode] = useState(false);
   const [provider, setProvider] = useState("openai");
   const [model, setModel] = useState("");
   const timelineRef = useRef<HTMLDivElement>(null);
@@ -47,8 +49,12 @@ export function App(): JSX.Element {
       return;
     }
     const stopEvents = api.onEvent((message) => {
-      if (message.type === "runtime-config") {
-        setRuntimeConfig(`${message.provider} · ${message.model}`);
+      if (message.type === "initialized") {
+        setProvider(message.defaultProvider);
+        setCompatibleEndpoint(message.compatibleBaseURL ?? "");
+        setDemoMode(message.capabilities.includes("demo-agent"));
+      } else if (message.type === "runtime-config") {
+        setRuntimeConfig(`${message.provider} · ${message.model}${message.baseURL ? ` · ${message.baseURL}` : ""}`);
       } else if (message.type === "event") {
         dispatch({
           type: "agent",
@@ -56,7 +62,9 @@ export function App(): JSX.Element {
           sequence: message.sequence,
           event: message.event,
         });
-      } else if (message.type === "error") {
+      } else if (message.type === "error" && message.runId !== undefined) {
+        // Project-picker and other IPC errors are handled by their own callers.
+        // They must not turn an unrelated, still-running Agent into an error.
         if (message.code === "cancelled") dispatch({ type: "cancelled" });
         else dispatch({ type: "fail", message: message.message });
       }
@@ -204,8 +212,10 @@ export function App(): JSX.Element {
             <option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="openai-compatible">OpenAI compatible</option><option value="openrouter">OpenRouter</option><option value="groq">Groq</option><option value="xai">xAI</option><option value="moonshot">Moonshot</option>
           </select></label>
           <label>Model <input aria-label="Model" data-testid="model-input" value={model} placeholder="沿用 Provider 环境配置" disabled={running} onChange={(event) => setModel(event.target.value)} /></label>
+          {provider === "openai-compatible" && <span data-testid="compatible-endpoint">请求端点：{compatibleEndpoint || "未配置 OPENAI_BASE_URL"}</span>}
           {runtimeConfig && <span data-testid="runtime-config">{running ? "当前运行" : "最近使用"}：{runtimeConfig}</span>}
         </div>
+        {demoMode && <div className="banner" data-testid="demo-notice" role="status">离线演示：此模式不会读取所选项目文件，也不会连接真实 Provider。</div>}
         {state.notice !== null && (
           <div className="banner" role="status" data-testid="notice">{state.notice}</div>
         )}
