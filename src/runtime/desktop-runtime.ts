@@ -1,5 +1,5 @@
 import type { CliOptions } from "../cli-options.js";
-import { DEFAULT_CONTEXT_WINDOW } from "../context/context-manager.js";
+import { DEFAULT_CONTEXT_WINDOW, type AppliedCompaction } from "../context/context-manager.js";
 import { createLocalSession } from "../cli-runtime.js";
 import { CredentialResolver } from "../auth/credentials.js";
 import { EnvCredentialSource } from "../auth/env-credentials.js";
@@ -15,6 +15,7 @@ export interface DesktopRuntimeConfig {
   readonly environment?: NodeJS.ProcessEnv;
   readonly authFile?: string;
   readonly messages?: readonly Message[];
+  readonly compaction?: AppliedCompaction;
   readonly createClient?: (config: { apiKey: string; model: string; baseURL?: string }) => import("../llm.js").LLMClient;
 }
 
@@ -32,11 +33,11 @@ export async function createDesktopSession(config: DesktopRuntimeConfig) {
     throw new Error(`${definition.baseUrlEnvKeys.join(" 或 ")} 需要配置。`);
   }
   const credentialEnvironment = { ...environment };
-  // OPENAI_API_KEY is shared by OpenAI and OpenAI-compatible. The latter may
-  // point at an arbitrary endpoint, so it only inherits that env key when the
-  // process was explicitly configured for the compatible Provider. Its own
-  // auth.json entry remains available when the user selects it in the UI.
-  if (provider === "openai-compatible" && (environment.CHIVGENT_PROVIDER ?? "openai") !== "openai-compatible") {
+  // Both Providers declare OPENAI_API_KEY, but they can target different
+  // origins. Use the shared environment key only for its startup Provider;
+  // after switching, use the destination Provider's own auth.json entry.
+  const startupProvider = environment.CHIVGENT_PROVIDER ?? "openai";
+  if ((provider === "openai-compatible" || provider === "openai") && provider !== startupProvider) {
     delete credentialEnvironment.OPENAI_API_KEY;
   }
   const credential = await new CredentialResolver([
@@ -60,7 +61,8 @@ export async function createDesktopSession(config: DesktopRuntimeConfig) {
   } satisfies CliOptions;
   const session = createLocalSession({
     options, cwd: config.cwd, llm,
-    restored: { resumed: false, messages: config.messages },
+    restored: { resumed: false, messages: config.messages,
+      ...(config.compaction === undefined ? {} : { compaction: config.compaction }) },
   });
   return { session, provider, model, baseURL };
 }
