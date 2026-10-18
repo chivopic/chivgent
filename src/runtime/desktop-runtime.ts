@@ -62,7 +62,7 @@ export async function createDesktopSession(config: DesktopRuntimeConfig) {
     options, cwd: config.cwd, llm,
     restored: { resumed: false, messages: config.messages },
   });
-  return { session, provider, model };
+  return { session, provider, model, baseURL };
 }
 
 function first(environment: NodeJS.ProcessEnv, keys: readonly string[]): string | undefined {
