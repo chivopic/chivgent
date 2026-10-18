@@ -37,7 +37,6 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #bc8067; outli
 .side-card, .task { border-radius: 9px; padding: 9px 10px; }
 .side-card { display: flex; align-items: center; gap: 10px; }
 .side-card strong { display: block; font-size: 12px; font-weight: 550; }
-.project-glyph { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid #e6d8c8; border-radius: 8px; background: #f0e8db; color: #9a704e; font-family: Georgia, serif; font-size: 14px; }
 .grow { flex: 1; padding-top: 22px; }
 .task { display: grid; grid-template-columns: 8px 1fr; gap: 9px; align-items: start; background: #eae8e1; }
 .task-copy { display: flex; flex-direction: column; min-width: 0; }
@@ -93,7 +92,8 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #bc8067; outli
 .dot.ready { background: #779783; }.dot.run { background: #bd8061; }.dot.stop { background: #a58b56; }.dot.bad { background: #b96c61; }
 .reopen-sidebar { position: absolute; z-index: 2; top: 13px; left: 15px; width: 31px; height: 31px; border: 1px solid var(--line); border-radius: 8px; background: #f7f6f1; color: #77736b; }
 .sidebar-closed .stage-head { padding-left: 60px; }
-.mark { display: block; flex: none; }
+.mark { position: relative; display: block; flex: none; overflow: hidden; border-radius: 7px; background: #fffaf0; }
+.mark-image { position: absolute; top: 50%; left: 50%; width: 172%; height: 172%; max-width: none; transform: translate(-50%, -50%); }
 .desk-home .stage-head { display: none; }
 .desk-home .timeline { display: flex; flex: 1; align-items: center; justify-content: center; width: 100%; min-height: 0; padding: 0 28px; margin: 0; }
 .desk-home .empty { margin: 0 auto; transform: translateY(-3vh); }
