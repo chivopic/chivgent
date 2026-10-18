@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="468" viewBox="0 0 920 468" role="img">
+<title>你、chivgent、你选的模型、当前目录，以及只有打开 shell 才出现的沙箱。</title>
+<rect width="920" height="468" rx="18" fill="#f6f1ea"/>
+<rect x="28" y="28" width="150" height="84" rx="12" fill="#fffdfb" stroke="#e4d5c8" stroke-width="1"/>
+<text x="103" y="76" fill="#2a211c" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="16" font-weight="600" text-anchor="middle">你</text>
+<line x1="186" y1="70" x2="229" y2="70" stroke="#c46a3a" stroke-width="1.5"/><path d="M228 65.5 L236 70 L228 74.5" fill="none" stroke="#c46a3a" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+<rect x="244" y="28" width="200" height="84" rx="12" fill="#fffdfb" stroke="#c46a3a" stroke-width="1"/>
+<text x="344" y="76" fill="#c46a3a" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="16" font-weight="650" text-anchor="middle">chivgent</text>
+<line x1="452" y1="70" x2="495" y2="70" stroke="#c46a3a" stroke-width="1.5"/><path d="M494 65.5 L502 70 L494 74.5" fill="none" stroke="#c46a3a" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+<rect x="510" y="28" width="382" height="84" rx="12" fill="#fffdfb" stroke="#e4d5c8" stroke-width="1"/>
+<text x="530" y="62" fill="#8a7568" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="650" text-anchor="start">模型</text>
+<text x="530" y="88" fill="#2a211c" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="16" font-weight="600" text-anchor="start">一把 key，或一个订阅</text>
+<line x1="344" y1="112" x2="344" y2="149" stroke="#c46a3a" stroke-width="1.5"/><path d="M339.5 148 L344 156 L348.5 148" fill="none" stroke="#c46a3a" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+<rect x="28" y="164" width="864" height="112" rx="12" fill="#fffdfb" stroke="#e4d5c8" stroke-width="1"/>
+<text x="52" y="202" fill="#8a7568" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="650" text-anchor="start">当前目录</text>
+<text x="52" y="230" fill="#2a211c" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="18" font-weight="600" text-anchor="start">列出、搜索、读取</text>
+<text x="52" y="254" fill="#8a7568" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="14" font-weight="500" text-anchor="start">写入要等一个旗标</text>
+<line x1="344" y1="276" x2="344" y2="313" stroke="#c46a3a" stroke-width="1.5"/><path d="M339.5 312 L344 320 L348.5 312" fill="none" stroke="#c46a3a" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+<rect x="28" y="328" width="864" height="112" rx="12" fill="#fffdfb" stroke="#e4d5c8" stroke-width="1"/>
+<text x="52" y="366" fill="#8a7568" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="650" text-anchor="start">沙箱</text>
+<text x="52" y="394" fill="#2a211c" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="18" font-weight="600" text-anchor="start">只有打开 shell 才走这里</text>
+<text x="52" y="418" fill="#8a7568" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="14" font-weight="500" text-anchor="start">Seatbelt 或 Docker · 先问一声 · 默认无网络</text>
+</svg>

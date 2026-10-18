@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="312" viewBox="0 0 920 312" role="img">
+<title>One question, three read tools, an answer. The workspace is not changed.</title>
+<rect width="920" height="312" rx="18" fill="#1a1614"/>
+<rect x="28" y="28" width="248" height="196" rx="12" fill="#26201c" stroke="#3d332c" stroke-width="1"/>
+<text x="48" y="58" fill="#b5a396" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="650" text-anchor="start" letter-spacing="0.4">You</text>
+<rect x="336" y="28" width="248" height="196" rx="12" fill="#26201c" stroke="#3d332c" stroke-width="1"/>
+<text x="356" y="58" fill="#e08a58" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="650" text-anchor="start" letter-spacing="0.4">chivgent</text>
+<rect x="644" y="28" width="248" height="196" rx="12" fill="#26201c" stroke="#3d332c" stroke-width="1"/>
+<text x="664" y="58" fill="#b5a396" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="650" text-anchor="start" letter-spacing="0.4">Answer</text>
+<text x="48" y="108" fill="#f4ece6" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="18" font-weight="600" text-anchor="start">Where is the</text>
+<text x="48" y="134" fill="#f4ece6" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="18" font-weight="600" text-anchor="start">entry point?</text>
+<rect x="356" y="84" width="208" height="32" rx="8" fill="#3a2a22"/>
+<text x="372" y="105" fill="#f4ece6" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="550" text-anchor="start">list_files</text>
+<rect x="356" y="124" width="208" height="32" rx="8" fill="#3a2a22"/>
+<text x="372" y="145" fill="#f4ece6" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="550" text-anchor="start">search_text</text>
+<rect x="356" y="164" width="208" height="32" rx="8" fill="#3a2a22"/>
+<text x="372" y="185" fill="#f4ece6" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="550" text-anchor="start">read_file</text>
+<text x="660" y="116" fill="#f4ece6" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15" font-weight="600" text-anchor="start">cli.ts</text>
+<text x="660" y="142" fill="#b5a396" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" text-anchor="start">stdout</text>
+<line x1="276" y1="126" x2="321" y2="126" stroke="#e08a58" stroke-width="1.5"/><path d="M320 121.5 L328 126 L320 130.5" fill="none" stroke="#e08a58" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+<line x1="584" y1="126" x2="629" y2="126" stroke="#e08a58" stroke-width="1.5"/><path d="M628 121.5 L636 126 L628 130.5" fill="none" stroke="#e08a58" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+<rect x="245.0" y="248" width="430" height="40" rx="20" fill="#1c2b24"/>
+<circle cx="267.0" cy="268" r="4" fill="#9dceb0"/>
+<text x="281.0" y="273" fill="#9dceb0" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="14" font-weight="600" text-anchor="start">The workspace is not changed.</text>
+</svg>
