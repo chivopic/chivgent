@@ -52,6 +52,7 @@ try {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [projectPath] });
   }, root);
   await page.getByTestId("host-status").getByText("已连接", { exact: false }).waitFor({ timeout: 20_000 });
+  await page.getByTestId("demo-notice").getByText("离线演示", { exact: false }).waitFor();
   await page.getByRole("button", { name: "选择项目目录" }).click();
   await page.locator(".project-path").filter({ hasText: root }).waitFor({ timeout: 5_000 });
   const initializeResults = await page.evaluate(async () =>
