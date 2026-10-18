@@ -152,6 +152,78 @@ describe("desktop real runtime", () => {
     expect(selectedKey).toBe("compatible-only-key");
   });
 
+  it("never forwards a compatible startup key to the OpenAI API after switching providers", async () => {
+    const cwd = temporaryProject();
+    const authFile = join(cwd, "auth.json");
+    const environment = {
+      CHIVGENT_PROVIDER: "openai-compatible",
+      OPENAI_BASE_URL: "https://private.example.test/v1",
+      OPENAI_API_KEY: "private-endpoint-key",
+    };
+    const keys: string[] = [];
+    const createClient = ({ apiKey }: { apiKey: string }) => {
+      keys.push(apiKey);
+      return { async complete() { return { message: { role: "assistant" as const, content: "", toolCalls: [] } }; } };
+    };
+    const config = { cwd, provider: "openai", environment, authFile, createClient };
+    await expect(createDesktopSession(config)).rejects.toThrow("API key");
+    expect(keys).toEqual([]);
+    writeFileSync(authFile, JSON.stringify({ openai: "openai-only-key" }));
+    await createDesktopSession(config);
+    expect(keys).toEqual(["openai-only-key"]);
+    keys.length = 0;
+    await createDesktopSession({ ...config, provider: "openai-compatible", model: "compatible-model" });
+    expect(keys).toEqual(["private-endpoint-key"]);
+  });
+
+  it("passes a compacted conversation checkpoint into a replacement model session", async () => {
+    const root = temporaryProject();
+    const outbound: HostToMain[] = [];
+    const handoffs: unknown[] = [];
+    const checkpoint = { state: {
+      summary: "important-compacted-decision", readFiles: ["facts.txt"],
+      modifiedFiles: [], decisions: ["Do not overwrite."], pendingTasks: ["Explain the entry point."],
+    }, splitIndex: 1 };
+    const service = new HostService({
+      send: (event) => outbound.push(event),
+      createAgent: () => { throw new Error("real path only"); },
+      createSession: async (...args) => {
+        handoffs.push((args as unknown[])[4]);
+        return { provider: "openai", model: String(args[2]), session: {
+          messages: [{ role: "user" as const, content: "original user message" }],
+          compaction: checkpoint,
+          subscribe: () => () => {},
+          prompt: async () => {},
+        } };
+      },
+    });
+    await select(service, outbound, root);
+    service.handle({ type: "start", requestId: "first-model", prompt: "hello", model: "model-a" });
+    await until(() => outbound.some((e) => e.type === "runtime-config" && e.model === "model-a"));
+    await new Promise(setImmediate);
+    service.handle({ type: "start", requestId: "second-model", prompt: "continue", model: "model-b" });
+    await until(() => outbound.some((e) => e.type === "runtime-config" && e.model === "model-b"));
+    expect(handoffs[1]).toEqual(checkpoint);
+    await service.shutdown();
+
+    // A real AgentSession/ContextManager should use the checkpoint rather than replay the discarded prose.
+    const requests: LLMRequest[] = [];
+    const config = { cwd: root, provider: "openai-compatible", model: "fixture",
+      environment: { CHIVGENT_PROVIDER: "openai-compatible", OPENAI_API_KEY: "fixture", OPENAI_BASE_URL: "http://127.0.0.1:1/v1" },
+      authFile: join(root, "absent.json"),
+      messages: [{ role: "user" as const, content: "discarded original prose" }, { role: "assistant" as const, content: "answer", toolCalls: [] }],
+      compaction: checkpoint,
+      createClient: () => ({ async complete(request: LLMRequest) {
+        requests.push(request);
+        return { message: { role: "assistant" as const, content: "done", toolCalls: [] } };
+      } }),
+    };
+    const runtime = await createDesktopSession(config as unknown as Parameters<typeof createDesktopSession>[0]);
+    await runtime.session.prompt("continue");
+    expect(JSON.stringify(requests[0]?.messages)).toContain("important-compacted-decision");
+    expect(JSON.stringify(requests[0]?.messages)).not.toContain("discarded original prose");
+  });
+
   it("cancels initialization immediately and ignores a late factory result after switching projects", async () => {
     const first = temporaryProject();
     const second = temporaryProject();
