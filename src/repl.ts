@@ -537,7 +537,13 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       };
       return rank(a) - rank(b);
     })
-    .map((name) => ({ value: name, label: `/${name}${name === "provider" ? "  ·  choose a Provider" : name === "model" ? "  ·  change model" : ""}` }));
+    .map((name) => {
+      const description = options.extensionCommands?.find(command => command.name === name)?.description;
+      const suffix = name === "provider" ? "  ·  choose a Provider"
+        : name === "model" ? "  ·  change model"
+          : description === undefined ? "" : `  ·  ${description}`;
+      return { value: name, label: `/${name}${suffix}` };
+    });
   const menuItems = (line: string): readonly MenuItem[] => {
     if (line === "/provider" || line.startsWith("/provider ")) {
       const query = line.slice("/provider".length).trim().toLowerCase();

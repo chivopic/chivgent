@@ -200,12 +200,20 @@ export interface EditorFrame {
   readonly cursorColumn: number;
   /** Document row and horizontal viewport mapping for each visible input row. */
   readonly inputRows?: readonly { readonly documentRow: number; readonly scrollCells: number }[];
+  /** Command index and frame row for each actually visible completion row. */
+  readonly suggestionRows?: readonly { readonly commandIndex: number; readonly row: number }[];
 }
 
 /** Fixed-height viewport; keep caret in frame even on small terminals. */
-export function editorFrame(document: EditorDocument, width: number, height: number, submitOnEnter = false, suggestions: readonly string[] = [], selectedSuggestion = 0, footerStatus?: string): EditorFrame {
+export function editorFrame(document: EditorDocument, width: number, height: number, submitOnEnter = false, suggestions: readonly { readonly value: string; readonly label: string }[] = [], selectedSuggestion = 0, footerStatus?: string): EditorFrame {
   const cellWidth = Math.max(8, width - 1);
-  const displayedSuggestions = suggestions.slice(0, Math.max(0, height - 7));
+  const suggestionLimit = Math.max(0, height - 7);
+  const visibleSuggestionCount = Math.min(suggestions.length, suggestionLimit);
+  const suggestionStart = Math.max(0, Math.min(
+    selectedSuggestion - visibleSuggestionCount + 1,
+    suggestions.length - visibleSuggestionCount,
+  ));
+  const displayedSuggestions = suggestions.slice(suggestionStart, suggestionStart + visibleSuggestionCount);
   const rowLimit = Math.max(1, Math.min(8, height - 5 - displayedSuggestions.length));
   const rows = document.text.split("\n");
   const position = document.position;
@@ -256,19 +264,28 @@ export function editorFrame(document: EditorDocument, width: number, height: num
   const header = fitLine(submitOnEnter
     ? "─".repeat(cellWidth)
     : "┌─ Ctrl+S send · Esc cancel · Enter newline", cellWidth);
-  const popup = displayedSuggestions.map((item, index) => fitLine(`  ${index === selectedSuggestion ? "›" : " "} /${item}`, cellWidth));
+  const popup = displayedSuggestions.map((item, index) => fitLine(
+    `  ${suggestionStart + index === selectedSuggestion ? "›" : " "} ${item.label || `/${item.value}`}`,
+    cellWidth,
+  ));
   const selection = document.selectionRange();
-  const footerText = document.warning || (selection !== undefined
-    ? `${submitOnEnter ? "" : "└─ "}Selected ${selection.end - selection.start} code units · type to replace`
-    : footerStatus ?? (submitOnEnter
-      ? "/help for shortcuts"
-      : `└─ ${rows.length} lines · ${Buffer.byteLength(document.text, "utf8")} bytes · ↑↓←→ move`));
+  const footerText = document.warning || (suggestions.length > 0
+    ? "└─ ↑↓ choose · Tab/Enter complete · Esc close"
+    : selection !== undefined
+      ? `${submitOnEnter ? "" : "└─ "}Selected ${selection.end - selection.start} code units · type to replace`
+      : footerStatus ?? (submitOnEnter
+        ? "/help for shortcuts"
+        : `└─ ${rows.length} lines · ${Buffer.byteLength(document.text, "utf8")} bytes · ↑↓←→ move`));
   const footer = fitLine(footerText, cellWidth);
   return {
     lines: [header, ...body.map(item => item.row), ...popup, footer],
     cursorRow: 1 + (position.row - first),
     cursorColumn: body[position.row - first]?.caret ?? 2,
     inputRows: body.map((item, index) => ({ documentRow: first + index, scrollCells: item.scrollCells })),
+    suggestionRows: displayedSuggestions.map((_, index) => ({
+      commandIndex: suggestionStart + index,
+      row: 1 + body.length + index,
+    })),
   };
 }
 
@@ -289,7 +306,10 @@ export class EditorPainter {
   constructor(private readonly output: EditorOutput) {}
 
   render(frame: EditorFrame): void {
-    const total = Math.max(this.previousRows, frame.lines.length);
+    const total = Math.min(
+      this.output.rows ?? Number.POSITIVE_INFINITY,
+      Math.max(this.previousRows, frame.lines.length),
+    );
     let escape = "";
     if (!this.started) {
       escape += "\r\n";

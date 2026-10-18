@@ -80,21 +80,42 @@ export class EditorController {
     const answer = /^\u001b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(sequence);
     if (answer === null) return;
     const button = Number(answer[1]);
-    if (button === 64 || button === 65) {
-      // Only wheel gestures are acted upon if cursor location is unknown.
-      for (let i = 0; i < 3; i += 1) this.document.moveVertical(button === 64 ? -1 : 1);
+    const column = Number(answer[2]);
+    const row = Number(answer[3]);
+    if ((button & 64) !== 0) {
+      // Wheel over a visible completion changes the selection; elsewhere keep
+      // the editor's existing vertical-scroll behavior. Ignore wheel release.
+      if (answer[4] !== "M") return;
+      const frameRow = this.frameRowAt(row);
+      const suggestion = frameRow === undefined
+        ? undefined
+        : this.lastFrame?.suggestionRows?.find(item => item.row === frameRow);
+      if (suggestion !== undefined && column >= 1 && column <= this.maxWidth()) {
+        const direction = (button & 1) === 0 ? -1 : 1;
+        const max = this.suggestions().length - 1;
+        this.completionIndex = Math.max(0, Math.min(max, this.completionIndex + direction * 3));
+      } else {
+        for (let i = 0; i < 3; i += 1) this.document.moveVertical((button & 1) === 0 ? -1 : 1);
+      }
       return;
     }
     if (button === 0 && answer[4] === "m") { this.mouseDragging = false; return; }
     if (button !== 0 && button !== 32) return;
     if (button === 32 && !this.mouseDragging) return;
     if (this.originRow === undefined || this.lastFrame === undefined) return;
-    const relative = Number(answer[3]) - 1 - this.originRow;
+    if (column < 1 || column > this.maxWidth()) return;
+    const relative = row - 1 - this.originRow;
+    const commandRow = this.lastFrame.suggestionRows?.find(item => item.row === relative);
+    if (button === 0 && answer[4] === "M" && commandRow !== undefined) {
+      this.completionIndex = commandRow.commandIndex;
+      this.insertSelectedCompletion();
+      return;
+    }
     const inputRow = this.lastFrame.inputRows?.[relative - 1];
     // Only visible editable rows map to document text; header, popup and footer
     // coordinates must never be interpreted as text positions.
     if (inputRow === undefined) return;
-    const frameColumn = Math.max(0, Number(answer[2]) - 3);
+    const frameColumn = Math.max(0, column - 3);
     const visibleTextColumn = inputRow.scrollCells > 0
       ? Math.max(0, frameColumn - 1)
       : frameColumn;
@@ -106,8 +127,16 @@ export class EditorController {
     this.mouseDragging = true;
   }
 
+  private frameRowAt(screenRow: number): number | undefined {
+    if (this.originRow === undefined || this.lastFrame === undefined) return undefined;
+    return screenRow - 1 - this.originRow;
+  }
+
   resized(): void {
-    if (!this.completed) this.draw();
+    if (!this.completed) {
+      this.originRow = undefined;
+      this.draw();
+    }
   }
 
   receive(chunk: Buffer): void {
@@ -132,8 +161,8 @@ export class EditorController {
       this.escapeTimer = undefined;
     }
     this.pending += this.decoder.write(chunk);
-    this.parse();
-    if (!this.completed) this.draw();
+    const changed = this.parse();
+    if (!this.completed && changed) this.draw();
   }
 
   private updateSearch(): void {
@@ -149,7 +178,8 @@ export class EditorController {
     this.document.warning = `History ${this.searchOffset + 1}/${matches.length}: ${match.replace(/\n/g, " ↵ ").slice(0, 70)}`;
   }
 
-  private parse(): void {
+  private parse(): boolean {
+    let changed = false;
     const startPaste = "\u001b[200~";
     const endPaste = "\u001b[201~";
     const escapes: Record<string, () => void> = {
@@ -197,6 +227,7 @@ export class EditorController {
         const index = this.pending.indexOf(endPaste);
         if (index !== -1) {
           this.document.insert(this.pending.slice(0, index));
+          changed = true;
           this.pending = this.pending.slice(index + endPaste.length);
           this.pasting = false;
           continue;
@@ -205,12 +236,14 @@ export class EditorController {
         const safe = Math.max(0, this.pending.length - endPaste.length);
         if (safe > 0) {
           this.document.insert(this.pending.slice(0, safe));
+          changed = true;
           this.pending = this.pending.slice(safe);
         }
         break;
       }
       if (this.pending.startsWith(startPaste)) {
         this.pasting = true;
+        changed = true;
         this.pending = this.pending.slice(startPaste.length);
         continue;
       }
@@ -224,6 +257,7 @@ export class EditorController {
         const mouse = /^\u001b\[<\d+;\d+;\d+[Mm]/.exec(this.pending);
         if (mouse !== null) {
           this.processMouse(mouse[0]);
+          changed = true;
           this.pending = this.pending.slice(mouse[0].length);
           continue;
         }
@@ -233,9 +267,11 @@ export class EditorController {
             this.pending = this.pending.slice(matched.length);
             continue;
           }
+          changed = true;
           if (this.suggestions().length > 0 && (matched === "\u001b[A" || matched === "\u001b[B")) {
             const matches = this.suggestions();
-            this.completionIndex = (this.completionIndex + (matched === "\u001b[B" ? 1 : -1) + matches.length) % matches.length;
+            this.completionIndex = Math.max(0, Math.min(matches.length - 1,
+              this.completionIndex + (matched === "\u001b[B" ? 1 : -1)));
           } else escapes[matched]?.();
           this.pending = this.pending.slice(matched.length);
           continue;
@@ -269,10 +305,12 @@ export class EditorController {
         // Unknown CSI: discard its bytes, not executable escape controls.
         const end = this.pending.slice(1).search(/[A-Za-z~]/);
         this.pending = end < 0 ? "" : this.pending.slice(end + 2);
+        changed = true;
         continue;
       }
       const char = this.pending[0] ?? "";
       this.pending = this.pending.slice(1);
+      changed = true;
       if (this.searching) {
         if (char === "\r" || char === "\n") {
           const match = [...(this.options.history ?? [])].reverse().filter(value =>
@@ -300,7 +338,7 @@ export class EditorController {
       switch (char) {
         case "\u0003": // Ctrl+C cancels only this editor, not the REPL.
           this.finish(undefined);
-          return;
+          return changed;
         case "\u0004": // Ctrl+D exits an empty default composer.
           if (this.document.text.length === 0) {
             this.exitRequested.value = true;
@@ -318,7 +356,7 @@ export class EditorController {
         case "\u000a": // Ctrl+J when emitted by terminals (same byte as LF).
           if (this.options.submitOnEnter) {
             this.finish(this.document.text.trim().length > 0 ? this.document.text : undefined);
-            return;
+            return changed;
           }
           if (!this.previousCR) this.document.insert("\n");
           this.previousCR = false;
@@ -326,19 +364,20 @@ export class EditorController {
         case "\u000f": this.document.insert("\n"); break; // Ctrl+O: newline when Enter submits.
         case "\u0013": // Ctrl+S submits once, with no implicit shell action.
           this.finish(this.document.text.trim().length > 0 ? this.document.text : undefined);
-          return;
+          return changed;
         case "\u0001": this.document.home(); break; // Ctrl+A
         case "\u0005": this.document.end(); break; // Ctrl+E
         case "\u0008":
         case "\u007f": this.document.backspace(); break;
         case "\r":
-          if (this.suggestions().length > 0 && !this.suggestions().some(item => `/${item.value}` === this.document.text)) {
+          if (this.suggestions().length > 0 &&
+              !this.suggestions().some(item => `/${item.value}` === this.document.text)) {
             this.insertSelectedCompletion();
             break;
           }
           if (this.options.submitOnEnter) {
             this.finish(this.document.text.trim().length > 0 ? this.document.text : undefined);
-            return;
+            return changed;
           }
           this.document.insert("\n");
           this.previousCR = true;
@@ -357,16 +396,21 @@ export class EditorController {
           }
       }
     }
+    return changed;
   }
 
   private draw(): void {
     const matches = this.suggestions();
     this.completionIndex = matches.length > 0 ? Math.min(this.completionIndex, matches.length - 1) : 0;
     const frame = editorFrame(this.document, this.maxWidth(), this.maxHeight(), this.options.submitOnEnter === true,
-      matches.map(item => item.value), this.completionIndex, this.options.footerStatus?.());
+      matches, this.completionIndex, this.options.footerStatus?.());
     this.lastFrame = frame;
     this.painter.render(frame);
-    if (this.options.mouse) this.outputWrite("\u001b[6n");
+    if (this.options.mouse) {
+      // The painter keeps the frame's top row anchored across redraws. A resize
+      // invalidates that mapping; resized() clears it before requesting a new DSR.
+      this.outputWrite("\u001b[6n");
+    }
   }
 
   cancel(): void {
