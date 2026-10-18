@@ -15,7 +15,7 @@
 ![Node.js >=22](https://img.shields.io/badge/Node.js-%3E%3D22-111111)
 [![License](https://img.shields.io/badge/license-MIT-111111)](LICENSE)
 
-[架构](docs/architecture.md) · [Shell](docs/shell-sandbox.md) · [登录](docs/subscription-oauth.md) · [English](README.md) · **简体中文**
+**[官网 ↗](https://chivgent-web.vercel.app/)** · [架构](docs/architecture.md) · [Shell](docs/shell-sandbox.md) · [登录](docs/subscription-oauth.md) · [English](README.md) · **简体中文**
 
 </div>
 
