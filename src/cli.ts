@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
 import process from "node:process";
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   helpText,
   parseCliArgs,
@@ -11,6 +14,7 @@ import {
 import { createEventRenderer, createJsonEventWriter } from "./render.js";
 import { welcome } from "./tui/welcome.js";
 import { createLiveRegion, terminalWidth } from "./tui/live.js";
+import { terminalColorEnabled, useTui } from "./tui/selection.js";
 import { runRepl } from "./repl.js";
 import { AgentSession } from "./session.js";
 import { createLocalSession } from "./cli-runtime.js";
@@ -95,6 +99,9 @@ function tuiRefusal(
   if (process.stdin.isTTY !== true || process.stderr.isTTY !== true) {
     return "--tui needs a terminal on both stdin and stderr.";
   }
+  if (process.env.TERM === "dumb") {
+    return "--tui cannot run with TERM=dumb; remove --tui or unset TERM.";
+  }
   return undefined;
 }
 
@@ -164,7 +171,7 @@ interface RestoredSession {
   readonly resumed: boolean;
 }
 
-async function main(argv: readonly string[]): Promise<number> {
+export async function main(argv: readonly string[]): Promise<number> {
   ignoreBrokenPipe(process.stdout);
   ignoreBrokenPipe(process.stderr);
   if (argv[0] === "update") {
@@ -219,6 +226,19 @@ async function main(argv: readonly string[]): Promise<number> {
     process.stderr.write("Missing prompt. Run chivgent --help for usage.\n");
     return 1;
   }
+
+  const richTui = useTui({
+    explicit: options.tui,
+    simple: options.simple,
+    interactive,
+    stdinIsTTY: process.stdin.isTTY === true,
+    stdoutIsTTY: process.stdout.isTTY === true,
+    stderrIsTTY: process.stderr.isTTY === true,
+    json: options.json,
+    serve: options.serve,
+    connect: options.connect !== undefined,
+    term: process.env.TERM,
+  });
 
   if (options.tui) {
     // Refused rather than quietly ignored: a switch that silently does nothing
@@ -276,14 +296,14 @@ async function main(argv: readonly string[]): Promise<number> {
   // In TUI mode the live region *is* the renderer: it owns both the region and
   // the transcript it flushes to scrollback, so attaching the append-only
   // renderer as well would print every answer twice.
-  const liveRegion = options.tui
+  const liveRegion = richTui
     ? createLiveRegion({
         stream: process.stderr,
         width: () => terminalWidth(process.stderr),
         height: () => process.stderr.rows || 24,
         answerStream: process.stdout,
         markdown: process.stdout.isTTY === true && process.env.TERM !== "dumb",
-        color: process.stderr.isTTY === true && process.env.NO_COLOR === undefined && process.env.TERM !== "dumb",
+        color: terminalColorEnabled(process.stderr.isTTY === true, process.env),
       })
     : undefined;
   const renderer = options.json
@@ -298,7 +318,7 @@ async function main(argv: readonly string[]): Promise<number> {
             // only meaningful on a terminal; piped stderr keeps one line per event.
             showToolProgress:
               !options.quiet && process.stderr.isTTY === true,
-            color: process.stderr.isTTY === true,
+            color: terminalColorEnabled(process.stderr.isTTY === true, process.env),
           },
         ));
   let detachSession = (): void => undefined;
@@ -369,11 +389,11 @@ async function main(argv: readonly string[]): Promise<number> {
         // In JSON mode stdout carries the event stream and nothing else:
         // readline writes its prompt and echo to the same stream it is given,
         // which would otherwise prefix the first event with escape codes.
-        output: options.json || options.tui ? process.stderr : process.stdout,
-        tui: options.tui,
-        inlineComposer: options.tui,
+        output: options.json || richTui ? process.stderr : process.stdout,
+        tui: richTui,
+        inlineComposer: richTui,
         stderr: process.stderr,
-        banner: options.tui ? welcome({
+        banner: richTui ? welcome({
           version: VERSION,
           provider: options.provider,
           model: options.model ?? "unknown model",
@@ -384,7 +404,7 @@ async function main(argv: readonly string[]): Promise<number> {
             : options.provider === "openai-compatible" && options.baseURL === undefined
               ? { setupIssue: "base-url" as const } : {}),
           width: terminalWidth(process.stderr),
-          color: process.stderr.isTTY === true && process.env.NO_COLOR === undefined && process.env.TERM !== "dumb",
+          color: terminalColorEnabled(process.stderr.isTTY === true, process.env),
         }) : banner(options, session.id, restored.resumed, signedOutMessage),
         ...(store === undefined ? {} : { sessionFile: store.location(session.id) }),
         ...(registry === undefined
@@ -713,12 +733,20 @@ async function readPipedPrompt(): Promise<string | undefined> {
   return contents.trim().length === 0 ? undefined : contents.trim();
 }
 
-main(process.argv.slice(2))
-  .then((exitCode) => {
-    process.exitCode = exitCode;
-  })
-  .catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    process.stderr.write(`CLI error: ${message}\n`);
-    process.exitCode = 1;
-  });
+const cliEntry = process.argv[1] === undefined
+  ? undefined
+  : (() => {
+      try { return realpathSync(resolve(process.argv[1]!)); }
+      catch { return resolve(process.argv[1]!); }
+    })();
+if (cliEntry === fileURLToPath(import.meta.url)) {
+  main(process.argv.slice(2))
+    .then((exitCode) => {
+      process.exitCode = exitCode;
+    })
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      process.stderr.write(`CLI error: ${message}\n`);
+      process.exitCode = 1;
+    });
+}

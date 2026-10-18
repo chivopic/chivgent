@@ -54,7 +54,7 @@ export async function createDesktopSession(config: DesktopRuntimeConfig) {
     provider, model, ...(baseURL === undefined ? {} : { baseURL }),
     maxTurns: 8, stream: true, quiet: true, json: false, session: false,
     continueSession: false, listSessions: false, allowWrites: false, allowShell: false,
-    approveAllShell: false, shellBackend: "auto", shellNetwork: false, tui: false,
+    approveAllShell: false, shellBackend: "auto", shellNetwork: false, tui: false, simple: false,
     extensions: false, listExtensions: false, forgetTrust: false, serve: false,
     listServers: false, contextWindow: DEFAULT_CONTEXT_WINDOW,
     compaction: true, help: false, version: false,

@@ -122,9 +122,12 @@ reasoning fields, streaming events, and error behavior. Keep those differences
 inside thin Provider adapters rather than leaking them into the Agent loop.
 
 
-## The live region (`--tui`)
+## The rich terminal interface
 
-`--tui` draws a status region above the prompt while a run is in progress: the
+Local interactive sessions use the rich terminal interface when stdin, stdout,
+and stderr are terminals. `--simple` selects the append-only interface, while
+`--tui` explicitly requests the rich interface. It draws a status region above
+the prompt while a run is in progress: the
 turn, whether the model is thinking or running tools, which tools are running
 with what they are aimed at and their newest output, elapsed time, and the
 running token count. Long single-line replies keep their newest text visible;
@@ -171,9 +174,12 @@ costs one line rather than a repaint. A resize invalidates that baseline — the
 terminal has reflowed what is on screen — and is the one moment a full repaint
 is correct rather than lazy.
 
-`--tui` needs a terminal on stdin and stderr and an interactive session; it
-refuses rather than falling back silently, since a switch that quietly does
-nothing makes a mistyped command look like it worked. The startup wordmark shows the Provider, model, workspace and next action;
+Automatic selection stays simple for piped streams, one-shot prompts, JSON,
+`--serve`, `--connect`, and `TERM=dumb`. Explicit `--tui` still requires an
+interactive session and terminals on stdin and stderr; it can write final
+answers to redirected stdout. It refuses incompatible explicit requests rather
+than silently ignoring the switch. `NO_COLOR` disables styling without changing
+the selected interface. The startup wordmark shows the Provider, model, workspace and next action;
 use `/session` for the session id. Type `/` to open the inline command menu
 (including extension commands); Up/Down selects, Tab completes, and Enter runs.
 Outside a menu, Up/Down browses input history. During a run ordinary typing is ignored; Ctrl+C cancels immediately.
