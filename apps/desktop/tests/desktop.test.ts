@@ -22,6 +22,7 @@ describe("desktop protocol", () => {
     expect(validateMainToHost({ type: "explode", requestId: "a" })).toBe(
       "Unknown host request type.",
     );
+    expect(validateMainToHost({ type: "start", requestId: "a", prompt: "x", model: "  " })).toBe("model must be 1-160 non-empty characters.");
   });
 });
 
@@ -134,6 +135,9 @@ describe("composer and scroll", () => {
     const crashed = reduceDesk(streaming, { type: "host", status: { phase: "exited" } });
     expect(crashed.phase).toBe("error");
     expect(crashed.items[0]).toMatchObject({ text: "未完成的回答", streaming: false });
+    const cancelled = reduceDesk(streaming, { type: "cancelled" });
+    expect(cancelled.phase).toBe("stopped");
+    expect(cancelled.items[0]).toMatchObject({ text: "未完成的回答", streaming: false });
   });
 
   it("does not submit while an IME composition is confirming", () => {

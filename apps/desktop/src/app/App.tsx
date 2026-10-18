@@ -7,7 +7,8 @@ import leafMark from "./assets/chivgent-leaf-mark.png";
 
 interface DesktopApi {
   initialize(): Promise<IpcResult<HostToMain>>;
-  start(payload: { requestId: string; prompt: string }): Promise<IpcResult<HostToMain>>;
+  selectProject(): Promise<IpcResult<HostToMain>>;
+  start(payload: { requestId: string; prompt: string; provider?: string; model?: string }): Promise<IpcResult<HostToMain>>;
   interrupt(payload: { requestId: string; runId: string }): Promise<IpcResult<HostToMain>>;
   onEvent(listener: (message: HostToMain) => void): () => void;
   onHostStatus(listener: (status: HostStatus) => void): () => void;
@@ -25,6 +26,11 @@ export function App(): JSX.Element {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [stuck, setStuck] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [projectPath, setProjectPath] = useState("");
+  const [projectError, setProjectError] = useState("");
+  const [runtimeConfig, setRuntimeConfig] = useState("");
+  const [provider, setProvider] = useState("openai");
+  const [model, setModel] = useState("");
   const timelineRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const ignoreEnter = useRef(false);
@@ -41,7 +47,9 @@ export function App(): JSX.Element {
       return;
     }
     const stopEvents = api.onEvent((message) => {
-      if (message.type === "event") {
+      if (message.type === "runtime-config") {
+        setRuntimeConfig(`${message.provider} · ${message.model}`);
+      } else if (message.type === "event") {
         dispatch({
           type: "agent",
           runId: message.runId,
@@ -49,7 +57,8 @@ export function App(): JSX.Element {
           event: message.event,
         });
       } else if (message.type === "error") {
-        dispatch({ type: "fail", message: message.message });
+        if (message.code === "cancelled") dispatch({ type: "cancelled" });
+        else dispatch({ type: "fail", message: message.message });
       }
     });
     const stopStatus = api.onHostStatus((status) => {
@@ -107,7 +116,7 @@ export function App(): JSX.Element {
   async function submit(): Promise<void> {
     const text = draft;
     const api = window.chivgent;
-    if (api === undefined || text.trim().length === 0 || state.phase === "running") {
+    if (api === undefined || projectPath.length === 0 || text.trim().length === 0 || state.phase === "running") {
       return;
     }
     if (state.host.phase !== "ready") {
@@ -115,13 +124,30 @@ export function App(): JSX.Element {
     }
     dispatch({ type: "submit", text });
     setDraft("");
-    const result = await api.start({ requestId: nextRequestId(), prompt: text });
+    const result = await api.start({ requestId: nextRequestId(), prompt: text, provider, ...(model.trim() ? { model: model.trim() } : {}) });
     if (!result.ok) {
-      dispatch({ type: "fail", message: result.message });
+      if (result.code === "cancelled") dispatch({ type: "cancelled" });
+      else dispatch({ type: "fail", message: result.message });
       return;
     }
     if (result.value.type === "started") {
       dispatch({ type: "started", runId: result.value.runId });
+    }
+  }
+
+  async function chooseProject(): Promise<void> {
+    const api = window.chivgent;
+    if (api === undefined || running) return;
+    const result = await api.selectProject();
+    if (!result.ok) {
+      if (result.code !== "cancelled") setProjectError(result.message);
+      return;
+    }
+    if (result.value.type === "project-selected") {
+      setProjectPath(result.value.path);
+      setRuntimeConfig("");
+      setProjectError("");
+      dispatch({ type: "reset" });
     }
   }
 
@@ -150,7 +176,8 @@ export function App(): JSX.Element {
           </div>
           <button className="sidebar-toggle" type="button" aria-label="折叠侧栏" title="折叠侧栏" onClick={() => setSidebarOpen(false)}>‹</button>
         </div>
-        <button className="new-task" type="button" onClick={() => composerRef.current?.focus()}><span>＋</span> 撰写消息</button>
+        <button className="new-task" type="button" onClick={() => void chooseProject()} disabled={running}><span>＋</span> {projectPath ? "切换项目目录" : "选择项目目录"}</button>
+        {projectPath && <div className="project-path" title={projectPath}>{projectPath}</div>}
         <section className="side-block grow">
           <h2>最近任务</h2>
           <div className="task current" data-testid="task-row" title="当前会话">
@@ -168,13 +195,21 @@ export function App(): JSX.Element {
         <header className="stage-head">
           <div>
             <h1>当前会话</h1>
-            <p>流式对话</p>
+            <p>{projectPath || "先选择项目目录"}</p>
           </div>
           <span className={`pill ${statusTone(state)}`} data-testid="phase-pill">{label}</span>
         </header>
+        <div className="runtime-settings">
+          <label>Provider <select aria-label="Provider" data-testid="provider-select" value={provider} disabled={running} onChange={(event) => setProvider(event.target.value)}>
+            <option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="openai-compatible">OpenAI compatible</option><option value="openrouter">OpenRouter</option><option value="groq">Groq</option><option value="xai">xAI</option><option value="moonshot">Moonshot</option>
+          </select></label>
+          <label>Model <input aria-label="Model" data-testid="model-input" value={model} placeholder="沿用 Provider 环境配置" disabled={running} onChange={(event) => setModel(event.target.value)} /></label>
+          {runtimeConfig && <span data-testid="runtime-config">{running ? "当前运行" : "最近使用"}：{runtimeConfig}</span>}
+        </div>
         {state.notice !== null && (
           <div className="banner" role="status" data-testid="notice">{state.notice}</div>
         )}
+        {projectError && <div className="banner" role="alert">{projectError}</div>}
         <div
           className="timeline"
           ref={timelineRef}
@@ -241,7 +276,7 @@ export function App(): JSX.Element {
             rows={2}
             value={draft}
             placeholder="描述你想让 chivgent 做的事"
-            disabled={state.host.phase !== "ready"}
+            disabled={state.host.phase !== "ready" || !projectPath}
             onChange={(event) => setDraft(event.target.value)}
             onCompositionStart={() => {
               ignoreEnter.current = true;
@@ -278,7 +313,7 @@ export function App(): JSX.Element {
                 className="send"
                 data-testid="send"
                 aria-label="发送消息"
-                disabled={state.host.phase !== "ready" || draft.trim().length === 0}
+                disabled={state.host.phase !== "ready" || !projectPath || draft.trim().length === 0}
               >
                 <span aria-hidden="true">↑</span>
               </button>

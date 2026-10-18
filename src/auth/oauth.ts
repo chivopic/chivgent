@@ -290,7 +290,7 @@ async function verifyOpenAIIdToken(token: string, audience: string, nonce: strin
   if (discovery.issuer !== "https://auth.openai.com" || !discovery.jwks_uri || new URL(discovery.jwks_uri).origin !== "https://auth.openai.com") throw new Error("OpenAI identity metadata failed validation.");
   const jwksResponse = await fetcher(discovery.jwks_uri);
   if (!jwksResponse.ok) throw new Error("Could not verify OpenAI ID token signing key.");
-  const jwks = await safeJson<{ keys?: Array<JsonWebKey & { kid?: string }> }>(jwksResponse, "OpenAI signing keys");
+  const jwks = await safeJson<{ keys?: Array<import("node:crypto").JsonWebKeyInput["key"] & { kid?: string }> }>(jwksResponse, "OpenAI signing keys");
   const jwk = jwks.keys?.find((key) => key.kid === header.kid);
   if (!jwk) throw new Error("OpenAI ID token signing key was not found.");
   let valid = false;

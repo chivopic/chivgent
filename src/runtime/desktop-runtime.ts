@@ -1,0 +1,74 @@
+import type { CliOptions } from "../cli-options.js";
+import { DEFAULT_CONTEXT_WINDOW } from "../context/context-manager.js";
+import { createLocalSession } from "../cli-runtime.js";
+import { CredentialResolver } from "../auth/credentials.js";
+import { EnvCredentialSource } from "../auth/env-credentials.js";
+import { FileCredentialSource, defaultAuthFile } from "../auth/file-credentials.js";
+import { RetryingLLMClient } from "../retry.js";
+import { defaultProviderRegistry } from "../providers/registry.js";
+import type { Message } from "../messages.js";
+
+export interface DesktopRuntimeConfig {
+  readonly cwd: string;
+  readonly provider?: string;
+  readonly model?: string;
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly authFile?: string;
+  readonly messages?: readonly Message[];
+  readonly createClient?: (config: { apiKey: string; model: string; baseURL?: string }) => import("../llm.js").LLMClient;
+}
+
+export async function createDesktopSession(config: DesktopRuntimeConfig) {
+  const environment = config.environment ?? process.env;
+  const registry = defaultProviderRegistry;
+  const provider = config.provider ?? environment.CHIVGENT_PROVIDER ?? "openai";
+  const definition = registry.get(provider);
+  const model = config.model ?? first(environment, definition.modelEnvKeys) ?? definition.defaultModel;
+  if (model === undefined || model.length === 0) {
+    throw new Error(`需要为 ${provider} 配置模型名称。`);
+  }
+  const baseURL = first(environment, definition.baseUrlEnvKeys) ?? definition.defaultBaseURL;
+  if (definition.requiresBaseURL && baseURL === undefined) {
+    throw new Error(`${definition.baseUrlEnvKeys.join(" 或 ")} 需要配置。`);
+  }
+  const credentialEnvironment = { ...environment };
+  // OPENAI_API_KEY is shared by OpenAI and OpenAI-compatible. The latter may
+  // point at an arbitrary endpoint, so it only inherits that env key when the
+  // process was explicitly configured for the compatible Provider. Its own
+  // auth.json entry remains available when the user selects it in the UI.
+  if (provider === "openai-compatible" && (environment.CHIVGENT_PROVIDER ?? "openai") !== "openai-compatible") {
+    delete credentialEnvironment.OPENAI_API_KEY;
+  }
+  const credential = await new CredentialResolver([
+    new EnvCredentialSource(credentialEnvironment),
+    new FileCredentialSource(config.authFile ?? defaultAuthFile(environment)),
+  ]).resolve(definition);
+  if (credential === undefined) {
+    throw new Error(`尚未配置 ${provider} API key。请设置 ${definition.envKeys.join(" 或 ")}，或在 CLI 的 auth.json 中配置。`);
+  }
+  const llm = new RetryingLLMClient(config.createClient === undefined
+    ? definition.createClient({ apiKey: credential.apiKey, model, ...(baseURL === undefined ? {} : { baseURL }) })
+    : config.createClient({ apiKey: credential.apiKey, model, ...(baseURL === undefined ? {} : { baseURL }) }));
+  const options = {
+    provider, model, ...(baseURL === undefined ? {} : { baseURL }),
+    maxTurns: 8, stream: true, quiet: true, json: false, session: false,
+    continueSession: false, listSessions: false, allowWrites: false, allowShell: false,
+    approveAllShell: false, shellBackend: "auto", shellNetwork: false, tui: false,
+    extensions: false, listExtensions: false, forgetTrust: false, serve: false,
+    listServers: false, contextWindow: DEFAULT_CONTEXT_WINDOW,
+    compaction: true, help: false, version: false,
+  } satisfies CliOptions;
+  const session = createLocalSession({
+    options, cwd: config.cwd, llm,
+    restored: { resumed: false, messages: config.messages },
+  });
+  return { session, provider, model };
+}
+
+function first(environment: NodeJS.ProcessEnv, keys: readonly string[]): string | undefined {
+  for (const key of keys) {
+    const value = environment[key];
+    if (value !== undefined && value.length > 0) return value;
+  }
+  return undefined;
+}

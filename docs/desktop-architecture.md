@@ -1,8 +1,10 @@
 # chivgent Desktop 产品与实施规划书
 
-更新：2026-10-17。状态：M0 Desktop 纵向原型已实现，并通过 macOS arm64 本地打包应用的源码树外验收；P1 及后续能力仍在规划/待实现。
+更新：2026-10-18。状态：P1 首批真实只读运行已实现；Desktop 仍是单活动会话原型，历史恢复及 M1 后续能力未实现。
 
-当前 M0 仅提供离线演示 Agent：不连接真实模型、不读取/写入项目文件，也不保存或恢复会话历史。macOS arm64 `.app` 在本机生成但未签名；这是本地验收，不是公开发布，也不代表 CI 已覆盖 Desktop。后续工作：真实 Provider 与项目只读工具见 [#67](https://github.com/chivopic/chivgent/issues/67)，恢复与持久化见 [#68](https://github.com/chivopic/chivgent/issues/68)，UI 后续见 [#69](https://github.com/chivopic/chivgent/issues/69)。
+默认运行真实 Agent。用户通过 main process 原生目录对话框选择项目；host 解析规范路径并为其创建只读 `AgentSession`，复用 CLI Provider、凭证解析、流式事件与 `list_files`、`search_text`、`read_file`、`update_plan` 工具。UI 可选择已有 Provider 和模型名称；endpoint 与 API key 沿用 Provider 环境变量及只读 CLI `auth.json`。Renderer 不接收密钥。缺少凭证时 host 给出可操作错误，应用和项目选择仍可使用。OAuth 刷新、项目写入、Shell 均未接入。
+
+每个项目当前只有一个内存中的会话，支持多轮上下文；切换目录会开始新上下文，运行期间不能切换。Provider/model 改变时用旧 transcript 重建 session。没有项目/会话历史列表、磁盘持久化、应用重启恢复、并行运行或自动任务排队。离线演示仅在显式设置 `CHIVGENT_DESKTOP_DEMO=1` 时启用。macOS arm64 `.app` 本地打包未签名；这不代表公开发布或 CI 已覆盖 Desktop。恢复与持久化见 [#68](https://github.com/chivopic/chivgent/issues/68)，UI 后续见 [#69](https://github.com/chivopic/chivgent/issues/69)。
 
 ## 1. 产品目标与参考关系
 
@@ -210,7 +212,7 @@ ShellApprovalGate 通过 host 的审批 broker 接入。审批显示命令、目
 
 BrowserWindow 开启 contextIsolation/sandbox，关闭 nodeIntegration。preload 暴露明确方法，主进程校验发送者与参数；Markdown 和链接按不可信内容处理。文件预览、diff、编辑器打开同样校验项目边界，不能成为任意文件读取通道。
 
-已有 CLI 凭证可经解析接口使用；Desktop 新录入的凭证由主进程加密保存，host 按有效配置获取，Renderer 不持久保留或回显密钥。密钥引用按 Provider 与规范化 endpoint 区分，变更端点不自动携带旧端点密钥。无安全存储时仅保存在当前进程。
+当前 P1 只读使用 CLI 的 environment 与 `auth.json` credential source；不支持 Desktop 内录入凭证、不写用户配置，也不调用 OAuth refresh。共享的 `OPENAI_API_KEY` 只有在进程以 `CHIVGENT_PROVIDER=openai-compatible` 启动时才用于 compatible Provider，避免切换到自定义端点后发送 OpenAI key。后续如增加 Desktop 凭证录入，须由主进程安全保存并确保 Renderer 不持有或回显密钥。
 
 首版不承诺新凭证自动写回 CLI 的明文 auth.json；界面说明保存范围。
 
@@ -245,18 +247,18 @@ worktree 首批只做创建、选择、任务绑定与可恢复清理；搬移�
 
 ## 11. 实施顺序与交付关卡
 
-每阶段都产出可运行结果；需要的共享抽象随真实路径提取。M0 的桌面纵向原型已在本机完成并验证；P1 及后续阶段尚未交付。
+每阶段都产出可运行结果；需要的共享抽象随真实路径提取。M0 桌面原型已完成；P1 首批真实只读路径已实现，后续历史与恢复依次推进。详见本轮 [交付顺序与验收记录](desktop-delivery-plan.md)。
 
 | 阶段 | 状态 | 交付内容 | 验收 / 证据 |
 | --- | --- | --- | --- |
 | P0 桌面底座 / M0 | 已实现并通过本地验证 | 单窗口、utility host、stub Agent、流式显示、停止、macOS arm64 `.app` | `npm run desktop:pack` 成功；复制到源码树外运行 [verify-packaged.mjs](../apps/desktop/scripts/verify-packaged.mjs)，12 项断言全通过：重复 initialize、IME、流式文本、文本出现后取消及光标收起、工具活动/展开、完成、host 退出与启动失败提示、关窗隐藏、退出清理。CLI `npm run check`、`npm run build` 通过；获批原生权限并设置 `TMPDIR=/private/tmp` 后 `npm test`：56 个文件，679 passed、1 skipped。Desktop `npm run desktop:test`：9 passed。产物未签名；上述 Desktop 验收为本地运行，CI 目前未覆盖 Desktop。 |
-| P1 真实任务 | 待实现，跟踪 [#67](https://github.com/chivopic/chivgent/issues/67) | 提取最小 runtime 配置与诊断；接真实 Provider 和只读工具 | 完成“解释当前项目”；目录正确；工具活动可展开；缺密钥仍能进入界面 |
+| P1 真实任务 | 首批已实现 | 最小 runtime、Provider/model 选择、目录授权、只读工具与流式会话 | fake Provider Electron E2E 验证选定临时项目、真实 read_file、多轮、取消、缺密钥恢复；完整命令见下文 |
 | P2 执行控制 | 待实现 | 写入/网络/Shell 设置、审批、取消、关窗/退出、通知 | 允许命令能执行、拒绝无副作用；关窗任务继续；退出清理；新设置只作用下一轮 |
 | P3 历史与会话 | 待实现，跟踪 [#68](https://github.com/chivopic/chivgent/issues/68) | 新格式、历史投影、订阅快照、任务元数据、导入和锁 | 刷新不断任务；重启恢复；崩溃不重放工具；旧日志不覆盖；导入保留来源 |
 | P4 本地可用版 / M1 | 待实现，UI 后续跟踪 [#69](https://github.com/chivopic/chivgent/issues/69) | 侧栏、设置、凭证、diff、预览、草稿、主题、安装完善 | 完成修复→审批→测试→检查 diff→重启继续；无源码依赖；CLI 回归通过 |
 | P5 工作台 / M2 | 待实现 | 运行中介入、持久终端、review、worktree、并行任务 | 按上一节逐项关卡交付；共用能力进入 CLI 回归 |
 
-M0 的 stub 通过现有 Agent/事件契约运行，不在 UI 内伪造聊天动画。当前 Desktop 没有真实模型凭证接入、项目历史或会话恢复。P1 首次真实模型验证使用用户已配置的凭证并记录范围；自动化测试使用 stub，不消耗模型额度。每阶段跑受影响模块测试；进入 M1 跑完整 CLI 回归与打包安装验证。
+Desktop 凭证只读复用 CLI 的环境变量和 `auth.json` 解析；不写 `~/.chivgent`，不自动刷新 OAuth。离线真实-adapter E2E 使用 localhost fake Provider 与临时项目，不使用外部服务或模型额度：先 `npm run desktop:build`，再运行 `node apps/desktop/scripts/verify-readonly.mjs`。`npm run desktop:test` 使用临时目录与 fake LLM。完整 CLI 回归仍需每阶段运行；本阶段不代表已实现项目历史或恢复。
 
 有副作用的 P2 依赖最小持久运行记录与保存失败门控，随 P2 先落地；P3 再完成全部历史界面、导入和恢复能力。不能等到 P3 才知道 P2 的工具执行是否留有记录。
 
@@ -266,7 +268,7 @@ M0 的 stub 通过现有 Agent/事件契约运行，不在 UI 内伪造聊天动
 
 ## 12. 首批变更与完成标准
 
-首批 P0 Desktop 原型已实现；本地收口验证记录如下：
+P0 Desktop 原型与 P1 首批只读闭环已实现；P1 的具体实现位于 [desktop-runtime.ts](../src/runtime/desktop-runtime.ts)、[HostService](../apps/desktop/src/host/service.ts)、[host entry](../apps/desktop/src/host/index.ts)、[native project picker](../apps/desktop/src/main/index.ts)、[desktop protocol](../apps/desktop/src/protocol/messages.ts) 与 [runtime behavior tests](../apps/desktop/tests/runtime.test.ts)。
 
 1. 已创建私有 Desktop 包、独立构建配置与开发/打包脚本。
 2. 已完成 main、preload、host 与 initialize/start/event/interrupt 最小协议。
@@ -279,4 +281,4 @@ M1 完成标准：用户可以安装应用，在自己的项目中完成一次�
 
 M2 完成标准：进一步在隔离工作区推进多个任务、运行中介入、操作持久终端并审查结果。
 
-下一项实现任务：**P1——提取真实 Runtime 配置与诊断，连接真实 Provider 和项目只读工具**（[#67](https://github.com/chivopic/chivgent/issues/67)）。
+下一项实现任务：**P3 历史的最小记录与恢复约束**；P2 有副作用的工具仍须先建立运行记录与失败门控。任务排序与本轮验收详见 [desktop-delivery-plan.md](desktop-delivery-plan.md)。

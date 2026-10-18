@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { createDemoAgent, VISIBLE_DEMO_TIMING } from "./demo-agent.js";
 import { HostService } from "./service.js";
 import type { HostToMain } from "../protocol/messages.js";
+import { createDesktopSession } from "@chivgent/runtime/desktop-runtime.ts";
 
 /**
  * utilityProcess entry. Electron exposes the parent as process.parentPort,
@@ -31,12 +32,12 @@ const service = new HostService({
   send: (message: HostToMain) => {
     port.postMessage(message);
   },
-  createAgent: (onEvent) =>
-    createDemoAgent({
-      workspaceRoot,
-      timing: VISIBLE_DEMO_TIMING,
-      onEvent,
-    }),
+  createAgent: (onEvent) => createDemoAgent({ workspaceRoot, timing: VISIBLE_DEMO_TIMING, onEvent }),
+  ...(process.env["CHIVGENT_DESKTOP_DEMO"] === "1" ? {} : {
+    createSession: async (cwd, provider, model, messages) => {
+      return createDesktopSession({ cwd, provider, model, messages });
+    },
+  }),
 });
 
 port.on("message", (event) => {
