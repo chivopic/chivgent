@@ -212,7 +212,7 @@ ShellApprovalGate 通过 host 的审批 broker 接入。审批显示命令、目
 
 BrowserWindow 开启 contextIsolation/sandbox，关闭 nodeIntegration。preload 暴露明确方法，主进程校验发送者与参数；Markdown 和链接按不可信内容处理。文件预览、diff、编辑器打开同样校验项目边界，不能成为任意文件读取通道。
 
-当前 P1 只读使用 CLI 的 environment 与 `auth.json` credential source；不支持 Desktop 内录入凭证、不写用户配置，也不调用 OAuth refresh。共享的 `OPENAI_API_KEY` 只有在进程以 `CHIVGENT_PROVIDER=openai-compatible` 启动时才用于 compatible Provider，避免切换到自定义端点后发送 OpenAI key。后续如增加 Desktop 凭证录入，须由主进程安全保存并确保 Renderer 不持有或回显密钥。
+当前 P1 只读使用 CLI 的 environment 与 `auth.json` credential source；不支持 Desktop 内录入凭证、不写用户配置，也不调用 OAuth refresh。`openai` 和 `openai-compatible` 共用环境变量名 `OPENAI_API_KEY`，但面向不同的目标端点。桌面端只允许进程启动时选中的 Provider 使用该共享环境 Key；在界面中双向切换后，目标 Provider 只能读取自身的 `auth.json` 条目，以免将私有端点密钥发送给 OpenAI，或将 OpenAI 密钥发送给自定义端点。后续如增加 Desktop 凭证录入，须由主进程安全保存并确保 Renderer 不持有或回显密钥。
 
 首版不承诺新凭证自动写回 CLI 的明文 auth.json；界面说明保存范围。
 
@@ -258,7 +258,7 @@ worktree 首批只做创建、选择、任务绑定与可恢复清理；搬移�
 | P4 本地可用版 / M1 | 待实现，UI 后续跟踪 [#69](https://github.com/chivopic/chivgent/issues/69) | 侧栏、设置、凭证、diff、预览、草稿、主题、安装完善 | 完成修复→审批→测试→检查 diff→重启继续；无源码依赖；CLI 回归通过 |
 | P5 工作台 / M2 | 待实现 | 运行中介入、持久终端、review、worktree、并行任务 | 按上一节逐项关卡交付；共用能力进入 CLI 回归 |
 
-Desktop 凭证只读复用 CLI 的环境变量和 `auth.json` 解析；不写 `~/.chivgent`，不自动刷新 OAuth。离线真实-adapter E2E 使用 localhost fake Provider 与临时项目，不使用外部服务或模型额度：先 `npm run desktop:build`，再运行 `node apps/desktop/scripts/verify-readonly.mjs`。`npm run desktop:test` 使用临时目录与 fake LLM。完整 CLI 回归仍需每阶段运行；本阶段不代表已实现项目历史或恢复。
+Desktop 凭证只读复用 CLI 的环境变量和 `auth.json` 解析；不写 `~/.chivgent`，不自动刷新 OAuth。 切换 Provider 会清空手工填写的模型覆盖；切换模型或 Provider 时复用当前对话和 ContextManager 压缩检查点，避免长对话重新压缩丢失摘要。与运行关联的终态事件必须匹配当前 runId，迟到的确认不得重新打开已完成运行。离线真实-adapter E2E 使用 localhost fake Provider 与临时项目，不使用外部服务或模型额度：先 `npm run desktop:build`，再运行 `node apps/desktop/scripts/verify-readonly.mjs`。`npm run desktop:test` 使用临时目录与 fake LLM。完整 CLI 回归仍需每阶段运行；本阶段不代表已实现项目历史或恢复。
 
 有副作用的 P2 依赖最小持久运行记录与保存失败门控，随 P2 先落地；P3 再完成全部历史界面、导入和恢复能力。不能等到 P3 才知道 P2 的工具执行是否留有记录。
 
