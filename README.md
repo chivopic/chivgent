@@ -15,7 +15,7 @@ The same category as Claude Code and Codex. You bring the model.
 ![Node.js >=22](https://img.shields.io/badge/Node.js-%3E%3D22-111111)
 [![License](https://img.shields.io/badge/license-MIT-111111)](LICENSE)
 
-[Architecture](docs/architecture.md) · [Shell](docs/shell-sandbox.md) · [Sign in](docs/subscription-oauth.md) · **English** · [简体中文](README.zh-CN.md)
+**[Website ↗](https://chivgent-web.vercel.app/)** · [Architecture](docs/architecture.md) · [Shell](docs/shell-sandbox.md) · [Sign in](docs/subscription-oauth.md) · **English** · [简体中文](README.zh-CN.md)
 
 </div>
 
