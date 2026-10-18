@@ -138,11 +138,13 @@ export interface Workspace {
   writeTextFile(
     relativePath: string,
     contents: string,
+    signal?: AbortSignal,
   ): Promise<WriteTextFileResult>;
   /** Rejects unless the workspace was constructed with writes enabled. */
   editTextFile(
     relativePath: string,
     options: EditTextFileOptions,
+    signal?: AbortSignal,
   ): Promise<EditTextFileResult>;
 }
 

@@ -14,6 +14,7 @@ import { terminalWidth } from "./tui/live.js";
 import { formatDiffPage, mostRecentSuccessfulPatch } from "./tui/diff.js";
 import type { LiveRegion } from "./tui/live.js";
 import type { ShellApprovalGate } from "./shell/approval.js";
+import { describePermissionMode, parsePermissionMode, type PermissionMode, type PermissionPolicy } from "./permissions.js";
 import { HeuristicTokenEstimator } from "./context/token-estimator.js";
 
 export const REPL_PROMPT = "› ";
@@ -30,6 +31,7 @@ export type SlashCommandOutcome =
   | { readonly kind: "compact" }
   | { readonly kind: "rename"; readonly title: string }
   | { readonly kind: "plan"; readonly enabled: boolean }
+  | { readonly kind: "permission-mode"; readonly mode: PermissionMode }
   | { readonly kind: "new-session"; readonly title?: string }
   | { readonly kind: "resume-session"; readonly id?: string }
   /** An extension command matched; the REPL runs it, since it may be async. */
@@ -54,6 +56,7 @@ export interface SlashCommandContext {
   readonly providerName?: string;
   readonly modelName?: string;
   readonly permissions?: readonly string[];
+  readonly permissionPolicy?: PermissionPolicy;
   readonly sessionOptions?: {
     readonly list?: () => Promise<readonly { readonly id: string; readonly title?: string }[]>;
     readonly create?: (title?: string) => Promise<AgentSession>;
@@ -98,6 +101,7 @@ export const BUILT_IN_COMMANDS = [
   "status",
   "compact",
   "plan",
+  "permissions",
   "new",
   "resume",
   "rename",
@@ -123,6 +127,7 @@ const HELP = `Commands:
   /status    Show live session, model, permissions, plan state, and usage
   /compact   Summarise older history for the model; keeps the full transcript
   /plan [on|off]  Toggle restricted read-only Plan Mode
+  /permissions [ask-first|workspace|unrestricted]  Inspect or change this process's policy
   /new [title]    Save this session and start a fresh session
   /resume [id]    Switch to a saved session in this workspace
   /rename TITLE  Set the current session title
@@ -204,6 +209,19 @@ export function handleSlashCommand(
       } else {
         const enabled = argument === "on" ? true : argument === "off" ? false : !context.session.planMode;
         return { kind: "plan", enabled };
+      }
+      return "handled";
+    }
+
+    case "/permissions": {
+      const argument = trimmed.slice("/permissions".length).trim().toLowerCase();
+      if (context.permissionPolicy === undefined) {
+        context.write("Named permission modes are unavailable because this session uses legacy capability flags. Start with --permission-mode to enable them.\n");
+      } else if (!argument) {
+        context.write(`Permission mode: ${context.permissionPolicy.mode}\n${describePermissionMode(context.permissionPolicy.mode)}\nMode changes last for this process and are not restored from saved sessions.\n`);
+      } else {
+        try { return { kind: "permission-mode", mode: parsePermissionMode(argument) }; }
+        catch { context.write("Usage: /permissions [ask-first|workspace|unrestricted]\n"); }
       }
       return "handled";
     }
@@ -381,9 +399,12 @@ function describeStatus(context: SlashCommandContext): string {
     `cwd:       ${context.session.cwd}`,
     `session:   ${context.session.id}${context.session.title ? ` · ${context.session.title}` : ""}`,
     `plan:      ${context.session.planMode ? "on (writes and Shell blocked for this session)" : "off"}`,
-    `file write grant: ${context.permissions === undefined ? "unavailable" : context.permissions.includes("file-write") ? "enabled" : "disabled"}`,
-    `Shell grant:      ${context.permissions === undefined ? "unavailable" : context.permissions.includes("shell") ? "enabled" : "disabled"}`,
-    `network grant:    ${context.permissions === undefined ? "unavailable" : !context.permissions.includes("shell") ? "unavailable (Shell disabled)" : context.permissions.includes("network") ? "enabled" : "disabled"}`,
+    ...(context.permissionPolicy === undefined ? [] : [`permissions: ${context.permissionPolicy.mode} (${describePermissionMode(context.permissionPolicy.mode)})`]),
+    ...(context.permissionPolicy === undefined ? [
+      `file write grant: ${context.permissions === undefined ? "unavailable" : context.permissions.includes("file-write") ? "enabled" : "disabled"}`,
+      `Shell grant:      ${context.permissions === undefined ? "unavailable" : context.permissions.includes("shell") ? "enabled" : "disabled"}`,
+      `network grant:    ${context.permissions === undefined ? "unavailable" : !context.permissions.includes("shell") ? "unavailable (Shell disabled)" : context.permissions.includes("network") ? "enabled" : "disabled"}`,
+    ] : []),
     ...usage,
     `context:   ${contextEstimate}`,
   ];
@@ -412,6 +433,7 @@ export interface ReplOptions {
   readonly providerName?: string;
   readonly modelName?: string;
   readonly permissions?: readonly string[];
+  readonly permissionPolicy?: PermissionPolicy;
   readonly sessionFileForSession?: SlashCommandContext["sessionFileForSession"];
 }
 
@@ -925,6 +947,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         ...(options.providerName === undefined ? {} : { providerName: options.providerName }),
         ...(options.modelName === undefined ? {} : { modelName: options.modelName }),
         ...(options.permissions === undefined ? {} : { permissions: options.permissions }),
+        ...(options.permissionPolicy === undefined ? {} : { permissionPolicy: options.permissionPolicy }),
         ...(options.sessionOptions === undefined ? {} : { sessionOptions: options.sessionOptions }),
       });
       if (outcome === "exit") {
@@ -1026,6 +1049,12 @@ export async function runRepl(options: ReplOptions): Promise<number> {
           await activeSession.setPlanMode(outcome.enabled);
           write(`Plan Mode ${activeSession.planMode ? "on" : "off"}. ${activeSession.planMode ? "Only built-in read tools and update_plan may execute." : "Session capabilities restored."}\n`);
         } catch (error: unknown) { write(`Could not change Plan Mode: ${error instanceof Error ? error.message : String(error)}\n`); }
+        showPrompt();
+        continue;
+      }
+      if (typeof outcome === "object" && outcome.kind === "permission-mode") {
+        options.permissionPolicy?.setMode(outcome.mode);
+        write(`Permission mode set to ${outcome.mode}. ${describePermissionMode(outcome.mode)} This mode lasts for this process and will not be restored from a saved session.\n`);
         showPrompt();
         continue;
       }

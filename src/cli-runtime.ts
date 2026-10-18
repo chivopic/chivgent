@@ -11,6 +11,8 @@ import type { UsageTotal } from "./providers/usage.js";
 import { SHELL_SYSTEM_PROMPT, SYSTEM_PROMPT, WRITE_SYSTEM_PROMPT } from "./prompts.js";
 import { AgentSession } from "./session.js";
 import { ShellApprovalGate } from "./shell/approval.js";
+import { PermissionWorkspace, type PermissionPolicy } from "./permissions.js";
+import { createShellOperations } from "./shell/factory.js";
 import type { SessionStore } from "./session-store.js";
 import { BashTool } from "./tools/bash.js";
 import { ApplyPatchTool } from "./tools/apply-patch.js";
@@ -39,14 +41,19 @@ interface LocalSessionConfig {
   };
   readonly store?: SessionStore;
   readonly shellApproval?: ShellApprovalGate;
+  readonly permissionPolicy?: PermissionPolicy;
 }
 
 /** Assemble the local agent once; cli.ts handles only process and UI lifecycle. */
 export function createLocalSession(config: LocalSessionConfig): AgentSession {
   const { options, cwd, llm, extensions, restored, store } = config;
   const prompt = [SYSTEM_PROMPT];
-  if (options.allowWrites) prompt.push(WRITE_SYSTEM_PROMPT);
-  if (options.allowShell) prompt.push(SHELL_SYSTEM_PROMPT);
+  const modernPolicy = config.permissionPolicy !== undefined;
+  const allowWrites = modernPolicy || options.allowWrites;
+  const allowShell = modernPolicy || options.allowShell;
+  if (allowWrites) prompt.push(WRITE_SYSTEM_PROMPT);
+  if (allowShell) prompt.push(SHELL_SYSTEM_PROMPT);
+  if (modernPolicy) prompt.push(`Permission mode: ${config.permissionPolicy!.mode}. For files or network outside the workspace, request bash with scope "host" and explain why in justification; this asks for one-command broad host access. Never retry denied actions using another tool.`);
   prompt.push(...(extensions?.systemPromptContributions ?? []));
 
   const contextManager = new ContextManager({
@@ -70,17 +77,29 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
       new SearchTextTool(),
       new ReadFileTool(),
       new UpdatePlanTool(),
-      ...(options.allowWrites ? [new WriteFileTool(), new EditFileTool(), new ApplyPatchTool()] : []),
-      ...(options.allowShell ? [new BashTool({
+      ...(allowWrites ? [new WriteFileTool(), new EditFileTool(), new ApplyPatchTool()] : []),
+      ...(allowShell ? [new BashTool({
         cwd,
-        allowWrites: options.allowWrites,
-        allowNetwork: options.shellNetwork,
+        allowWrites,
+        allowNetwork: modernPolicy ? config.permissionPolicy!.shellNetwork : options.shellNetwork,
         backend: options.shellBackend,
-        approve: (command, signal, context) => config.shellApproval?.approve(command, signal, context) ?? Promise.resolve(false),
+        ...(modernPolicy ? {
+          operationsForCall: (scope: "workspace" | "host" = "workspace") => createShellOperations({ backend: options.shellBackend, allowWrites: true, allowNetwork: scope === "host" || config.permissionPolicy!.shellNetwork, allowHostAccess: scope === "host" }),
+          defaultScopeForCall: () => config.permissionPolicy!.mode === "unrestricted" ? "host" as const : "workspace" as const,
+        } : {}),
+        approve: modernPolicy
+          ? (command, signal, context) => config.permissionPolicy!.authorizeShell(command, context?.startsWith("Expanded host access") ? "host" : "workspace", signal, context)
+          : (command, signal, context) => config.shellApproval?.approve(command, signal, context) ?? Promise.resolve(false),
       })] : []),
       ...(extensions?.registeredTools ?? []).map((entry) => entry.tool),
     ],
-    workspace: new LocalWorkspace(cwd, { allowWrites: options.allowWrites }),
+    workspace: modernPolicy ? new PermissionWorkspace(cwd, config.permissionPolicy!) : new LocalWorkspace(cwd, { allowWrites: options.allowWrites }),
+    ...(modernPolicy && extensions !== undefined ? {
+      authorizeToolCall: (name: string, args: unknown, signal?: AbortSignal) =>
+        extensions.registeredTools.some((entry) => entry.tool.name === name)
+          ? config.permissionPolicy!.authorizeExtension(name, args, signal)
+          : Promise.resolve(true),
+    } : {}),
     streaming: options.stream,
     contextManager,
     projectInstructions: new ScopedProjectInstructions(cwd, Math.min(16_384, options.contextWindow)),

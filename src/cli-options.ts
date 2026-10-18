@@ -12,6 +12,7 @@ import {
 } from "./providers/registry.js";
 import { DEFAULT_CONTEXT_WINDOW } from "./context/context-manager.js";
 import type { ShellBackend } from "./shell/factory.js";
+import { parsePermissionMode, type PermissionMode } from "./permissions.js";
 
 /** A Provider id known to the registry. */
 export type Provider = string;
@@ -58,6 +59,8 @@ export interface CliOptions {
   readonly approveAllShell: boolean;
   readonly shellBackend: ShellBackend;
   readonly shellNetwork: boolean;
+  /** Explicit policy for tool approval boundaries; absent preserves legacy flags. */
+  readonly permissionMode?: PermissionMode;
   /** Draw a live status region above the prompt. Interactive terminals only. */
   readonly tui: boolean;
   /** Load extensions from the user and (once trusted) the project directory. */
@@ -105,6 +108,7 @@ export function parseCliArgs(
   let approveAllShell = false;
   let shellBackend: ShellBackend = "auto";
   let shellNetwork = false;
+  let permissionMode: PermissionMode | undefined;
   let tui = false;
   let extensions = true;
   let serve = false;
@@ -173,6 +177,9 @@ export function parseCliArgs(
       index += 1;
     } else if (argument === "--shell-network") {
       shellNetwork = true;
+    } else if (argument === "--permission-mode") {
+      permissionMode = parsePermissionMode(readOptionValue(argv, index, "--permission-mode"));
+      index += 1;
     } else if (argument === "--serve") {
       serve = true;
     } else if (argument === "--connect") {
@@ -206,6 +213,15 @@ export function parseCliArgs(
   if (approveAllShell && !allowShell) {
     throw new TypeError("--approve-all-shell requires --allow-shell.");
   }
+  if (permissionMode !== undefined && (allowWrites || allowShell || approveAllShell || shellNetwork)) {
+    throw new TypeError("--permission-mode cannot be combined with --allow-writes, --allow-shell, --approve-all-shell, or --shell-network; select the complete policy mode instead.");
+  }
+  if (permissionMode !== undefined && connect !== undefined) {
+    throw new TypeError("--permission-mode applies to local sessions and cannot be used with --connect.");
+  }
+  if (permissionMode !== undefined && serve) {
+    throw new TypeError("--permission-mode cannot be used with --serve because served sessions do not have an interactive approval channel.");
+  }
 
   const definition = registry.get(provider);
   const model =
@@ -222,7 +238,7 @@ export function parseCliArgs(
     ...(model === undefined ? {} : { model }),
     ...(baseURL === undefined ? {} : { baseURL }),
     maxTurns:
-      (allowWrites || allowShell) && !maxTurnsExplicit
+      (allowWrites || allowShell || permissionMode !== undefined) && !maxTurnsExplicit
         ? DEFAULT_WRITE_MAX_TURNS
         : maxTurns,
     stream,
@@ -237,6 +253,7 @@ export function parseCliArgs(
     approveAllShell,
     shellBackend,
     shellNetwork,
+    ...(permissionMode === undefined ? {} : { permissionMode }),
     tui,
     extensions,
     serve,
@@ -279,6 +296,7 @@ Options:
                    Interactive commands require individual confirmation.
   --shell-backend MODE  auto, native, or docker (default: auto; macOS uses native).
   --shell-network  Allow shell network access (explicit opt-in for either backend).
+  --permission-mode MODE  ask-first, workspace, or unrestricted (network enabled).
   --approve-all-shell  Explicitly approve all shell commands this session;
                    use only with --allow-shell when individual prompts are unavailable.
   --serve          Expose this session on a local socket and keep running

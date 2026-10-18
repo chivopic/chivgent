@@ -33,7 +33,7 @@
 
 - **先读。** 列出、搜索、读取默认开着。什么都不写。
 - **模型你自己带。** 一把 API key，或者登录你的 ChatGPT、xAI 订阅。
-- **边界是开关，不是意外。** 写入需要显式开启。每条 shell 命令先确认，再进入 Seatbelt 或 Docker。
+- **边界是开关，不是意外。** 写入需要显式开启。每条 shell 命令先确认，再进入 Seatbelt 或 Docker。也可以为整个进程选一种权限模式。
 
 它跑在你的机器上，不是托管产品。它还没有细粒度权限，没有原生 Windows shell，也还没有一个今天就能开工的桌面版。桌面工作台在这个仓库里已经开始了。今天用 chivgent，用终端。
 
@@ -69,6 +69,8 @@ chivgent "入口在哪？"
 chivgent --provider deepseek "讲讲 src/"           # 换 DeepSeek，问法一样
 chivgent --allow-writes "把 sayHi 改成 greet"      # 只有加上这个参数才会改文件
 chivgent --allow-shell "跑测试"                    # 每条命令先确认，再进沙箱
+chivgent --permission-mode workspace "跑测试并修掉" # 用一种策略代替上面的开关
+chivgent --permission-mode ask-first "审这个项目"   # 每次改文件、每条命令都要确认
 chivgent --tui                                     # 交互会话，带一块实时状态
 chivgent --continue                                # 恢复这个目录里的上一次会话
 ```
@@ -91,6 +93,7 @@ chivgent --continue                                # 恢复这个目录里的上
 | 读这个项目 | 默认 | 当前目录。被忽略的、生成的和凭据路径会跳过。 |
 | 改文件 | `--allow-writes` | 工作区内的文件。修改必须精确匹配，写入是原子的。 |
 | 跑命令 | `--allow-shell` | macOS 用 Seatbelt，其他系统用 Docker。默认没有网络。每条命令都要确认。 |
+| 选一种策略 | `--permission-mode` | `ask-first`、`workspace` 或 `unrestricted`。在这个进程里代替上面的开关。`/permissions` 查看或更改。 |
 
 费用付给你选的供应商，按他们的价格。chivgent 显示 token 数，不折算成费用。
 
@@ -114,7 +117,9 @@ chivgent --continue                                # 恢复这个目录里的上
 
 不带问题运行 `chivgent`，就是一次交互会话。会话保存在 `~/.chivgent/sessions`。`--continue` 恢复这个目录里最近的一次。`/resume` 列出其余的，并且只打开这里的会话。
 
-`/plan` 让 agent 停在只读工具和一份计划上。即使模型要求，写入、shell 和扩展工具也会被挡住。`/compact` 压缩较早的轮次，完整记录仍留着，方便恢复。`/status` 显示模型、权限和 token 用量。其余的，`/help`。
+`/plan` 让 agent 停在只读工具和一份计划上。即使模型要求，写入、shell 和扩展工具也会被挡住。`/compact` 压缩较早的轮次，完整记录仍留着，方便恢复。`/status` 显示模型、权限和 token 用量。`/permissions` 查看或更改这个进程的模式。其余的，`/help`。
+
+权限模式不写进会话记录。恢复会话时用的是启动时选的模式，不是上次更宽的那个。
 
 `--tui` 加上实时状态区和多行编辑器。[TUI](docs/tui-v5.md)。长会话会压缩较早的轮次，并留下读过和改过的文件列表，从而留在上下文窗口里。[上下文](docs/architecture.md#context-management)。
 
@@ -126,6 +131,7 @@ chivgent --continue                                # 恢复这个目录里的上
 
 - 工作区以外的路径会被拒绝，包括 `..` 和符号链接逃逸。常见凭据路径会被拒绝。工具输出有上限。
 - `--allow-shell` 在每条命令前确认。没有终端的运行，以及 `--serve` 起来的会话，除非同时加上 `--approve-all-shell`，否则拒绝命令。沙箱起不来，命令不会改到无沙箱运行。
+- `--permission-mode` 是另一种开关，不是更细的开关，也不能和 `--allow-writes`、`--allow-shell` 一起用。`ask-first` 每次改文件、每条命令都要确认。`workspace` 自动执行工作区内的修改和沙箱命令，命令要访问宿主机文件和网络时问一次。`unrestricted` 是显式选择的宽宿主机访问和网络。这些都不随会话保存。[Shell 安全](docs/shell-sandbox.md)。
 - macOS 沙箱仍然能读当前用户能读的文件。它限制的是写入和网络，不是机密隔离。[Shell 安全](docs/shell-sandbox.md)。
 - 扩展是跑在 chivgent 进程里的 JavaScript。信任一个项目，就是允许它的作者以你的身份执行代码。每个目录问一次；没有终端可问时，不加载。
 - key、订阅凭据和会话日志只对文件所有者可读，而且是明文。日志里有提示词、回答和文件摘录。
