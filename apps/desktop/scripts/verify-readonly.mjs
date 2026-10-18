@@ -20,6 +20,19 @@ await writeFile(join(project, "README.md"), `${marker}\n`);
 const requests = [];
 const fixtureErrors = [];
 let activeApp;
+let stage = "setup";
+// A hung fixture must report which assertion/cleanup stage stopped progressing.
+// Electron's utility process is reaped by its parent watchdog on hard exit.
+const watchdog = setTimeout(() => {
+  console.error(`Electron read-only E2E deadline exceeded during: ${stage}`);
+  try { activeApp?.process()?.kill("SIGKILL"); } catch {}
+  process.exit(1);
+}, 120_000);
+watchdog.unref();
+const progress = (label) => {
+  stage = label;
+  console.log(`Electron E2E: ${label}`);
+};
 const server = createServer(async (request, response) => {
   try {
     assert.equal(request.url, "/v1/chat/completions");
@@ -83,6 +96,7 @@ try {
     env: { ...environment, CHIVGENT_HOME: auth, CHIVGENT_PROVIDER: "openai-compatible",
       OPENAI_API_KEY: "fixture-key", OPENAI_MODEL: "desktop-fixture", OPENAI_BASE_URL: endpoint },
   });
+  progress("Electron launched; waiting for host readiness");
   const page = await activeApp.firstWindow();
   await page.getByTestId("host-status").getByText("已连接", { exact: false }).waitFor({ timeout: 20_000 });
   await activeApp.evaluate(({ dialog }, selected) => {
@@ -93,6 +107,7 @@ try {
   await page.waitForFunction(() => document.querySelector('[data-testid="provider-select"]')?.value === "openai-compatible");
   await page.getByTestId("compatible-endpoint").getByText(endpoint, { exact: false }).waitFor();
   await page.getByRole("button", { name: "选择项目目录", exact: false }).click();
+  progress("project selected; verifying provider change clears manual model");
   // A manual model override belongs to the provider that was selected when it was typed.
   await page.getByTestId("model-input").fill("stale-model");
   await page.getByTestId("provider-select").selectOption("deepseek");
@@ -102,16 +117,19 @@ try {
   assert.equal(await page.getByTestId("model-input").inputValue(), "");
   await page.getByTestId("model-input").fill("desktop-fixture");
   await page.getByTestId("composer").waitFor({ state: "visible" });
+  progress("provider/model controls verified; starting project read");
   await page.getByTestId("composer").fill("解释当前项目");
   await page.getByTestId("send").click();
   await page.getByTestId("run-status").getByText("已完成").waitFor({ timeout: 20_000 });
   await page.getByTestId("tool-activity").getByRole("button").click();
   assert.ok((await page.getByTestId("tool-activity").innerText()).includes(marker));
   assert.ok((await page.getByTestId("assistant-message").last().innerText()).includes(marker));
+  progress("project read and tool output verified; testing context carryover");
   await page.getByTestId("composer").fill("继续追问");
   await page.getByTestId("send").click();
   await page.getByTestId("assistant-message").filter({ hasText: "上下文仍在" }).last().waitFor({ timeout: 15_000 });
   await page.getByTestId("run-status").getByText("已完成").waitFor();
+  progress("multi-turn verified; testing missing credential recovery");
   const beforeMissingKey = requests.length;
   await page.getByTestId("provider-select").selectOption("deepseek");
   await page.getByTestId("model-input").fill("desktop-fixture");
@@ -129,6 +147,7 @@ try {
       globalThis.__resolveDesktopProjectPicker = resolve;
     });
   });
+  progress("missing credential rejection verified; testing picker and cancellation race");
   await page.getByRole("button", { name: "切换项目目录" }).click();
   await page.getByTestId("composer").fill("取消测试");
   await page.getByTestId("send").click();
@@ -140,11 +159,13 @@ try {
   await page.getByText("运行期间不能切换项目。").waitFor();
   await page.getByTestId("stop").waitFor({ state: "visible" });
 
+  progress("stop remains accessible after busy picker; cancelling");
   await page.getByTestId("stop").click();
   await page.getByTestId("run-status").getByText("已停止").waitFor({ timeout: 15_000 });
   await page.getByTestId("composer").fill("继续追问");
   await page.getByTestId("send").click();
   await page.getByTestId("run-status").getByText("已完成").waitFor({ timeout: 15_000 });
+  progress("cancel and continuation verified; checking file safety and layout");
   assert.equal(await readFile(join(project, "README.md"), "utf8"), `${marker}\n`);
   assert.deepEqual(await readdir(project), ["README.md"]);
   assert.deepEqual(await readdir(auth), []);
@@ -160,6 +181,7 @@ try {
   }), "the supported minimum window width must keep the model controls on screen");
   await activeApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 780));
   await page.waitForFunction(() => window.innerWidth === 1180);
+  progress("minimum window layout verified; closing Electron");
   if (process.argv[2] !== undefined) await page.screenshot({ path: resolve(process.argv[2]) });
   console.log(JSON.stringify({ selectedProjectRead: true, toolOutputVisible: true,
     multiTurn: true, missingCredentialRecovery: true, cancellation: true, continueAfterStop: true,
@@ -167,10 +189,13 @@ try {
     providerRequests: requests.length }, null, 2));
 } finally {
   try {
+    progress("closing Electron instance");
     await activeApp?.close();
   } finally {
+    progress("closing fixture HTTP server and deleting temporary project");
     server.closeAllConnections();
     await new Promise((accept) => server.close(accept));
     await rm(root, { recursive: true, force: true });
+    clearTimeout(watchdog);
   }
 }
