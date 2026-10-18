@@ -4,6 +4,7 @@ import { readLiveGitDiff, type GitDiffMode } from "./tui/git-diff.js";
 import { terminalText } from "./tui/text.js";
 import { terminalColorEnabled } from "./tui/selection.js";
 import { PatchReviewController } from "./tui/review.js";
+import { ProviderPickerController } from "./tui/provider-picker.js";
 import { InputMenu, type MenuItem } from "./tui/menu.js";
 import { createInterface, emitKeypressEvents, type Interface } from "node:readline";
 import type { AgentSession } from "./session.js";
@@ -143,7 +144,7 @@ const HELP = `Commands:
   /provider  Choose a Provider (↑↓ and Enter in the TUI)
   /model     Show or change the current model: /model MODEL
   /endpoint  Set the URL for an OpenAI-compatible Provider
-  /login     Store a key for the current Provider; /login NAME switches first
+  /login     Choose a Provider, then store its key; /login NAME skips the list
   /login oauth [openai|xai]  Sign in with a subscription
   /logout    Sign out of the current OAuth subscription
   /exit      Leave chivgent
@@ -467,6 +468,29 @@ async function withoutEcho<T>(
   } finally {
     internals._writeToOutput = original;
   }
+}
+
+/** Plain-REPL Provider chooser; only the API key itself is hidden. */
+async function readProviderChoice(
+  readNextLine: () => Promise<string | undefined>,
+  write: (text: string) => void,
+  providerIds: readonly string[],
+  active: string,
+): Promise<string | undefined> {
+  write("Select a Provider for /login:\n");
+  providerIds.forEach((id, index) => {
+    write(`  ${index + 1}. ${id}${id === active ? " (current)" : ""}\n`);
+  });
+  write("Provider (number or name, Enter cancels): ");
+  const answer = await readNextLine();
+  if (answer === undefined) return undefined;
+  const choice = answer.trim();
+  if (choice.length === 0) return undefined;
+  const number = Number(choice);
+  if (Number.isInteger(number) && number >= 1 && number <= providerIds.length) {
+    return providerIds[number - 1];
+  }
+  return providerIds.find((id) => id.toLowerCase() === choice.toLowerCase());
 }
 
 async function runSignIn(
@@ -905,6 +929,39 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     }
   };
 
+  /** `/login` must name its target before any hidden key prompt. */
+  const chooseLoginProvider = async (): Promise<string | undefined> => {
+    const providers = options.providers;
+    if (providers === undefined) return undefined;
+    const ids = [...providers.providerIds()];
+    if (ids.length === 0) return undefined;
+    if (tuiInput === undefined) {
+      return readProviderChoice(readNextLine, write, ids, providers.provider);
+    }
+
+    menu?.clear();
+    dismissedLine = undefined;
+    let resolveChoice!: (provider: string | undefined) => void;
+    const pending = new Promise<string | undefined>(resolve => { resolveChoice = resolve; });
+    const output = options.output as typeof options.output & { columns?: number; rows?: number };
+    const picker = new ProviderPickerController(output, ids, providers.provider, resolveChoice);
+    const resized = (): void => { picker.resized(); };
+    const closed = (): void => { picker.cancel(); };
+    tuiInput.setRawHandler(chunk => { picker.receive(chunk); });
+    output.on("resize", resized);
+    readline.once("close", closed);
+    options.input.once("end", closed);
+    try {
+      picker.begin();
+      return await pending;
+    } finally {
+      tuiInput.setRawHandler(undefined);
+      output.off("resize", resized);
+      readline.off("close", closed);
+      options.input.off("end", closed);
+    }
+  };
+
   const signInAfterProviderSelection = async (): Promise<void> => {
     if (!options.tui || options.signIn === undefined) return;
     let missingKey: boolean;
@@ -1032,6 +1089,27 @@ export async function runRepl(options: ReplOptions): Promise<number> {
             showPrompt();
             continue;
           }
+        } else if (options.providers !== undefined) {
+          signingIn = true;
+          let chosen: string | undefined;
+          try {
+            chosen = await chooseLoginProvider();
+          } finally {
+            signingIn = false;
+          }
+          if (chosen === undefined) {
+            write("No Provider selected; no key was stored.\n");
+            if (inputClosed) break;
+            showPrompt();
+            continue;
+          }
+          const selected = await options.providers.select(chosen);
+          write(selected.message);
+          if (!selected.ok) {
+            if (inputClosed) break;
+            showPrompt();
+            continue;
+          }
         }
         if (options.signIn !== undefined) {
           signingIn = true;
@@ -1041,6 +1119,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
             signingIn = false;
           }
         }
+        if (inputClosed) break;
         showPrompt();
         continue;
       }

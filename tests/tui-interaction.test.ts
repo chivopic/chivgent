@@ -270,6 +270,97 @@ describe("TUI REPL", () => {
     } finally { input.end(); await result; }
   });
 
+  it("asks /login which Provider to use before prompting for its key", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const input = new Input();
+    const output = new PassThrough();
+    let screen = "";
+    output.on("data", (chunk) => { screen += chunk.toString(); });
+    const selected: string[] = [];
+    const submitted: string[] = [];
+    let provider = "openai";
+    const control = {
+      get provider() { return provider; },
+      authFile: "/unused",
+      ready: () => false,
+      submit: async (key: string) => { submitted.push(`${provider}:${key}`); return undefined; },
+      describe: () => "openai · deepseek\n",
+      providerIds: () => ["openai", "deepseek"],
+      select: async (argument: string) => {
+        selected.push(argument);
+        provider = argument;
+        return { ok: true as const, message: `Selected ${provider}\n` };
+      },
+      changeModel: async (value: string) => ({ ok: true as const, message: `Selected model ${value}\n` }),
+      changeEndpoint: async () => ({ ok: true as const, message: "endpoint changed\n" }),
+    };
+    const session = new AgentSession({ agent: {
+      systemPrompt: "demo", maxTurns: 1, tools: [], workspace: new LocalWorkspace(process.cwd()),
+      llm: { async complete() { throw new Error("No provider call expected"); } },
+    } });
+    const result = runRepl({ session, input, output, stderr: output, tui: true,
+      signIn: control, providers: control });
+    try {
+      input.write("/login\r");
+      await vi.waitFor(() => expect(screen).toContain("Select a Provider for /login"));
+      // The hidden key prompt must not appear for the previously active
+      // Provider before the user has chosen one.
+      expect(screen).not.toContain("API key for openai");
+      input.write("\u001b[B\r");
+      await vi.waitFor(() => expect(screen).toContain("API key for deepseek"));
+      input.write("secret-for-test\r");
+      await vi.waitFor(() => expect(submitted).toEqual(["deepseek:secret-for-test"]));
+      expect(selected).toEqual(["deepseek"]);
+      expect(screen).not.toContain("secret-for-test");
+      input.write("/exit\r");
+      expect(await result).toBe(0);
+    } finally { input.end(); await result; }
+  });
+
+  it("cancels the /login Provider picker on Escape without switching or storing", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const input = new Input();
+    const output = new PassThrough();
+    let screen = "";
+    output.on("data", (chunk) => { screen += chunk.toString(); });
+    const selected: string[] = [];
+    const submitted: string[] = [];
+    let provider = "openai";
+    const control = {
+      get provider() { return provider; },
+      authFile: "/unused",
+      ready: () => false,
+      submit: async (key: string) => { submitted.push(key); return undefined; },
+      describe: () => "openai · deepseek\n",
+      providerIds: () => ["openai", "deepseek"],
+      select: async (argument: string) => {
+        selected.push(argument);
+        provider = argument;
+        return { ok: true as const, message: `Selected ${provider}\n` };
+      },
+      changeModel: async (value: string) => ({ ok: true as const, message: `Selected model ${value}\n` }),
+      changeEndpoint: async () => ({ ok: true as const, message: "endpoint changed\n" }),
+    };
+    const session = new AgentSession({ agent: {
+      systemPrompt: "demo", maxTurns: 1, tools: [], workspace: new LocalWorkspace(process.cwd()),
+      llm: { async complete() { throw new Error("No provider call expected"); } },
+    } });
+    const result = runRepl({ session, input, output, stderr: output, tui: true,
+      signIn: control, providers: control });
+    try {
+      input.write("/login\r");
+      await vi.waitFor(() => expect(screen).toContain("Select a Provider for /login"));
+      input.write("\u001b");
+      await vi.waitFor(() => expect(screen).toContain("No Provider selected; no key was stored."));
+      expect(selected).toEqual([]);
+      expect(submitted).toEqual([]);
+      expect(provider).toBe("openai");
+      expect(screen).not.toContain("API key for");
+      input.write("/exit\r");
+      expect(await result).toBe(0);
+    } finally { input.end(); await result; }
+  });
+
   it("skips the API key prompt when a selected Provider already has credentials", async () => {
     vi.stubEnv("TERM", "xterm-256color");
     const input = new Input();

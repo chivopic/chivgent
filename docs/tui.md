@@ -31,6 +31,7 @@ npm run demo:tui
 | 命令菜单中 ↑↓ | 遍历全部匹配命令，当前选中项保持可见 |
 | 命令菜单中 Tab / Enter | 将选中项补全到草稿，再按 Enter 提交；完整输入的命令仍可直接执行 |
 | 命令菜单中鼠标单击 / 滚轮 | 单击补全可见命令，滚轮在菜单上浏览候选项 |
+| 滚轮向上滚过记录区 | 把滚轮交还终端，滚动原生滚动历史；下一次按键时恢复输入框的鼠标跟踪 |
 | 命令菜单中 Esc | 关闭菜单，保留草稿 |
 | 空闲输入时上下键 | readline 输入历史 |
 | Ctrl+C（运行中） | 取消当前运行，保留已收到的文字，回到提示符 |
@@ -43,7 +44,7 @@ npm run demo:tui
 | `/provider deepseek` | 在当前会话切换到 DeepSeek，保留对话历史 |
 | `/model MODEL` | 切换当前供应商的模型 |
 | `/endpoint URL` | 为 OpenAI 兼容供应商设置 API 地址 |
-| `/login`、`/login deepseek` | 为当前或指定供应商保存 API Key（不回显） |
+| `/login`、`/login deepseek` | 先选择供应商再保存其 API Key（不回显）；`/login deepseek` 跳过选择 |
 | `/tools`、`/help` | 工具列表与命令帮助 |
 | `/clear` | 清空模型会话内容，保留终端滚动历史 |
 
@@ -60,7 +61,7 @@ npm run demo:tui
 
 切换供应商不会清空当前对话。新供应商没有默认模型时，用 `/model MODEL` 设置；
 自定义 OpenAI 兼容端点还需 `/endpoint URL`。TUI 在选择缺 Key 的供应商后会立即询问 Key，
-可先保存 Key，再补模型和地址；已有 Key 则跳过。`/login` 用于之后更换 Key。
+可先保存 Key，再补模型和地址；已有 Key 则跳过。`/login` 用于之后更换 Key：先列出供应商供选择，Esc 取消且不改动当前供应商。
 `--api-key` 只用于启动时选择的供应商，不会误用到之后切换的供应商。
 Key 写入用户的 `auth.json`，不同供应商各用自己的条目。
 从 OpenAI 在会话内切换到自定义兼容端点时，也不会把 `OPENAI_API_KEY` 当作新端点的 Key；

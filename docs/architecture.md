@@ -166,8 +166,11 @@ It does not take the alternate screen buffer. That would cost the scrollback,
 and getting it back means reimplementing scrolling, search and selection —
 thousands of lines that teach terminal graphics rather than agent architecture.
 A finished turn is flushed to the terminal's own scrollback and dropped from
-the state, so a long session never grows it. Input stays with readline for the
-same reason: a line editor is not the interesting problem here.
+the state, so a long session never grows it. The inline composer holds SGR
+mouse tracking for its own hit testing, so a wheel-up over the transcript is
+handed back to the terminal instead of being consumed as a caret move; the
+next keystroke takes the mouse back. Input stays with readline for the same
+reason: a line editor is not the interesting problem here.
 
 Painting rewrites only the lines whose content changed, so a ticking timer
 costs one line rather than a repaint. A resize invalidates that baseline — the
