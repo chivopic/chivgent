@@ -1,8 +1,9 @@
-import { useEffect, useId, useLayoutEffect, useReducer, useRef, useState, type JSX } from "react";
+import { useEffect, useLayoutEffect, useReducer, useRef, useState, type JSX } from "react";
 import { nextRequestId, shouldSubmitOnEnter } from "./input.js";
 import { initialDeskState, phaseLabel, reduceDesk, type TimelineItem } from "./reduce.js";
 import { isNearBottom } from "./scroll.js";
 import type { HostStatus, HostToMain, IpcResult } from "../protocol/messages.js";
+import leafMark from "./assets/chivgent-leaf-mark.png";
 
 interface DesktopApi {
   initialize(): Promise<IpcResult<HostToMain>>;
@@ -146,19 +147,11 @@ export function App(): JSX.Element {
           <Mark />
           <div>
             <div className="wordmark">chivgent</div>
-            <div className="brand-note">本地工作台</div>
           </div>
           <button className="sidebar-toggle" type="button" aria-label="折叠侧栏" title="折叠侧栏" onClick={() => setSidebarOpen(false)}>‹</button>
         </div>
         <button className="new-task" type="button" onClick={() => composerRef.current?.focus()}><span>＋</span> 撰写消息</button>
-        <div className="side-nav"><span className="nav-icon">⌂</span><span>工作台</span><span className="nav-current">本地</span></div>
-        <section className="side-block">
-          <h2><span>项目</span><span className="section-count">01</span></h2>
-          <div className="side-card">
-            <span className="project-glyph">C</span><div><strong>离线演示</strong>
-            <p>本地 Agent 工作区</p></div>
-          </div>
-        </section>
+        <div className="side-nav"><span className="nav-icon">⌂</span><span>工作台</span></div>
         <section className="side-block grow">
           <h2><span>最近任务</span><span className="section-count">01</span></h2>
           <div className="task current" data-testid="task-row" title="当前会话">
@@ -166,14 +159,13 @@ export function App(): JSX.Element {
             <span className="task-copy"><span className="task-title">当前会话</span><span className="task-phase" data-testid="run-status">{label}</span></span>
           </div>
         </section>
-        <footer className="sidebar-foot"><div className="profile-mark">C</div><div className="profile-copy"><strong>chivgent</strong><span>桌面版 · 离线模式</span></div><span className={`host-indicator ${state.host.phase === "ready" ? "ready" : "bad"}`} title={hostLabel(state.host)} /></footer>
+        <footer className="sidebar-foot"><div className="profile-mark">C</div><div className="profile-copy"><strong>chivgent</strong><span>桌面版</span></div><span className={`host-indicator ${state.host.phase === "ready" ? "ready" : "bad"}`} title={hostLabel(state.host)} /></footer>
       </aside>
       <main className="stage">
         {!sidebarOpen && <button className="reopen-sidebar" type="button" aria-label="展开侧栏" title="展开侧栏" onClick={() => setSidebarOpen(true)}>☰</button>}
         <header className="stage-head">
           <div>
             <h1>当前会话</h1>
-            <p>离线 stub · 流式回答与只读工具</p>
           </div>
           <span className={`pill ${statusTone(state)}`} data-testid="phase-pill">{label}</span>
         </header>
@@ -342,12 +334,8 @@ function Empty(props: { onPrompt: (prompt: string) => void }): JSX.Element {
   return (
     <div className="empty">
       <div className="welcome-mark"><Mark /></div>
-      <p className="eyebrow">CHIVGENT · 本地工作台</p>
+      <p className="eyebrow">CHIVGENT</p>
       <h2>今天想从哪里开始？</h2>
-      <div className="demo-note"><span className="demo-note-dot" />离线演示 · 暂未连接模型</div>
-      <p>
-        试试流式回复与只读工具调用。当前演示不会调用模型或修改文件。
-      </p>
       <div className="suggestions" aria-label="提示词示例">
         <button type="button" onClick={() => props.onPrompt("帮我梳理一个问题的解决思路")}>✳ <span>梳理一个问题的解决思路</span><b>↗</b></button>
         <button type="button" onClick={() => props.onPrompt("解释这段代码的工作方式")}>⌘ <span>解释一段代码的工作方式</span><b>↗</b></button>
@@ -357,19 +345,11 @@ function Empty(props: { onPrompt: (prompt: string) => void }): JSX.Element {
 }
 
 function Mark(props: { small?: boolean }): JSX.Element {
-  const raw = useId().replace(/:/g, "");
   const size = props.small ? 22 : 28;
   return (
-    <svg className="mark" width={size} height={size} viewBox="0 0 32 32" aria-hidden="true">
-      <defs>
-        <linearGradient id={raw} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#ff5fc8" />
-          <stop offset="0.55" stopColor="#a45cf0" />
-          <stop offset="1" stopColor="#6aa8f5" />
-        </linearGradient>
-      </defs>
-      <path fill={`url(#${raw})`} d="M6 8h12l8 8-8 8H6l8-8z" />
-    </svg>
+    <span className="mark" style={{ width: size, height: size }} aria-hidden="true">
+      <img className="mark-image" src={leafMark} alt="" />
+    </span>
   );
 }
 

@@ -76,8 +76,6 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #bc8067; outli
 .welcome-mark .mark { width: 28px; height: 28px; }
 .eyebrow { margin: 0 0 8px !important; color: #a18a77 !important; font-size: 10px; letter-spacing: .15em; font-weight: 600; }
 .empty h2 { font-family: "Iowan Old Style", Palatino, Georgia, serif; font-size: clamp(26px, 3vw, 34px); font-weight: 400; letter-spacing: -.035em; margin: 0 0 8px; }
-.demo-note { display: inline-flex; align-items: center; gap: 7px; margin: 5px 0 12px; padding: 4px 9px; border: 1px solid #e9e4d9; border-radius: 999px; background: #f6f3ec; color: #817a6e; font-size: 10px; }
-.demo-note-dot { width: 6px; height: 6px; border-radius: 50%; background: #b88a5a; }
 .empty > p:not(.eyebrow) { color: #817d74; max-width: 40ch; margin: 0 auto; font-size: 13px; }
 .suggestions { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 23px; }
 .suggestions button { display: flex; align-items: center; gap: 9px; padding: 8px 11px; border: 1px solid #e9e5dc; border-radius: 9px; background: #fbfaf7; color: #8d765f; font-size: 11px; transition: background .15s, transform .15s; }
@@ -118,7 +116,8 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #bc8067; outli
 .dot.ready { background: #779783; }.dot.run { background: #bd8061; }.dot.stop { background: #a58b56; }.dot.bad { background: #b96c61; }
 .reopen-sidebar { position: absolute; z-index: 2; top: 13px; left: 15px; width: 31px; height: 31px; border: 1px solid var(--line); border-radius: 8px; background: #f7f6f1; color: #77736b; }
 .sidebar-closed .stage-head { padding-left: 60px; }
-.mark { display: block; flex: none; }
+.mark { position: relative; display: block; flex: none; overflow: hidden; border-radius: 7px; background: #fffaf0; }
+.mark-image { position: absolute; top: 50%; left: 50%; width: 172%; height: 172%; max-width: none; transform: translate(-50%, -50%); }
 .desk-home .stage-head { display: none; }
 .desk-home .timeline { flex: 0 1 auto; width: 100%; padding: 0 28px; margin: auto 0 0; overflow: visible; }
 .desk-home .empty { margin: 0 auto; }
