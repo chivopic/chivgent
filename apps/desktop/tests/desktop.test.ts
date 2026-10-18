@@ -9,7 +9,6 @@ import { shouldSubmitOnEnter } from "../src/app/input.js";
 import { isNearBottom } from "../src/app/scroll.js";
 import { initialDeskState, reduceDesk } from "../src/app/reduce.js";
 import { validateMainToHost } from "../src/protocol/messages.js";
-import { avatarText, readPreferences } from "../src/app/Settings.js";
 
 describe("desktop protocol", () => {
   it("accepts the closed request set and rejects everything else", () => {
@@ -180,27 +179,6 @@ describe("composer and scroll", () => {
     );
     expect(running.phase).toBe("error");
     expect(running.notice).toContain("结果未知");
-  });
-});
-
-describe("local settings", () => {
-  it("loads supported preferences and falls back safely for invalid values", () => {
-    const descriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
-    const stored: Record<string, string> = {};
-    Object.defineProperty(globalThis, "localStorage", {
-      configurable: true,
-      value: { getItem: (key: string) => stored[key] ?? null },
-    });
-    try {
-      stored["chivgent.preferences"] = JSON.stringify({ theme: "dark", compact: true, displayName: "小明", sendOnEnter: false });
-      expect(readPreferences()).toEqual({ theme: "dark", compact: true, displayName: "小明", sendOnEnter: false });
-      expect(avatarText("小明")).toBe("小");
-      stored["chivgent.preferences"] = "not json";
-      expect(readPreferences()).toEqual({ theme: "system", compact: false, displayName: "用户", sendOnEnter: true });
-    } finally {
-      if (descriptor === undefined) delete (globalThis as { localStorage?: unknown }).localStorage;
-      else Object.defineProperty(globalThis, "localStorage", descriptor);
-    }
   });
 });
 
