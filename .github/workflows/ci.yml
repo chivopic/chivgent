@@ -62,6 +62,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Desktop dependencies
+        run: npm --prefix apps/desktop ci
+
       - name: Desktop unit and integration tests
         run: npm run desktop:test
 
