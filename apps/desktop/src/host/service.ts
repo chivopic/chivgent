@@ -3,6 +3,7 @@ import { realpath, stat } from "node:fs/promises";
 import type { Agent } from "@chivgent/agent.ts";
 import type { AgentEvent } from "@chivgent/events.ts";
 import type { Message } from "@chivgent/messages.ts";
+import type { AppliedCompaction } from "@chivgent/context/context-manager.ts";
 import {
   acceptedRequestLimit,
   DESKTOP_PROTOCOL_VERSION,
@@ -32,6 +33,7 @@ export interface HostServiceOptions {
 
 export interface RuntimeSession {
   readonly messages: readonly Message[];
+  readonly compactionCheckpoint?: AppliedCompaction;
   prompt(text: string, options: { signal: AbortSignal }): Promise<unknown>;
   subscribe(listener: (event: AgentEvent) => void): () => void;
 }
@@ -48,6 +50,7 @@ export type SessionFactory = (
   provider: string | undefined,
   model: string | undefined,
   messages: readonly Message[] | undefined,
+  compaction: AppliedCompaction | undefined,
 ) => Promise<RuntimeSessionResult>;
 
 /**
@@ -221,7 +224,8 @@ export class HostService {
         const configKey = JSON.stringify([request.provider ?? null, request.model ?? null]);
         if (this.session === undefined || this.sessionConfigKey !== configKey) {
           const messages = this.session?.session.messages;
-          const pendingSession = this.createSession(this.projectPath!, request.provider, request.model, messages);
+          const compaction = this.session?.session.compactionCheckpoint;
+          const pendingSession = this.createSession(this.projectPath!, request.provider, request.model, messages, compaction);
           const initialized = await awaitWithAbort(pendingSession, controller.signal);
           if (initialized.aborted) {
             this.send({ type: "error", requestId: request.requestId, runId, code: "cancelled", message: "运行已停止。" });
