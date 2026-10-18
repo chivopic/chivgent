@@ -32,7 +32,9 @@ const service = new HostService({
   send: (message: HostToMain) => {
     port.postMessage(message);
   },
-  createAgent: (onEvent) => createDemoAgent({ workspaceRoot, timing: VISIBLE_DEMO_TIMING, onEvent }),
+  defaultProvider: process.env["CHIVGENT_PROVIDER"],
+  compatibleBaseURL: process.env["OPENAI_BASE_URL"],
+  createAgent: (onEvent, projectPath) => createDemoAgent({ workspaceRoot: projectPath ?? workspaceRoot, timing: VISIBLE_DEMO_TIMING, onEvent }),
   ...(process.env["CHIVGENT_DESKTOP_DEMO"] === "1" ? {} : {
     createSession: async (cwd, provider, model, messages) => {
       return createDesktopSession({ cwd, provider, model, messages });
