@@ -41,6 +41,7 @@ export class EditorController {
       readonly slashCommands?: readonly SlashSuggestion[];
       readonly mouse?: boolean;
       readonly footerStatus?: () => string | undefined;
+      readonly color?: boolean;
       readonly onShiftTab?: () => Promise<void> | void;
     } = {},
   ) {
@@ -115,7 +116,7 @@ export class EditorController {
     // Only visible editable rows map to document text; header, popup and footer
     // coordinates must never be interpreted as text positions.
     if (inputRow === undefined) return;
-    const frameColumn = Math.max(0, column - 3);
+    const frameColumn = Math.max(0, column - 1 - inputRow.gutterCells);
     const visibleTextColumn = inputRow.scrollCells > 0
       ? Math.max(0, frameColumn - 1)
       : frameColumn;
@@ -403,7 +404,7 @@ export class EditorController {
     const matches = this.suggestions();
     this.completionIndex = matches.length > 0 ? Math.min(this.completionIndex, matches.length - 1) : 0;
     const frame = editorFrame(this.document, this.maxWidth(), this.maxHeight(), this.options.submitOnEnter === true,
-      matches, this.completionIndex, this.options.footerStatus?.());
+      matches, this.completionIndex, this.options.footerStatus?.(), this.options.color === true);
     this.lastFrame = frame;
     this.painter.render(frame);
     if (this.options.mouse) {

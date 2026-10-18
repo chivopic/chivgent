@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { EditorController } from "../src/tui/editor-input.js";
 import { EditorDocument, editorFrame } from "../src/tui/editor.js";
+import { displayWidth } from "../src/tui/text.js";
 import { slashSuggestions } from "../src/tui/slash.js";
 import { terminalHarness } from "./helpers/terminal.js";
 
@@ -177,6 +178,9 @@ describe("mouse caret and selected text", () => {
     expect(doc.selectionRange()).toEqual({ start: 1, end: 6 });
     const selection = editorFrame(doc, 50, 16);
     expect(selection.lines.join("\n")).toContain("\u001b[7m👩‍💻\u001b[0m");
+    const inlineSelection = editorFrame(doc, 50, 16, true);
+    expect(inlineSelection.lines.join("\n")).toContain("\u001b[7m👩‍💻\u001b[0m");
+    expect(inlineSelection.lines.join("\n")).toContain("┌");
     doc.insert("X");
     expect(doc.text).toBe("aXb\nsecond");
   });
@@ -190,12 +194,12 @@ describe("mouse caret and selected text", () => {
     c.receive(Buffer.from("one\u000ftwo")); // Ctrl+O inserts a line; plain LF submits
     // Simulated DSR cursor is at screen row 12. Caret is on the second input row.
     c.receive(Buffer.from("\u001b[12;6R"));
-    // First editable line is at screen row 11, column 3 starts text.
-    c.receive(Buffer.from("\u001b[<0;3;11M"));
+    // First editable line is at screen row 11. The box gutter is four cells, so column 5 starts text.
+    c.receive(Buffer.from("\u001b[<0;5;11M"));
     expect(c.document.position).toEqual({row:0,column:0});
-    c.receive(Buffer.from("\u001b[<32;5;11M"));
+    c.receive(Buffer.from("\u001b[<32;7;11M"));
     expect(c.document.selectionRange()).toEqual({start:0,end:2});
-    c.receive(Buffer.from("\u001b[<0;5;11m"));
+    c.receive(Buffer.from("\u001b[<0;7;11m"));
     c.receive(Buffer.from("X"));
     expect(c.document.text).toBe("Xe\ntwo");
     c.cancel();
@@ -210,9 +214,9 @@ describe("mouse caret and selected text", () => {
     c.begin();
     c.receive(Buffer.from("abcdefghijklmnopqrstuvwxyz"));
     c.receive(Buffer.from("\u001b[12;4R"));
-    // At width 20 the visible text starts with “…” then “n”; click the n.
-    c.receive(Buffer.from("\u001b[<0;4;12M"));
-    expect(c.document.position).toEqual({ row: 0, column: 13 });
+    // At width 20 the box leaves 13 text cells. The visible text starts with “…” then “q”; click the q.
+    c.receive(Buffer.from("\u001b[<0;6;12M"));
+    expect(c.document.position).toEqual({ row: 0, column: 16 });
     c.cancel();
   });
 
@@ -223,9 +227,9 @@ describe("mouse caret and selected text", () => {
     c.begin();
     c.receive(Buffer.from("abcdefghijkl👩‍💻xyz\u000fshort\u001b[A\u001b[F"));
     c.receive(Buffer.from("\u001b[12;4R"));
-    // The first line is scrolled; the second line is not. Clicking column 5
+    // The first line is scrolled; the second line is not. Clicking column 7
     // on the second line must therefore map to its own column 2.
-    c.receive(Buffer.from("\u001b[<0;5;13M"));
+    c.receive(Buffer.from("\u001b[<0;7;13M"));
     expect(c.document.position).toEqual({ row: 1, column: 2 });
     c.cancel();
   });
@@ -237,8 +241,8 @@ describe("mouse caret and selected text", () => {
     c.begin();
     c.receive(Buffer.from("abcdefghijkl👩‍💻xyz"));
     c.receive(Buffer.from("\u001b[12;4R"));
-    // The emoji starts at document display cell 12 and screen column 12.
-    c.receive(Buffer.from("\u001b[<0;12;12M"));
+    // The emoji starts at document display cell 12. After the box gutter and scroll, that is screen column 11.
+    c.receive(Buffer.from("\u001b[<0;11;12M"));
     expect(c.document.position).toEqual({ row: 0, column: 12 });
     c.cancel();
   });
@@ -251,7 +255,7 @@ describe("mouse caret and selected text", () => {
     c.begin();
     c.receive(Buffer.from("/gi"));
     c.receive(Buffer.from("\u001b[12;4R"));
-    c.receive(Buffer.from("\u001b[<0;8;14M"));
+    c.receive(Buffer.from("\u001b[<0;8;15M"));
     expect(c.document.text).toBe("/gitstatus");
     expect(submitted).toEqual([]);
     c.cancel();
@@ -264,9 +268,9 @@ describe("mouse caret and selected text", () => {
     c.begin();
     c.receive(Buffer.from("/gi"));
     c.receive(Buffer.from("\u001b[12;4R"));
-    c.receive(Buffer.from("\u001b[<0;8;15M")); // footer is outside the menu
+    c.receive(Buffer.from("\u001b[<0;8;16M")); // footer is outside the menu
     expect(c.document.text).toBe("/gi");
-    c.receive(Buffer.from("\u001b[<65;8;13M")); // wheel down over first visible candidate
+    c.receive(Buffer.from("\u001b[<65;8;14M")); // wheel down over first visible candidate
     c.receive(Buffer.from("\u001b[<0;50;14M")); // outside terminal width
     expect(c.document.text).toBe("/gi");
     c.receive(Buffer.from("\t"));
@@ -308,7 +312,7 @@ describe("mouse caret and selected text", () => {
     c.receive(Buffer.from("\u001b[12;"));
     c.receive(Buffer.from("4R"));
     expect(out.join("")).toBe(afterPaint);
-    c.receive(Buffer.from("\u001b[<0;8;14M"));
+    c.receive(Buffer.from("\u001b[<0;8;15M"));
     expect(c.document.text).toBe("/gitstatus");
     c.cancel();
   });
@@ -320,10 +324,10 @@ describe("mouse caret and selected text", () => {
     c.begin();
     c.receive(Buffer.from("/gi\u001b[12;4R"));
     c.resized();
-    c.receive(Buffer.from("\u001b[<0;8;14M")); // old DSR was invalidated
+    c.receive(Buffer.from("\u001b[<0;8;15M")); // old DSR was invalidated
     expect(c.document.text).toBe("/gi");
     c.receive(Buffer.from("\u001b[12;4R"));
-    c.receive(Buffer.from("\u001b[<0;8;14M"));
+    c.receive(Buffer.from("\u001b[<0;8;15M"));
     expect(c.document.text).toBe("/gitstatus");
     c.cancel();
   });
@@ -360,5 +364,27 @@ describe("mouse caret and selected text", () => {
     expect(inline.lines.join("\n")).not.toContain("Enter send");
     const modal = editorFrame(doc, 40, 12, false);
     expect(modal.lines.join("\n")).toContain("Ctrl+S send · Esc cancel · Enter ne…");
+  });
+
+  it("draws an empty inline draft inside a box and does not treat the placeholder as text", () => {
+    const doc = new EditorDocument();
+    const frame = editorFrame(doc, 60, 12, true, [], 0, "Ask for me · Shift+Tab Plan · /help");
+    const lines = frame.lines.join("\n");
+    expect(lines).toContain("┌");
+    expect(lines).toContain("┘");
+    expect(lines).toContain("Ask chivgent to do anything");
+    expect(lines).toContain("Ask for me · Shift+Tab Plan · /help");
+    expect(doc.text).toBe("");
+    expect(frame.lines.every(line => displayWidth(line) <= 59)).toBe(true);
+    const drafted = new EditorDocument();
+    drafted.insert("draft");
+    expect(editorFrame(drafted, 60, 12, true).lines.join("\n")).not.toContain("Ask chivgent to do anything");
+    expect(editorFrame(new EditorDocument(), 40, 12, false).lines.join("\n")).not.toContain("Ask chivgent");
+    const narrow = editorFrame(new EditorDocument(), 8, 6, true);
+    expect(narrow.lines[0]).toMatch(/^┌.*┐$/);
+    expect(narrow.lines.every(line => displayWidth(line) <= 7)).toBe(true);
+    const colored = editorFrame(new EditorDocument(), 60, 12, true, [], 0, undefined, true);
+    expect(colored.lines.join("\n")).toContain("\u001b[2mAsk chivgent to do anything\u001b[0m");
+    expect(editorFrame(new EditorDocument(), 60, 12, true).lines.join("\n")).not.toContain("\u001b[");
   });
 });
