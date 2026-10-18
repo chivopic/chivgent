@@ -64,7 +64,9 @@ chivgent --permission-mode ask-first "Review this project"
 chivgent --allow-writes "Rename sayHi to greet"         # older flag, not with a mode
 chivgent --allow-shell "Run the tests"                  # asks, then Seatbelt or Docker
 chivgent --provider deepseek "Explain src/"
-chivgent --tui                                           # live region, multi-line editor
+chivgent                                                 # rich TUI in a local interactive terminal
+chivgent --simple                                        # append-only interface
+chivgent --tui                                           # explicitly request the rich TUI
 chivgent --continue                                      # last session in this directory
 ```
 
@@ -125,7 +127,7 @@ Run `chivgent` with no question for an interactive session. It is saved under `~
 
 `/compact` summarizes older turns and keeps the full transcript to resume later. `/status` shows the model, the permissions, and token usage. `/help` lists the rest.
 
-`--tui` adds a live status region and a multi-line editor. [TUI](docs/tui-v5.md). A long session stays within the context window by summarizing older turns and keeping the list of files read and changed. [Context](docs/architecture.md#context-management).
+Local interactive terminals use the rich TUI by default. `--simple` selects the append-only interface; `--tui` remains available to request the rich TUI explicitly, including when stdout is redirected. Piped input or output, JSON, one-shot runs, `--serve`, and `--connect` keep their existing simple output. `TERM=dumb` selects the simple interface; `NO_COLOR` keeps the rich TUI and disables color. [TUI](docs/tui.md). A long session stays within the context window by summarizing older turns and keeping the list of files read and changed. [Context](docs/architecture.md#context-management).
 
 ## Boundaries
 
@@ -149,7 +151,7 @@ This repository also has an Electron desktop app. It opens a project through the
 | [Architecture](docs/architecture.md) | The loop, providers, context, and where the source lives |
 | [Shell safety](docs/shell-sandbox.md) | Seatbelt, Docker, and what a command can still read |
 | [Subscription sign-in](docs/subscription-oauth.md) | ChatGPT and xAI: what is stored, and what a key still does |
-| [TUI](docs/tui-v5.md) | The live region, the editor, and diff review |
+| [TUI](docs/tui.md) | The live region, the editor, and diff review |
 | [Evals](docs/evals.md) | Whether the agent finishes the task, separate from the unit tests |
 | [Extensions and remote sessions](docs/extensions-and-remote.md) | Tools you add, and attaching another terminal |
 

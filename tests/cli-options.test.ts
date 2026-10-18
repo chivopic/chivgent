@@ -170,6 +170,14 @@ describe("CLI options", () => {
     expect(parseCliArgs([], {})).not.toHaveProperty("prompt");
   });
 
+  it("keeps the TUI opt-in intent separate from the explicit simple override", () => {
+    expect(parseCliArgs([], {})).toMatchObject({ tui: false, simple: false });
+    expect(parseCliArgs(["--tui"], {})).toMatchObject({ tui: true, simple: false });
+    expect(parseCliArgs(["--simple"], {})).toMatchObject({ tui: false, simple: true });
+    expect(() => parseCliArgs(["--tui", "--simple"], {})).toThrow("--tui and --simple");
+    expect(helpText()).toContain("--simple         Use the simple append-only interface");
+  });
+
   it("documents the registered Providers and the resolution order", () => {
     // The Provider line is generated from the registry, so a newly
     // registered Provider appears in --help without touching this module.

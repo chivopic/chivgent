@@ -270,7 +270,7 @@ export function handleSlashCommand(
       return "handled";
 
     case "/editor":
-      context.write("Use /editor in an interactive TUI to open the multiline editor.\n");
+      context.write("Use /editor in the rich interactive TUI to open the multiline editor.\n");
       return "handled";
 
     case "/review":
@@ -758,7 +758,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
   /** Cursor-editable modal, with exclusive keyboard and paint ownership. */
   const collectEditor = async (isDefault = false): Promise<string | undefined> => {
     if (tuiInput === undefined) {
-      write("The cursor editor requires --tui. Use /compose here instead.\n");
+      write("The cursor editor requires the rich TUI in an interactive terminal. Use /compose here instead.\n");
       return undefined;
     }
     menu?.clear();
@@ -807,7 +807,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       return;
     }
     if (tuiInput === undefined) {
-      write("Interactive patch review requires --tui; use /diff instead.\n");
+      write("Interactive patch review requires the rich TUI in an interactive terminal; use /diff instead.\n");
       return;
     }
     menu?.clear();
@@ -833,7 +833,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
 
   const inspectLiveGitDiff = async (line: string): Promise<void> => {
     if (tuiInput === undefined) {
-      write("Live Git review requires interactive --tui.\n");
+      write("Live Git review requires the rich TUI in an interactive terminal.\n");
       return;
     }
     if (line !== "/gitdiff" && line !== "/gitdiff --staged") {

@@ -61,8 +61,10 @@ export interface CliOptions {
   readonly shellNetwork: boolean;
   /** Explicit policy for tool approval boundaries; absent preserves legacy flags. */
   readonly permissionMode?: PermissionMode;
-  /** Draw a live status region above the prompt. Interactive terminals only. */
+  /** Explicitly request the rich terminal interface. */
   readonly tui: boolean;
+  /** Force the traditional append-only terminal interface. */
+  readonly simple: boolean;
   /** Load extensions from the user and (once trusted) the project directory. */
   readonly extensions: boolean;
   /** List loaded extensions and what they registered, then exit. */
@@ -110,6 +112,7 @@ export function parseCliArgs(
   let shellNetwork = false;
   let permissionMode: PermissionMode | undefined;
   let tui = false;
+  let simple = false;
   let extensions = true;
   let serve = false;
   let connect: string | undefined;
@@ -151,6 +154,8 @@ export function parseCliArgs(
       stream = false;
     } else if (argument === "--tui") {
       tui = true;
+    } else if (argument === "--simple") {
+      simple = true;
     } else if (argument === "--quiet" || argument === "-q") {
       quiet = true;
     } else if (argument === "--json") {
@@ -213,6 +218,9 @@ export function parseCliArgs(
   if (approveAllShell && !allowShell) {
     throw new TypeError("--approve-all-shell requires --allow-shell.");
   }
+  if (tui && simple) {
+    throw new TypeError("--tui and --simple cannot be used together.");
+  }
   if (permissionMode !== undefined && (allowWrites || allowShell || approveAllShell || shellNetwork)) {
     throw new TypeError("--permission-mode cannot be combined with --allow-writes, --allow-shell, --approve-all-shell, or --shell-network; select the complete policy mode instead.");
   }
@@ -255,6 +263,7 @@ export function parseCliArgs(
     shellNetwork,
     ...(permissionMode === undefined ? {} : { permissionMode }),
     tui,
+    simple,
     extensions,
     serve,
     ...(connect === undefined ? {} : { connect }),
@@ -285,7 +294,8 @@ Options:
   --api-key KEY    API key for this run; prefer an environment variable
   --max-turns N    Tool-calling turn limit (default: ${DEFAULT_MAX_TURNS}, ${DEFAULT_WRITE_MAX_TURNS} with --allow-writes or --allow-shell)
   --no-stream      Wait for the full answer instead of streaming tokens
-  --tui            Live status region above the prompt (interactive TTY only)
+  --tui            Explicitly request the rich interface (default in local TTY sessions)
+  --simple         Use the simple append-only interface
   -q, --quiet      Hide tool activity on stderr
   --json           Write the run as JSON lines instead of rendered text
   -c, --continue   Resume the most recent session for this workspace

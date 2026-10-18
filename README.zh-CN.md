@@ -64,7 +64,9 @@ chivgent --permission-mode ask-first "审这个项目"
 chivgent --allow-writes "把 sayHi 改成 greet"        # 旧开关，不能和模式一起用
 chivgent --allow-shell "跑测试"                      # 先确认，再进 Seatbelt 或 Docker
 chivgent --provider deepseek "讲讲 src/"
-chivgent --tui                                       # 实时状态区，多行编辑器
+chivgent                                             # 本地交互终端默认使用 rich TUI
+chivgent --simple                                    # 使用追加式界面
+chivgent --tui                                       # 显式请求 rich TUI
 chivgent --continue                                  # 这个目录里的上一次会话
 ```
 
@@ -125,7 +127,7 @@ chivgent --continue                                  # 这个目录里的上一�
 
 `/compact` 压缩较早的轮次，完整记录仍留着，方便恢复。`/status` 显示模型、权限和 token 用量。其余的，`/help`。
 
-`--tui` 加上实时状态区和多行编辑器。[TUI](docs/tui-v5.md)。长会话会压缩较早的轮次，并留下读过和改过的文件列表，从而留在上下文窗口里。[上下文](docs/architecture.md#context-management)。
+本地交互终端默认使用 rich TUI。`--simple` 选择追加式界面；`--tui` 仍可显式请求 rich TUI，包括将 stdout 重定向时。管道输入或输出、JSON、单次提问、`--serve` 和 `--connect` 保持原有简单输出。`TERM=dumb` 自动选择简单界面；设置 `NO_COLOR` 时仍使用 rich TUI，但不输出颜色。[TUI](docs/tui.md)。长会话会压缩较早的轮次，并留下读过和改过的文件列表，从而留在上下文窗口里。[上下文](docs/architecture.md#context-management)。
 
 ## 边界
 
@@ -149,7 +151,7 @@ chivgent --continue                                  # 这个目录里的上一�
 | [架构](docs/architecture.md) | 循环、供应商、上下文，以及源码在哪 |
 | [Shell 安全](docs/shell-sandbox.md) | Seatbelt、Docker，以及一条命令仍能读到什么 |
 | [订阅登录](docs/subscription-oauth.md) | ChatGPT 和 xAI：存了什么，key 仍然做什么 |
-| [TUI](docs/tui-v5.md) | 实时状态区、编辑器、diff 审阅 |
+| [TUI](docs/tui.md) | 实时状态区、编辑器、diff 审阅 |
 | [Evals](docs/evals.md) | agent 能不能把活干完，和单元测试分开 |
 | [扩展与远程会话](docs/extensions-and-remote.md) | 你加的工具，以及另一个终端怎么接上来 |
 
