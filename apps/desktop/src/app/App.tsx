@@ -37,6 +37,7 @@ export function App(): JSX.Element {
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const ignoreEnter = useRef(false);
   const runIdRef = useRef<string | null>(null);
+  const pendingStartRef = useRef<string | null>(null);
   runIdRef.current = state.runId;
 
   useEffect(() => {
@@ -55,6 +56,12 @@ export function App(): JSX.Element {
         setDemoMode(message.capabilities.includes("demo-agent"));
       } else if (message.type === "runtime-config") {
         setRuntimeConfig(`${message.provider} · ${message.model}${message.baseURL ? ` · ${message.baseURL}` : ""}`);
+      } else if (message.type === "started") {
+        // Broadcast can arrive before the invoke ACK; claim this run only
+        // when it belongs to the currently pending request.
+        if (message.requestId === pendingStartRef.current) {
+          dispatch({ type: "started", runId: message.runId });
+        }
       } else if (message.type === "event") {
         dispatch({
           type: "agent",
@@ -63,10 +70,9 @@ export function App(): JSX.Element {
           event: message.event,
         });
       } else if (message.type === "error" && message.runId !== undefined) {
-        // Project-picker and other IPC errors are handled by their own callers.
-        // They must not turn an unrelated, still-running Agent into an error.
-        if (message.code === "cancelled") dispatch({ type: "cancelled" });
-        else dispatch({ type: "fail", message: message.message });
+        // Correlate terminal errors with their run; picker errors have no runId.
+        dispatch({ type: "run-error", runId: message.runId, message: message.message,
+          cancelled: message.code === "cancelled" });
       }
     });
     const stopStatus = api.onHostStatus((status) => {
@@ -130,9 +136,12 @@ export function App(): JSX.Element {
     if (state.host.phase !== "ready") {
       return;
     }
+    const requestId = nextRequestId();
+    pendingStartRef.current = requestId;
     dispatch({ type: "submit", text });
     setDraft("");
-    const result = await api.start({ requestId: nextRequestId(), prompt: text, provider, ...(model.trim() ? { model: model.trim() } : {}) });
+    const result = await api.start({ requestId, prompt: text, provider, ...(model.trim() ? { model: model.trim() } : {}) });
+    if (pendingStartRef.current !== requestId) return;
     if (!result.ok) {
       if (result.code === "cancelled") dispatch({ type: "cancelled" });
       else dispatch({ type: "fail", message: result.message });
@@ -152,6 +161,7 @@ export function App(): JSX.Element {
       return;
     }
     if (result.value.type === "project-selected") {
+      pendingStartRef.current = null;
       setProjectPath(result.value.path);
       setRuntimeConfig("");
       setProjectError("");
@@ -208,7 +218,7 @@ export function App(): JSX.Element {
           <span className={`pill ${statusTone(state)}`} data-testid="phase-pill">{label}</span>
         </header>
         <div className="runtime-settings">
-          <label>Provider <select aria-label="Provider" data-testid="provider-select" value={provider} disabled={running} onChange={(event) => setProvider(event.target.value)}>
+          <label>Provider <select aria-label="Provider" data-testid="provider-select" value={provider} disabled={running} onChange={(event) => { setProvider(event.target.value); setModel(""); }}>
             <option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="openai-compatible">OpenAI compatible</option><option value="openrouter">OpenRouter</option><option value="groq">Groq</option><option value="xai">xAI</option><option value="moonshot">Moonshot</option>
           </select></label>
           <label>Model <input aria-label="Model" data-testid="model-input" value={model} placeholder="沿用 Provider 环境配置" disabled={running} onChange={(event) => setModel(event.target.value)} /></label>
