@@ -21,6 +21,10 @@ export class EditorController {
   private lastFrame?: EditorFrame;
   private originRow?: number;
   private mouseDragging = false;
+  private modeSwitchPending = false;
+  private modeSwitchCancelPending = false;
+  private modeSwitchQueue: Buffer[] = [];
+  private modeSwitchQueueBytes = 0;
   private searching = false;
   private searchQuery = "";
   private searchOffset = 0;
@@ -31,7 +35,14 @@ export class EditorController {
   constructor(
     private readonly output: EditorOutput,
     private readonly done: (text: string | undefined) => void,
-    private readonly options: { readonly submitOnEnter?: boolean; readonly history?: readonly string[]; readonly slashCommands?: readonly SlashSuggestion[]; readonly mouse?: boolean } = {},
+    private readonly options: {
+      readonly submitOnEnter?: boolean;
+      readonly history?: readonly string[];
+      readonly slashCommands?: readonly SlashSuggestion[];
+      readonly mouse?: boolean;
+      readonly footerStatus?: () => string | undefined;
+      readonly onShiftTab?: () => Promise<void> | void;
+    } = {},
   ) {
     this.painter = new EditorPainter(output);
     this.maxWidth = () => Math.max(8, output.columns ?? 80);
@@ -101,6 +112,21 @@ export class EditorController {
 
   receive(chunk: Buffer): void {
     if (this.completed) return;
+    if (this.modeSwitchPending) {
+      if (chunk.includes(3)) {
+        this.modeSwitchQueue = [];
+        this.modeSwitchQueueBytes = 0;
+        this.modeSwitchCancelPending = true;
+      } else if (this.modeSwitchQueueBytes + chunk.length <= 64 * 1024) {
+        this.modeSwitchQueue.push(Buffer.from(chunk));
+        this.modeSwitchQueueBytes += chunk.length;
+      } else {
+        this.modeSwitchQueue = [];
+        this.modeSwitchQueueBytes = 0;
+        this.document.warning = "Input buffer full while changing mode; queued input was discarded.";
+      }
+      return;
+    }
     if (this.escapeTimer !== undefined) {
       clearTimeout(this.escapeTimer);
       this.escapeTimer = undefined;
@@ -138,9 +164,35 @@ export class EditorController {
       "\u001b[3~": () => this.document.delete(),
       "\u001bOH": () => this.document.home(),
       "\u001bOF": () => this.document.end(),
+      ...(this.options.submitOnEnter && this.options.onShiftTab !== undefined ? {
+        "\u001b[Z": () => {
+          if (this.modeSwitchPending) return;
+          this.modeSwitchPending = true;
+          Promise.resolve().then(() => this.options.onShiftTab?.()).catch(error => {
+            this.document.warning = `Could not change mode: ${error instanceof Error ? error.message : String(error)}`;
+          }).finally(() => {
+            this.modeSwitchPending = false;
+            if (!this.completed) {
+              if (this.modeSwitchCancelPending) {
+                this.modeSwitchCancelPending = false;
+                this.modeSwitchQueue = [];
+                this.modeSwitchQueueBytes = 0;
+                this.finish(undefined);
+                return;
+              }
+              this.parse();
+              const queued = this.modeSwitchQueue;
+              this.modeSwitchQueue = [];
+              this.modeSwitchQueueBytes = 0;
+              for (const chunk of queued) this.receive(chunk);
+              if (!this.completed) this.draw();
+            }
+          });
+        },
+      } : {}),
     };
 
-    while (this.pending.length > 0 && !this.completed) {
+    while (this.pending.length > 0 && !this.completed && !this.modeSwitchPending) {
       if (this.pasting) {
         const index = this.pending.indexOf(endPaste);
         if (index !== -1) {
@@ -177,6 +229,10 @@ export class EditorController {
         }
         const matched = Object.keys(escapes).find(sequence => this.pending.startsWith(sequence));
         if (matched !== undefined) {
+          if (matched === "\u001b[Z" && this.searching) {
+            this.pending = this.pending.slice(matched.length);
+            continue;
+          }
           if (this.suggestions().length > 0 && (matched === "\u001b[A" || matched === "\u001b[B")) {
             const matches = this.suggestions();
             this.completionIndex = (this.completionIndex + (matched === "\u001b[B" ? 1 : -1) + matches.length) % matches.length;
@@ -307,13 +363,19 @@ export class EditorController {
     const matches = this.suggestions();
     this.completionIndex = matches.length > 0 ? Math.min(this.completionIndex, matches.length - 1) : 0;
     const frame = editorFrame(this.document, this.maxWidth(), this.maxHeight(), this.options.submitOnEnter === true,
-      matches.map(item => item.value), this.completionIndex);
+      matches.map(item => item.value), this.completionIndex, this.options.footerStatus?.());
     this.lastFrame = frame;
     this.painter.render(frame);
     if (this.options.mouse) this.outputWrite("\u001b[6n");
   }
 
   cancel(): void {
+    if (this.modeSwitchPending) {
+      this.modeSwitchCancelPending = true;
+      this.modeSwitchQueue = [];
+      this.modeSwitchQueueBytes = 0;
+      return;
+    }
     this.finish(undefined);
   }
 

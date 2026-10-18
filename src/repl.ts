@@ -57,6 +57,7 @@ export interface SlashCommandContext {
   readonly modelName?: string;
   readonly permissions?: readonly string[];
   readonly permissionPolicy?: PermissionPolicy;
+  readonly inlineComposer?: boolean;
   readonly sessionOptions?: {
     readonly list?: () => Promise<readonly { readonly id: string; readonly title?: string }[]>;
     readonly create?: (title?: string) => Promise<AgentSession>;
@@ -144,15 +145,19 @@ const HELP = `Commands:
   /login     Store a key for the current Provider; /login NAME switches first
   /login oauth [openai|xai]  Sign in with a subscription
   /logout    Sign out of the current OAuth subscription
-  /exit      Leave chivgent (Ctrl+C or Ctrl+D also works)
+  /exit      Leave chivgent
 
-Anything else is sent to the model. Ctrl+C stops a running answer; at the prompt it exits.
+Anything else is sent to the model. Ctrl+C stops a running answer.
 `;
 
 function helpText(context: SlashCommandContext): string {
+  const controls = context.inlineComposer
+    ? `Rich TUI input: Enter sends; Ctrl+O inserts a newline; Ctrl+R searches prompt history; arrows move the cursor. Ctrl+C clears the current draft; Ctrl+D exits when it is empty.${context.permissionPolicy === undefined ? "" : " Shift+Tab cycles Plan → Auto mode → Ask for me at the idle prompt."}\n\n`
+    : "";
+  const exit = context.inlineComposer ? "" : "At the simple prompt Ctrl+C or Ctrl+D exits.\n";
   const extras = context.extensionCommands ?? [];
   if (extras.length === 0) {
-    return HELP;
+    return `${controls}${HELP}${exit}`;
   }
   const width = Math.max(...extras.map((command) => command.name.length)) + 3;
   const lines = extras.map(
@@ -160,7 +165,7 @@ function helpText(context: SlashCommandContext): string {
   );
   // Extension commands are listed apart from the built-ins so it is always
   // clear which of them came from code this project supplied.
-  return `${HELP}\nFrom extensions:\n${lines.join("\n")}\n`;
+  return `${controls}${HELP}${exit}\nFrom extensions:\n${lines.join("\n")}\n`;
 }
 
 /**
@@ -777,6 +782,26 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       history: recent,
       slashCommands: commands.map(item => ({ value: item.value, label: item.label })),
       mouse: isDefault && options.tui === true && (output as typeof output & { isTTY?: boolean }).isTTY === true,
+      ...(isDefault && options.tui && options.permissionPolicy !== undefined ? {
+        footerStatus: () => {
+          if (activeSession.planMode) return "Plan · Shift+Tab Auto mode · /help";
+          if (options.permissionPolicy?.mode === "workspace") return "Auto mode · Shift+Tab Ask for me · /help";
+          if (options.permissionPolicy?.mode === "unrestricted") return "Unrestricted · Shift+Tab Plan · /help";
+          return "Ask for me · Shift+Tab Plan · /help";
+        },
+        onShiftTab: async () => {
+          const policy = options.permissionPolicy;
+          if (policy === undefined) return;
+          if (activeSession.planMode) {
+            await activeSession.setPlanMode(false);
+            policy.setMode("workspace");
+          } else if (policy.mode === "workspace") {
+            policy.setMode("ask-first");
+          } else {
+            await activeSession.setPlanMode(true);
+          }
+        },
+      } : {}),
     });
     const resized = (): void => { editor.resized(); };
     const closed = (): void => { editor.cancel(); };
@@ -948,6 +973,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         ...(options.modelName === undefined ? {} : { modelName: options.modelName }),
         ...(options.permissions === undefined ? {} : { permissions: options.permissions }),
         ...(options.permissionPolicy === undefined ? {} : { permissionPolicy: options.permissionPolicy }),
+        ...(options.inlineComposer === true ? { inlineComposer: true } : {}),
         ...(options.sessionOptions === undefined ? {} : { sessionOptions: options.sessionOptions }),
       });
       if (outcome === "exit") {
@@ -1063,7 +1089,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
           const next = await options.sessionOptions?.create?.(outcome.title);
           if (next === undefined) throw new Error("Session creation is unavailable.");
           activeSession = next;
-          write(`Started session ${next.id}${next.title ? ` · ${next.title}` : ""}. Previous session saved.\n`);
+          write(`Started a new session${next.title ? ` · ${next.title}` : ""}. Previous session saved.\n`);
         } catch (error: unknown) { write(`Could not start a new session: ${error instanceof Error ? error.message : String(error)}\n`); }
         showPrompt();
         continue;
@@ -1079,7 +1105,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
             const next = await options.sessionOptions?.resume?.(id);
             if (next === undefined) throw new Error(`Unknown session in this workspace: ${id}`);
             activeSession = next;
-            write(`Resumed session ${next.id}${next.title ? ` · ${next.title}` : ""}.\n`);
+            write(`Resumed saved session${next.title ? ` · ${next.title}` : ""}.\n`);
           }
         } catch (error: unknown) { write(`Could not resume session: ${error instanceof Error ? error.message : String(error)}\n`); }
         showPrompt();

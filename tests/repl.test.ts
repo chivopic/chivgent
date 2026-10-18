@@ -4,6 +4,7 @@ import { createJsonEventWriter } from "../src/render.js";
 import type { SlashCommandOutcome } from "../src/repl.js";
 import { handleSlashCommand, runRepl } from "../src/repl.js";
 import { AgentSession } from "../src/session.js";
+import { PermissionPolicy } from "../src/permissions.js";
 import type { Tool } from "../src/tools/tool.js";
 import type { Workspace } from "../src/workspace.js";
 import {
@@ -105,6 +106,18 @@ describe("REPL commands", () => {
     expect(output).toContain("/resume");
     expect(output).toContain("/rename");
     expect(output).toContain("/status");
+  });
+
+  it("shows the permission shortcut only for a permission-enabled inline composer", () => {
+    let inlineHelp = "";
+    handleSlashCommand("/help", {
+      session: createSession(), write: text => { inlineHelp += text; },
+      inlineComposer: true, permissionPolicy: new PermissionPolicy("ask-first"),
+    });
+    let simpleHelp = "";
+    handleSlashCommand("/help", { session: createSession(), write: text => { simpleHelp += text; } });
+    expect(inlineHelp).toContain("Shift+Tab cycles Plan → Auto mode → Ask for me");
+    expect(simpleHelp).not.toContain("Shift+Tab cycles");
   });
 
   it("routes plan toggles and validates rename input without sending slash text to the model", () => {

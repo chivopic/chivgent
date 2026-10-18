@@ -56,6 +56,92 @@ describe("default TUI inline slash completion", () => {
     ctl.receive(Buffer.from("/do-not-run\r"));
     expect(submitted).toEqual(["/do-not-run"]);
   });
+
+  it("cycles on split Shift+Tab without changing the draft or cursor", async () => {
+    const written: string[] = [];
+    let switches = 0;
+    const ctl = new EditorController({ write: part => written.push(part), columns: 72, rows: 18 }, () => {}, {
+      submitOnEnter: true,
+      footerStatus: () => "└─ Ask for me · Shift+Tab Plan",
+      onShiftTab: () => { switches += 1; },
+    });
+    ctl.begin();
+    ctl.receive(Buffer.from("draft"));
+    ctl.receive(Buffer.from("\u001b[D"));
+    ctl.receive(Buffer.from("\u001b["));
+    ctl.receive(Buffer.from("Z"));
+    await Promise.resolve();
+    expect(switches).toBe(1);
+    expect(ctl.document.text).toBe("draft");
+    expect(ctl.document.cursor).toBe(4);
+    expect(written.join("")).toContain("Ask for me · Shift+Tab Plan");
+  });
+
+  it("does not cycle inside bracketed paste, history search, or the explicit modal editor", async () => {
+    let switches = 0;
+    const inline = new EditorController({ write: () => {}, columns: 72, rows: 18 }, () => {}, {
+      submitOnEnter: true,
+      onShiftTab: () => { switches += 1; },
+    });
+    inline.begin();
+    inline.receive(Buffer.from("\u001b[200~\u001b[Zpaste\u001b[201~"));
+    await new Promise(resolve => setImmediate(resolve));
+    expect(switches).toBe(0);
+    expect(inline.document.text).toContain("paste");
+    inline.receive(Buffer.from("\u0012\u001b[Z"));
+    await new Promise(resolve => setImmediate(resolve));
+    expect(switches).toBe(0);
+    inline.cancel();
+
+    const modal = new EditorController({ write: () => {}, columns: 72, rows: 18 }, () => {}, {
+      onShiftTab: () => { switches += 1; },
+    });
+    modal.begin();
+    modal.receive(Buffer.from("\u001b[Z"));
+    await new Promise(resolve => setImmediate(resolve));
+    expect(switches).toBe(0);
+    modal.cancel();
+  });
+
+  it("buffers typing and Enter until an asynchronous mode change finishes", async () => {
+    let release!: () => void;
+    const switching = new Promise<void>(resolve => { release = resolve; });
+    const submitted: (string | undefined)[] = [];
+    const written: string[] = [];
+    let writtenAtSubmit = -1;
+    const ctl = new EditorController({ write: part => written.push(part), columns: 72, rows: 18 }, value => {
+      submitted.push(value);
+      writtenAtSubmit = written.join("").length;
+    }, {
+      submitOnEnter: true,
+      onShiftTab: () => switching,
+    });
+    ctl.begin();
+    ctl.receive(Buffer.from("draft\u001b[Z"));
+    ctl.receive(Buffer.from("+more\r"));
+    expect(submitted).toEqual([]);
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    expect(submitted).toEqual(["draft+more"]);
+    expect(written.join("")).toHaveLength(writtenAtSubmit);
+  });
+
+  it("does not release the editor on Ctrl+C until the mode change settles", async () => {
+    let release!: () => void;
+    const switching = new Promise<void>(resolve => { release = resolve; });
+    const submitted: (string | undefined)[] = [];
+    const ctl = new EditorController({ write: () => {}, columns: 72, rows: 18 }, value => submitted.push(value), {
+      submitOnEnter: true,
+      onShiftTab: () => switching,
+    });
+    ctl.begin();
+    ctl.receive(Buffer.from("draft\u001b[Z"));
+    ctl.receive(Buffer.from("\u0003"));
+    expect(submitted).toEqual([]);
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    expect(submitted).toEqual([undefined]);
+  });
 });
 
 describe("mouse caret and selected text", () => {
@@ -152,5 +238,16 @@ describe("mouse caret and selected text", () => {
     const frame = editorFrame(doc, 30, 9, true, ["gitdiff", "gitstatus"], 1);
     expect(frame.lines.length).toBeLessThanOrEqual(9);
     expect(frame.lines.join("\n")).toContain("› /gitstatus");
+  });
+
+  it("keeps the inline prompt quiet while the explicit editor keeps its instructions", () => {
+    const doc = new EditorDocument();
+    doc.insert("draft");
+    const inline = editorFrame(doc, 40, 12, true, [], 0, "Ask for me · Shift+Tab Plan · /help");
+    expect(inline.lines.join("\n")).toContain("› draft");
+    expect(inline.lines.join("\n")).toContain("Ask for me · Shift+Tab Plan · /help");
+    expect(inline.lines.join("\n")).not.toContain("Enter send");
+    const modal = editorFrame(doc, 40, 12, false);
+    expect(modal.lines.join("\n")).toContain("Ctrl+S send · Esc cancel · Enter ne…");
   });
 });

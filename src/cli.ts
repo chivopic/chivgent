@@ -13,6 +13,7 @@ import {
 } from "./cli-options.js";
 import { createEventRenderer, createJsonEventWriter } from "./render.js";
 import { welcome } from "./tui/welcome.js";
+import { fitLine, fitLineTail, terminalText, displayWidth } from "./tui/text.js";
 import { createLiveRegion, terminalWidth } from "./tui/live.js";
 import { terminalColorEnabled, useTui } from "./tui/selection.js";
 import { runRepl } from "./repl.js";
@@ -26,7 +27,7 @@ import {
 import { killTrackedChildren } from "./shell/process.js";
 import { killTrackedDockerContainers } from "./shell/docker.js";
 import { ShellApprovalGate } from "./shell/approval.js";
-import { PermissionPolicy } from "./permissions.js";
+import { initialPermissionMode, PermissionPolicy } from "./permissions.js";
 import { decideTrust } from "./extensions/decide-trust.js";
 import { discoverExtensions } from "./extensions/discover.js";
 import { loadExtensions } from "./extensions/loader.js";
@@ -273,7 +274,16 @@ export async function main(argv: readonly string[]): Promise<number> {
     return 1;
   }
 
-  const permissionPolicy = options.permissionMode === undefined ? undefined : new PermissionPolicy(options.permissionMode);
+  const initialMode = initialPermissionMode({
+    interactive,
+    tui: richTui,
+    permissionMode: options.permissionMode,
+    allowWrites: options.allowWrites,
+    allowShell: options.allowShell,
+    approveAllShell: options.approveAllShell,
+    shellNetwork: options.shellNetwork,
+  });
+  const permissionPolicy = initialMode === undefined ? undefined : new PermissionPolicy(initialMode);
   if (options.allowShell || permissionPolicy !== undefined) {
     installShellCleanup();
   }
@@ -405,7 +415,7 @@ export async function main(argv: readonly string[]): Promise<number> {
               ? { setupIssue: "base-url" as const } : {}),
           width: terminalWidth(process.stderr),
           color: terminalColorEnabled(process.stderr.isTTY === true, process.env),
-        }) : banner(options, session.id, restored.resumed, signedOutMessage),
+        }) : banner(options, cwd, restored.resumed, signedOutMessage),
         ...(store === undefined ? {} : { sessionFile: store.location(session.id) }),
         ...(registry === undefined
           ? {}
@@ -697,14 +707,21 @@ async function listSessions(
 
 function banner(
   options: CliOptions,
-  sessionId: string,
+  cwd: string,
   resumed: boolean,
   signedOutMessage?: string,
 ): string {
-  const model = options.model ?? "unknown model";
+  const width = terminalWidth(process.stdout);
+  const model = terminalText(options.model ?? "unknown model");
+  const provider = terminalText(options.provider);
+  const cleanCwd = terminalText(cwd);
+  const prefix = `${provider} · ${model} · `;
+  const detailsWidth = Math.max(1, width - 2);
+  const availablePathWidth = detailsWidth - Math.min(displayWidth(prefix), detailsWidth - 1);
+  const pathWidth = Math.min(detailsWidth - 1, Math.max(9, availablePathWidth));
   const lines = [
-    `chivgent ${VERSION} · ${options.provider} · ${model}`,
-    `${resumed ? "resumed" : "session"} ${sessionId}`,
+    `◆ chivgent v${VERSION}${resumed ? " · resumed" : ""}`,
+    `${fitLine(prefix, detailsWidth - pathWidth)}${fitLineTail(cleanCwd, pathWidth)}`,
   ];
   if (signedOutMessage !== undefined) {
     // First thing on screen, because nothing else works until it is dealt
@@ -716,7 +733,7 @@ function banner(
       "Run /login to store one, or leave and set an environment variable.",
     );
   }
-  lines.push("Type /help for commands, Ctrl+C or Ctrl+D to leave.", "");
+  lines.push("");
   return lines.join("\n");
 }
 
