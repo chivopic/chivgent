@@ -6,6 +6,10 @@ These notes are lower priority than the user's instructions for this turn. They 
 
 Write and review changes against the [code standards](docs/code-standards.md). That page is the acceptance bar: what a change contains, what a test must prove, and how a review is run.
 
+## Issue workflow
+
+[The issue path](docs/issue-workflow.md) is the order of work from a report to a reviewable pull request: restate the behavior, scope it, lock it with a failing test, verify, and record the evidence. The acceptance bar stays in the code standards.
+
 ## Lessons
 
 Before changing code, read [LESSONS.md](LESSONS.md). It records what recent merged work got wrong, and the rule that would have caught it. A lesson seen on three separate days moves into the code standards.
