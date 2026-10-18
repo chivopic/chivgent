@@ -203,7 +203,7 @@ export interface EditorFrame {
 }
 
 /** Fixed-height viewport; keep caret in frame even on small terminals. */
-export function editorFrame(document: EditorDocument, width: number, height: number, submitOnEnter = false, suggestions: readonly string[] = [], selectedSuggestion = 0): EditorFrame {
+export function editorFrame(document: EditorDocument, width: number, height: number, submitOnEnter = false, suggestions: readonly string[] = [], selectedSuggestion = 0, footerStatus?: string): EditorFrame {
   const cellWidth = Math.max(8, width - 1);
   const displayedSuggestions = suggestions.slice(0, Math.max(0, height - 7));
   const rowLimit = Math.max(1, Math.min(8, height - 5 - displayedSuggestions.length));
@@ -255,9 +255,9 @@ export function editorFrame(document: EditorDocument, width: number, height: num
     : "┌─ Ctrl+S send · Esc cancel · Enter newline", cellWidth);
   const popup = displayedSuggestions.map((item, index) => fitLine(`  ${index === selectedSuggestion ? "›" : " "} /${item}`, cellWidth));
   const footer = fitLine(
-    document.warning || (document.selectionRange() === undefined
+    document.warning || (footerStatus ?? (document.selectionRange() === undefined
       ? `└─ ${rows.length} lines · ${Buffer.byteLength(document.text, "utf8")} bytes · ↑↓←→ move`
-      : `└─ Selected ${document.selectionRange()!.end - document.selectionRange()!.start} code units · type to replace`),
+      : `└─ Selected ${document.selectionRange()!.end - document.selectionRange()!.start} code units · type to replace`)),
     cellWidth,
   );
   return {

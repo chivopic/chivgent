@@ -777,6 +777,26 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       history: recent,
       slashCommands: commands.map(item => ({ value: item.value, label: item.label })),
       mouse: isDefault && options.tui === true && (output as typeof output & { isTTY?: boolean }).isTTY === true,
+      ...(isDefault && options.tui && options.permissionPolicy !== undefined ? {
+        footerStatus: () => {
+          if (activeSession.planMode) return "└─ Plan · Shift+Tab Auto mode";
+          if (options.permissionPolicy?.mode === "workspace") return "└─ Auto mode · Shift+Tab Ask for me";
+          if (options.permissionPolicy?.mode === "unrestricted") return "└─ Unrestricted · Shift+Tab Plan";
+          return "└─ Ask for me · Shift+Tab Plan";
+        },
+        onShiftTab: async () => {
+          const policy = options.permissionPolicy;
+          if (policy === undefined) return;
+          if (activeSession.planMode) {
+            await activeSession.setPlanMode(false);
+            policy.setMode("workspace");
+          } else if (policy.mode === "workspace") {
+            policy.setMode("ask-first");
+          } else {
+            await activeSession.setPlanMode(true);
+          }
+        },
+      } : {}),
     });
     const resized = (): void => { editor.resized(); };
     const closed = (): void => { editor.cancel(); };

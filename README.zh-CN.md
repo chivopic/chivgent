@@ -21,7 +21,7 @@
 
 chivgent 是跑在你打开的目录里的本地 agent。它要做的，是 [Claude Code](https://code.claude.com) 和 [Codex](https://github.com/openai/codex) 那一类事：读这个项目，改它，跑它，会话还能回来。模型是你的。一把 API key，或者 ChatGPT、xAI 订阅。
 
-这一类现在的默认是 auto mode。工作区内的读取、编辑，以及沙箱里的命令，直接进行。动作离开工作区，或者命令要用宿主机，就停。这里这个策略叫 `workspace`。它不是另一个模型在逐条审查，也不是跳过所有边界。这一版还不是这样启动的。会话仍然只读打开。加上 `--permission-mode workspace`，或用原来的开关。
+这一类现在的默认是 auto mode。工作区内的读取、编辑，以及沙箱里的命令，直接进行。动作离开工作区，或者命令要用宿主机，就停。这里这个策略叫 `workspace`。它不是另一个模型在逐条审查，也不是跳过所有边界。普通终端会话仍以只读方式打开。没有旧权限开关的交互式 `--tui` 会话默认使用 Ask for me：文件修改和命令都要确认；在空闲输入框按 Shift+Tab 可在 Plan、Auto mode 和 Ask for me 之间循环。
 
 ## 快速开始
 
@@ -72,10 +72,10 @@ chivgent --continue                                  # 这个目录里的上一�
 
 | 模式 | 能直接进行的 | 这一版 |
 | --- | --- | --- |
-| `workspace` | 工作区内的修改和沙箱命令。网络关着。命令要用宿主机时，只为这一条问一次。 | 我们要的 auto 式默认。用 `--permission-mode workspace` 打开。 |
-| `ask-first` | 读取。每次改文件、每条命令都要确认。没有答复就没有动作。 | `--permission-mode ask-first` |
+| `workspace` | 工作区内的修改和沙箱命令。网络关着。命令要用宿主机时，只为这一条问一次。 | TUI 循环中的 Auto mode，或 `--permission-mode workspace`。 |
+| `ask-first` | 读取。每次改文件、每条命令都要确认。没有答复就没有动作。 | 普通 `--tui` 启动，或 `--permission-mode ask-first`。 |
 | `unrestricted` | shell 命令带着宽宿主机文件访问和网络运行，仍在操作系统沙箱里。文件工具不出工作区。 | 显式选择。 |
-| 无 | 读取。写入和 shell 等开关。每条命令要确认。 | 现在的 `chivgent`。 |
+| 无 | 读取。写入和 shell 等开关。每条命令要确认。 | 普通终端和 headless 启动。普通 `--tui` 使用 Ask for me。 |
 
 `--permission-mode` 在这个进程里代替那些开关。不能和 `--allow-writes`、`--allow-shell`、`--approve-all-shell`、`--shell-network` 一起用，也不能和 `--serve`、`--connect` 一起用。`/permissions` 查看或更改模式，但只有启动时选了模式的会话才行。这个选择不写进会话记录。恢复会话时用的是启动时选的模式，不是上次更宽的那个。
 
@@ -125,12 +125,12 @@ chivgent --continue                                  # 这个目录里的上一�
 
 `/compact` 压缩较早的轮次，完整记录仍留着，方便恢复。`/status` 显示模型、权限和 token 用量。其余的，`/help`。
 
-`--tui` 加上实时状态区和多行编辑器。[TUI](docs/tui-v5.md)。长会话会压缩较早的轮次，并留下读过和改过的文件列表，从而留在上下文窗口里。[上下文](docs/architecture.md#context-management)。
+`--tui` 加上实时状态区和多行编辑器。没有旧权限开关时，它会为当前交互进程选择 Ask for me。空闲输入框中的 Shift+Tab 可循环切换 Plan → Auto mode → Ask for me，页脚会显示当前模式。显式 `--permission-mode` 仍然有效，旧权限开关继续按原有方式工作。[TUI](docs/tui-v5.md)。长会话会压缩较早的轮次，并留下读过和改过的文件列表，从而留在上下文窗口里。[上下文](docs/architecture.md#context-management)。
 
 ## 边界
 
 - 工作区以外的路径会被拒绝，包括 `..` 和符号链接逃逸。常见凭据路径会被拒绝。工具输出有上限。
-- 没有选模式时，`--allow-shell` 在每条命令前确认。没有终端的运行，以及 `--serve` 起来的会话，除非同时加上 `--approve-all-shell`，否则拒绝命令。沙箱起不来，命令不会改到无沙箱运行。
+- 没有选模式时，普通终端和 headless 启动仍为只读；`--allow-shell` 在每条命令前确认。没有旧权限开关的交互式 `--tui` 会话会为当前进程选择 `ask-first`。`--serve` 会话除非同时加上 `--approve-all-shell`，否则拒绝命令。沙箱起不来，命令不会改到无沙箱运行。
 - `workspace` 自动执行工作区内的修改和沙箱命令，命令要访问宿主机文件和网络时问一次。`unrestricted` 是显式选择的宽宿主机访问和网络。这些都不随会话保存。[Shell 安全](docs/shell-sandbox.md)。
 - macOS 沙箱仍然能读当前用户能读的文件。它限制的是写入和网络，不是机密隔离。
 - 还没有按命令的允许列表，也没有原生 Windows shell。`workspace` 不是这一版的启动模式。

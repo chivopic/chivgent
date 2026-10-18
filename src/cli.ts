@@ -22,7 +22,7 @@ import {
 import { killTrackedChildren } from "./shell/process.js";
 import { killTrackedDockerContainers } from "./shell/docker.js";
 import { ShellApprovalGate } from "./shell/approval.js";
-import { PermissionPolicy } from "./permissions.js";
+import { initialPermissionMode, PermissionPolicy } from "./permissions.js";
 import { decideTrust } from "./extensions/decide-trust.js";
 import { discoverExtensions } from "./extensions/discover.js";
 import { loadExtensions } from "./extensions/loader.js";
@@ -253,7 +253,16 @@ async function main(argv: readonly string[]): Promise<number> {
     return 1;
   }
 
-  const permissionPolicy = options.permissionMode === undefined ? undefined : new PermissionPolicy(options.permissionMode);
+  const initialMode = initialPermissionMode({
+    interactive,
+    tui: options.tui,
+    permissionMode: options.permissionMode,
+    allowWrites: options.allowWrites,
+    allowShell: options.allowShell,
+    approveAllShell: options.approveAllShell,
+    shellNetwork: options.shellNetwork,
+  });
+  const permissionPolicy = initialMode === undefined ? undefined : new PermissionPolicy(initialMode);
   if (options.allowShell || permissionPolicy !== undefined) {
     installShellCleanup();
   }
