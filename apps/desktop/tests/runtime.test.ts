@@ -191,7 +191,7 @@ describe("desktop real runtime", () => {
         handoffs.push((args as unknown[])[4]);
         return { provider: "openai", model: String(args[2]), session: {
           messages: [{ role: "user" as const, content: "original user message" }],
-          compaction: checkpoint,
+          compactionCheckpoint: checkpoint,
           subscribe: () => () => {},
           prompt: async () => {},
         } };
