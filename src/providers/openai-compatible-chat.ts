@@ -47,6 +47,7 @@ export interface OpenAICompatibleChatClientOptions {
   readonly baseURL: string;
   readonly continuationTag?: string;
   readonly client?: OpenAI;
+  readonly fetch?: typeof fetch;
 }
 
 /**
@@ -64,6 +65,7 @@ export class OpenAICompatibleChatClient implements LLMClient {
       new OpenAI({
         apiKey: options.apiKey,
         baseURL: options.baseURL,
+        ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
       });
     this.continuationTag =
       options.continuationTag ?? "openai-compatible-chat";

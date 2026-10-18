@@ -7,6 +7,7 @@ export interface ProviderClientConfig {
   readonly apiKey: string;
   readonly model: string;
   readonly baseURL?: string;
+  readonly fetch?: typeof fetch;
 }
 
 export interface ProviderDefinition {
@@ -25,6 +26,7 @@ export interface ProviderDefinition {
   /** True when the Provider cannot be configured without an explicit base URL. */
   readonly requiresBaseURL: boolean;
   createClient(config: ProviderClientConfig): LLMClient;
+  createOAuthClient?(config: ProviderClientConfig): LLMClient;
 }
 
 /**
@@ -49,12 +51,13 @@ function compatibleProvider(definition: {
     defaultBaseURL: definition.defaultBaseURL,
     requiresModel: definition.defaultModel === undefined,
     requiresBaseURL: false,
-    createClient: ({ apiKey, model, baseURL }) =>
+    createClient: ({ apiKey, model, baseURL, fetch }) =>
       new OpenAICompatibleChatClient({
         apiKey,
         model,
         baseURL: baseURL ?? definition.defaultBaseURL,
         continuationTag: `${definition.id}-chat`,
+        ...(fetch === undefined ? {} : { fetch }),
       }),
   };
 }
@@ -69,6 +72,7 @@ export const BUILTIN_PROVIDERS: readonly ProviderDefinition[] = [
     requiresModel: false,
     requiresBaseURL: false,
     createClient: ({ apiKey, model }) => new OpenAIClient({ apiKey, model }),
+    createOAuthClient: ({ apiKey, model }) => new OpenAIClient({ apiKey, model, oauth: true }),
   },
   {
     id: "deepseek",

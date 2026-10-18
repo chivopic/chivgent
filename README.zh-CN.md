@@ -184,7 +184,9 @@ Plan Mode（`/plan`、`/plan on`、`/plan off`）会随会话保存，执行层�
 TUI 输入 `/` 会在当前输入行下方打开命令菜单；
 输入 `/provider` 会打开供应商菜单，可用上下键选择并按 Enter 切换。
 选中没有 Key 的供应商后会直接进入隐藏的 Key 输入；已有 Key 时直接可用。
-`/login` 保留用于更换 Key。
+`/login` 保留用于更换 Key；也可使用 `/login oauth openai` 或 `/login oauth xai`
+连接 ChatGPT 方案或 xAI 订阅。OAuth 凭据与 API Key 分开保存；普通启动仍优先使用显式 Key 和环境变量，
+在会话中明确执行 OAuth 登录后，本次会话会使用订阅凭据。详见[订阅 OAuth 登录说明](docs/subscription-oauth.md)。
 运行中按 Ctrl+C 中断当前回答，不会退出会话；空闲时按 Ctrl+C 则退出（退出码 130）。
 Ctrl+D 在空行时也可离开。当前为单行输入，一个输入批次只提交首行，
 后续内容被丢弃；请等提示符重新出现后再输入下一条问题。

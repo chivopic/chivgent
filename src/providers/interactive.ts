@@ -1,11 +1,14 @@
 import type { CliOptions } from "../cli-options.js";
+import path from "node:path";
 import { CredentialResolver } from "../auth/credentials.js";
 import { EnvCredentialSource } from "../auth/env-credentials.js";
 import { defaultAuthFile, FileCredentialSource, writeApiKey } from "../auth/file-credentials.js";
 import { RuntimeCredentialSource } from "../auth/runtime-credentials.js";
+import { removeOAuthCredential, signInOpenAI, signInXAI, revokeOAuthCredential, readOAuthCredentials } from "../auth/oauth.js";
 import type { SignIn, ProviderControl, ProviderSelection } from "../repl.js";
 import { createConfiguredClient } from "./client.js";
 import { DeferredLLMClient } from "./deferred-client.js";
+import { OAuthRefreshingLLMClient } from "./oauth-client.js";
 import { defaultProviderRegistry, type ProviderRegistry } from "./registry.js";
 
 interface Choice {
@@ -28,6 +31,7 @@ export class InteractiveProvider implements SignIn, ProviderControl {
   private active: Choice;
   private readonly choices = new Map<string, Choice>();
   private ignoreStartupKey = false;
+  private readonly oauthModes = new Set<"openai" | "xai">();
 
   constructor(
     private readonly options: CliOptions,
@@ -47,8 +51,62 @@ export class InteractiveProvider implements SignIn, ProviderControl {
   ready(): boolean { return this.llm.ready; }
   providerIds(): readonly string[] { return this.registry.ids(); }
   async needsApiKey(): Promise<boolean> {
-    return (await this.credentialResolver(this.active.provider).resolve(this.registry.get(this.active.provider))) === undefined;
+    if ((await this.credentialResolver(this.active.provider).resolve(this.registry.get(this.active.provider))) !== undefined) return false;
+    if ((this.active.provider === "openai" || this.active.provider === "xai") && this.active.model !== undefined) {
+      const saved = (await readOAuthCredentials(this.oauthFile)).find((item) => item.provider === this.active.provider);
+      if (saved && (this.active.provider !== "xai" || this.active.baseURL === undefined || this.active.baseURL === "https://api.x.ai/v1")) return false;
+    }
+    return true;
   }
+
+  async oauth(provider: "openai" | "xai", signal?: AbortSignal): Promise<string | undefined> {
+    if (this.active.provider !== provider) return `Select ${provider} with /provider ${provider} before signing in.\n`;
+    if (this.active.model === undefined) return `Set a model first with /model MODEL before signing in to ${provider}.\n`;
+    if (provider === "xai" && this.active.baseURL !== undefined && this.active.baseURL !== "https://api.x.ai/v1") {
+      return "xAI subscription OAuth cannot be used with a custom endpoint.\n";
+    }
+    try {
+      if (provider === "openai") await signInOpenAI({ appName: "Chivgent", file: this.oauthFile, signal });
+      else await signInXAI({ file: this.oauthFile, write: (text) => process.stderr.write(text), signal });
+      let model = this.active.model;
+      if (provider === "openai") {
+        const credential = (await readOAuthCredentials(this.oauthFile)).find((item) => item.provider === provider);
+        if (!credential) return "OAuth credential was not saved. Sign in again.\n";
+        const response = await fetch("https://api.openai.com/v1/models", { headers: { authorization: `Bearer ${credential.accessToken}` }, redirect: "error", signal: AbortSignal.timeout(15_000) });
+        if (!response.ok) throw new Error(`Could not load ChatGPT plan models (${response.status}).`);
+        const body = await response.json() as { models?: Array<{ slug?: string; visibility?: string }> };
+        const available = body.models?.filter((item) => item.visibility === "list" && typeof item.slug === "string").map((item) => item.slug as string) ?? [];
+        if (!available.length) throw new Error("The signed-in ChatGPT account returned no available models.");
+        if (!available.includes(model ?? "")) model = available[0]!;
+        this.active = { ...this.active, model };
+        this.choices.set(provider, this.active);
+      }
+      this.oauthModes.add(provider);
+      this.llm.set(new OAuthRefreshingLLMClient(provider, model ?? "", this.oauthFile));
+      return undefined;
+    } catch (error: unknown) {
+      return `${error instanceof Error ? error.message : "OAuth sign-in failed."}\n`;
+    }
+  }
+
+  async signOut(): Promise<string | undefined> {
+    const provider = this.active.provider;
+    if (provider !== "openai" && provider !== "xai") return `No OAuth subscription is active for ${provider}.`;
+    try {
+      const saved = (await readOAuthCredentials(this.oauthFile)).find((item) => item.provider === provider);
+      const revoked = saved === undefined ? true : await revokeOAuthCredential(saved);
+      await removeOAuthCredential(provider, this.oauthFile);
+      this.oauthModes.delete(provider);
+      const replacement = await createConfiguredClient(this.clientOptions(this.active), this.registry, this.credentialResolver(provider), this.oauthFile);
+      if (typeof replacement !== "string") this.llm.set(replacement);
+      else this.llm.clear(replacement);
+      return revoked ? `Signed out of ${provider} subscription.` : `Signed out locally; remote revocation was not confirmed. Disconnect this app in the provider's account settings.`;
+    } catch (error: unknown) {
+      return error instanceof Error ? error.message : "Could not sign out.";
+    }
+  }
+
+  private get oauthFile(): string { return path.join(path.dirname(this.authFile), "oauth.json"); }
   unavailableMessage(): string {
     const definition = this.registry.get(this.active.provider);
     const missing = [this.active.model === undefined ? "/model MODEL" : undefined,
@@ -110,7 +168,9 @@ export class InteractiveProvider implements SignIn, ProviderControl {
       } catch (error: unknown) {
         return error instanceof Error ? error.message : String(error);
       }
+      if (this.active.provider === "openai" || this.active.provider === "xai") this.oauthModes.delete(this.active.provider);
       if (this.active.provider === this.options.provider) this.ignoreStartupKey = true;
+      this.llm.clear(`Configure ${this.active.provider} before using its API key.`);
       return undefined;
     }
     const nextOptions = this.clientOptions(this.active, apiKey);
@@ -128,6 +188,7 @@ export class InteractiveProvider implements SignIn, ProviderControl {
     } catch (error: unknown) {
       return error instanceof Error ? error.message : String(error);
     }
+    if (this.active.provider === "openai" || this.active.provider === "xai") this.oauthModes.delete(this.active.provider);
     if (this.active.provider === this.options.provider) this.ignoreStartupKey = true;
     this.llm.set(client);
     return undefined;
@@ -149,9 +210,18 @@ export class InteractiveProvider implements SignIn, ProviderControl {
       this.llm.clear(`Configure ${id} with ${missing}.`);
       return { ok: true, message: `Selected ${id}. Set ${missing} to continue.\n` };
     }
+    if ((id === "openai" || id === "xai") && this.oauthModes.has(id)) {
+      if (id === "xai" && baseURL !== undefined && baseURL !== "https://api.x.ai/v1") {
+        return { ok: false, message: "xAI subscription OAuth cannot be used with a custom endpoint.\n" };
+      }
+      this.active = choice;
+      this.choices.set(id, choice);
+      this.llm.set(new OAuthRefreshingLLMClient(id, model, this.oauthFile));
+      return { ok: true, message: `Selected ${id} subscription / ${model}.\n` };
+    }
     let client;
     try {
-      client = await createConfiguredClient(this.clientOptions(choice), this.registry, this.credentialResolver(id));
+      client = await createConfiguredClient(this.clientOptions(choice), this.registry, this.credentialResolver(id), this.oauthFile);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       return { ok: false, message: `Could not select ${id}: ${message}\n` };

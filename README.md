@@ -75,6 +75,11 @@ Costs: chivgent calls the Provider you choose with your key, so you pay that
 Provider's normal token prices. It reports token counts per turn and per
 session (`/session`) but never converts them to money.
 
+OpenAI ChatGPT plan and xAI subscription OAuth sign-in are also available in
+interactive sessions with `/login oauth openai` or `/login oauth xai`. See the
+[subscription sign-in guide](docs/subscription-oauth.md) for credential handling,
+provider behavior, and protocol sources.
+
 ## Providers
 
 | Provider | `--provider` | API key variable | Default model |

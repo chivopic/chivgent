@@ -1,7 +1,7 @@
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LLMAbortError, type LLMRequest } from "../src/llm.js";
-import { runRepl } from "../src/repl.js";
+import { BUILT_IN_COMMANDS, runRepl } from "../src/repl.js";
 import { AgentSession } from "../src/session.js";
 import { LocalWorkspace } from "../src/workspace.js";
 import { createLiveRegion } from "../src/tui/live.js";
@@ -149,7 +149,7 @@ describe("TUI REPL", () => {
       expect(screen).toContain("/model");
       // /inspect is below the menu's initial 16-row viewport. Arrow through
       // the suggestions to prove it remains reachable without choosing it.
-      input.write("\x1b[B".repeat(21));
+      input.write("\x1b[B".repeat(BUILT_IN_COMMANDS.length));
       await vi.waitFor(() => expect(screen).toContain("/inspect"));
       input.write("\x1b");
       expect(screen).toContain("/inspect");
