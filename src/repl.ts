@@ -2,6 +2,7 @@ import { TuiInput } from "./tui/input.js";
 import { EditorController } from "./tui/editor-input.js";
 import { readLiveGitDiff, type GitDiffMode } from "./tui/git-diff.js";
 import { terminalText } from "./tui/text.js";
+import { terminalColorEnabled } from "./tui/selection.js";
 import { PatchReviewController } from "./tui/review.js";
 import { InputMenu, type MenuItem } from "./tui/menu.js";
 import { createInterface, emitKeypressEvents, type Interface } from "node:readline";
@@ -788,6 +789,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       history: recent,
       slashCommands: commands.map(item => ({ value: item.value, label: item.label })),
       mouse: isDefault && options.tui === true && (output as typeof output & { isTTY?: boolean }).isTTY === true,
+      color: isDefault && terminalColorEnabled((output as { isTTY?: boolean }).isTTY === true, process.env),
       ...(isDefault && options.tui && options.permissionPolicy !== undefined ? {
         footerStatus: () => {
           if (activeSession.planMode) return "Plan · Shift+Tab Auto mode · /help";

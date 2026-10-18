@@ -199,14 +199,33 @@ export interface EditorFrame {
   readonly cursorRow: number;
   readonly cursorColumn: number;
   /** Document row and horizontal viewport mapping for each visible input row. */
-  readonly inputRows?: readonly { readonly documentRow: number; readonly scrollCells: number }[];
+  readonly inputRows?: readonly {
+    readonly documentRow: number;
+    readonly scrollCells: number;
+    /** Display cells before the editable text, so a click can skip the box gutter. */
+    readonly gutterCells: number;
+  }[];
   /** Command index and frame row for each actually visible completion row. */
   readonly suggestionRows?: readonly { readonly commandIndex: number; readonly row: number }[];
 }
 
+const PLACEHOLDER = "Ask chivgent to do anything";
+
+function boxRule(left: string, right: string, width: number): string {
+  return `${left}${"─".repeat(Math.max(0, width - displayWidth(left) - displayWidth(right)))}${right}`;
+}
+
+function closeBox(left: string, inner: string, innerWidth: number, right: string): string {
+  return `${left}${inner}${" ".repeat(Math.max(0, innerWidth - displayWidth(inner)))}${right}`;
+}
+
 /** Fixed-height viewport; keep caret in frame even on small terminals. */
-export function editorFrame(document: EditorDocument, width: number, height: number, submitOnEnter = false, suggestions: readonly { readonly value: string; readonly label: string }[] = [], selectedSuggestion = 0, footerStatus?: string): EditorFrame {
-  const cellWidth = Math.max(8, width - 1);
+export function editorFrame(document: EditorDocument, width: number, height: number, submitOnEnter = false, suggestions: readonly { readonly value: string; readonly label: string }[] = [], selectedSuggestion = 0, footerStatus?: string, color = false): EditorFrame {
+  const spare = Math.max(1, width - 1);
+  const cellWidth = Math.max(8, spare);
+  const boxed = submitOnEnter;
+  const boxWidth = Math.min(cellWidth, spare);
+  const extra = boxed ? 1 : 0;
   const suggestionLimit = Math.max(0, height - 7);
   const visibleSuggestionCount = Math.min(suggestions.length, suggestionLimit);
   const suggestionStart = Math.max(0, Math.min(
@@ -214,18 +233,24 @@ export function editorFrame(document: EditorDocument, width: number, height: num
     suggestions.length - visibleSuggestionCount,
   ));
   const displayedSuggestions = suggestions.slice(suggestionStart, suggestionStart + visibleSuggestionCount);
-  const rowLimit = Math.max(1, Math.min(8, height - 5 - displayedSuggestions.length));
+  const rowLimit = Math.max(1, Math.min(8, height - 5 - extra - displayedSuggestions.length));
   const rows = document.text.split("\n");
   const position = document.position;
   const first = Math.max(0, Math.min(position.row - rowLimit + 1, rows.length - rowLimit));
   const visible = rows.slice(first, first + rowLimit);
-  const inputWidth = Math.max(1, cellWidth - 3);
+  const left = boxed ? "│ " : "";
+  const right = boxed ? " │" : "";
+  const lineWidth = boxed ? boxWidth : cellWidth;
+  const innerWidth = Math.max(1, lineWidth - displayWidth(left) - displayWidth(right));
+  const inputWidth = boxed ? Math.max(1, innerWidth - 2) : Math.max(1, cellWidth - 3);
+  const showingPlaceholder = boxed && document.text.length === 0;
   const body = visible.map((line, index) => {
     const original = terminalText(line);
     const caret = index + first === position.row ? position.column : 0;
+    const placeholder = showingPlaceholder && index + first === 0;
     let display = original;
     let scrollCells = 0;
-    if (displayWidth(display) > inputWidth) {
+    if (!placeholder && displayWidth(display) > inputWidth) {
       if (caret > inputWidth - 2) {
         const target = Math.max(0, caret - inputWidth + 3);
         const pieces = [...segmenter.segment(display)].map(seg => seg.segment);
@@ -240,51 +265,68 @@ export function editorFrame(document: EditorDocument, width: number, height: num
       }
       display = fitLine(display, inputWidth);
     }
-    return {
-      row: (() => {
-        const prefix = submitOnEnter
-          ? (index + first === position.row ? "› " : "  ")
-          : "│ ";
-        const baseline = fitLine(`${prefix}${display}`, cellWidth);
-        const selection = document.selectionRange();
-        if (selection === undefined || display !== original) return baseline;
+    const marker = submitOnEnter
+      ? (index + first === position.row ? "› " : "  ")
+      : "│ ";
+    const gutterCells = displayWidth(left) + displayWidth(marker);
+    const row = (() => {
+      if (placeholder) {
+        const ghost = fitLine(PLACEHOLDER, inputWidth);
+        const painted = color ? `\u001b[2m${ghost}\u001b[0m` : ghost;
+        return closeBox(left, `${marker}${painted}`, innerWidth, right);
+      }
+      const baseline = `${marker}${display}`;
+      const selection = document.selectionRange();
+      let inner = baseline;
+      if (selection !== undefined && display === original) {
         const rowIndex = first + index;
         const start = rows.slice(0, rowIndex).reduce((sum, row) => sum + row.length + 1, 0);
         const lo = Math.max(0, selection.start - start);
         const hi = Math.min(original.length, selection.end - start);
-        if (hi <= lo) return baseline;
-        // ANSI reverse video applies only after width clipping, so it does
-        // not affect terminal columns or permit untrusted escape injection.
-        return `${prefix}${original.slice(0, lo)}\u001b[7m${original.slice(lo, hi)}\u001b[0m${original.slice(hi)}`;
-      })(),
-      caret: Math.min(cellWidth - 1, 2 + Math.max(0, caret - scrollCells) + (scrollCells > 0 ? 1 : 0)),
+        if (hi > lo) {
+          // ANSI reverse video applies only after width clipping, so it does
+          // not affect terminal columns or permit untrusted escape injection.
+          inner = `${marker}${original.slice(0, lo)}\u001b[7m${original.slice(lo, hi)}\u001b[0m${original.slice(hi)}`;
+        }
+      }
+      return boxed ? closeBox(left, inner, innerWidth, right) : inner.includes("\u001b") ? inner : fitLine(inner, cellWidth);
+    })();
+    return {
+      row,
+      caret: Math.min(lineWidth - 1, gutterCells + Math.max(0, caret - scrollCells) + (scrollCells > 0 ? 1 : 0)),
       scrollCells,
+      gutterCells,
     };
   });
-  const header = fitLine(submitOnEnter
-    ? "─".repeat(cellWidth)
-    : "┌─ Ctrl+S send · Esc cancel · Enter newline", cellWidth);
+  const header = boxed
+    ? boxRule("┌", "┐", lineWidth)
+    : fitLine("┌─ Ctrl+S send · Esc cancel · Enter newline", cellWidth);
+  const bottom = boxed ? boxRule("└", "┘", lineWidth) : undefined;
   const popup = displayedSuggestions.map((item, index) => fitLine(
     `  ${suggestionStart + index === selectedSuggestion ? "›" : " "} ${item.label || `/${item.value}`}`,
-    cellWidth,
+    lineWidth,
   ));
   const selection = document.selectionRange();
   const footerText = document.warning || (suggestions.length > 0
-    ? "└─ ↑↓ choose · Tab/Enter complete · Esc close"
+    ? "↑↓ choose · Tab/Enter complete · Esc close"
     : selection !== undefined
       ? `${submitOnEnter ? "" : "└─ "}Selected ${selection.end - selection.start} code units · type to replace`
       : footerStatus ?? (submitOnEnter
         ? "/help for shortcuts"
         : `└─ ${rows.length} lines · ${Buffer.byteLength(document.text, "utf8")} bytes · ↑↓←→ move`));
-  const footer = fitLine(footerText, cellWidth);
+  const footer = fitLine(footerText, lineWidth);
   return {
-    lines: [header, ...body.map(item => item.row), ...popup, footer],
+    lines: [header, ...body.map(item => item.row), ...(bottom === undefined ? [] : [bottom]), ...popup, footer],
     cursorRow: 1 + (position.row - first),
     cursorColumn: body[position.row - first]?.caret ?? 2,
-    inputRows: body.map((item, index) => ({ documentRow: first + index, scrollCells: item.scrollCells })),
+    inputRows: body.map((item, index) => ({
+      documentRow: first + index,
+      scrollCells: item.scrollCells,
+      gutterCells: item.gutterCells,
+    })),
     suggestionRows: displayedSuggestions.map((_, index) => ({
       commandIndex: suggestionStart + index,
-      row: 1 + body.length + index,
+      row: 1 + body.length + (bottom === undefined ? 0 : 1) + index,
     })),
   };
 }
