@@ -129,6 +129,8 @@ chivgent --continue                                  # 这个目录里的上一�
 
 本地交互终端默认使用 rich TUI。`--simple` 选择追加式界面；`--tui` 仍可显式请求 rich TUI，包括将 stdout 重定向时。管道输入或输出、JSON、单次提问、`--serve` 和 `--connect` 保持原有简单输出。`TERM=dumb` 自动选择简单界面；设置 `NO_COLOR` 时仍使用 rich TUI，但不输出颜色。[TUI](docs/tui.md)。长会话会压缩较早的轮次，并留下读过和改过的文件列表，从而留在上下文窗口里。[上下文](docs/architecture.md#context-management)。
 
+在内联编辑器中输入 `/` 可浏览已注册命令，继续输入可筛选命令。用 ↑/↓ 选择命令，再按 Tab 或 Enter 将其补全到草稿；之后按 Enter 提交。鼠标单击可补全可见命令，滚轮可浏览菜单。Esc 关闭菜单并保留草稿。完整输入的命令仍可直接按一次 Enter 执行。
+
 ## 边界
 
 - 工作区以外的路径会被拒绝，包括 `..` 和符号链接逃逸。常见凭据路径会被拒绝。工具输出有上限。

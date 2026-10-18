@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { EditorController } from "../src/tui/editor-input.js";
 import { EditorDocument, editorFrame } from "../src/tui/editor.js";
 import { slashSuggestions } from "../src/tui/slash.js";
+import { terminalHarness } from "./helpers/terminal.js";
 
 const cmds = [
   { value: "help", label: "/help" },
@@ -11,14 +12,14 @@ const cmds = [
 ];
 
 describe("default TUI inline slash completion", () => {
-  it("filters registered commands only, excludes prose and caps the result count", () => {
+  it("filters registered commands only, excludes prose, and keeps every match", () => {
     expect(slashSuggestions("/gi", 3, cmds).map(item => item.value)).toEqual(["gitdiff", "gitstatus"]);
     expect(slashSuggestions("read /gi", 8, cmds)).toEqual([]);
     expect(slashSuggestions("/gi extra", 3, cmds)).toEqual([]);
     expect(slashSuggestions("/gi", 1, cmds)).toEqual([]);
     expect(slashSuggestions("/gi", 3, Array.from({length:20}, (_,i) => ({
       value: `gi${i}`, label: "test",
-    })))).toHaveLength(5);
+    })))).toHaveLength(20);
   });
 
   function make() {
@@ -31,7 +32,7 @@ describe("default TUI inline slash completion", () => {
     return { ctl, written, submitted };
   }
 
-  it("Tab accepts a command and Enter dispatches the exact completed name", () => {
+  it("Tab accepts a command and the next Enter dispatches the exact completed name", () => {
     const {ctl,submitted,written} = make();
     ctl.receive(Buffer.from("/gi"));
     expect(written.join("")).toContain("/gitdiff");
@@ -39,9 +40,18 @@ describe("default TUI inline slash completion", () => {
     expect(submitted).toEqual(["/gitdiff"]);
   });
 
-  it("arrow keys select suggestions, but Escape dismisses rather than discards the draft", async () => {
+  it("keeps direct Enter dispatch for a command already typed in full", () => {
+    const { ctl, submitted } = make();
+    ctl.receive(Buffer.from("/help\r"));
+    expect(submitted).toEqual(["/help"]);
+  });
+
+  it("arrow keys select suggestions, while Enter only completes and Escape preserves the draft", async () => {
     const {ctl,submitted} = make();
-    ctl.receive(Buffer.from("/gi\u001b[B\t\r"));
+    ctl.receive(Buffer.from("/gi\u001b[B\r"));
+    expect(ctl.document.text).toBe("/gitstatus");
+    expect(submitted).toEqual([]);
+    ctl.receive(Buffer.from("\r"));
     expect(submitted).toEqual(["/gitstatus"]);
     const second = make();
     second.ctl.receive(Buffer.from("/re"));
@@ -55,6 +65,19 @@ describe("default TUI inline slash completion", () => {
     const {ctl,submitted} = make();
     ctl.receive(Buffer.from("/do-not-run\r"));
     expect(submitted).toEqual(["/do-not-run"]);
+  });
+
+  it("moves through all matches when the terminal can show a long menu", () => {
+    const many = Array.from({ length: 20 }, (_, index) => ({
+      value: `go${index}`, label: `/go${index} · command ${index}`,
+    }));
+    const ctl = new EditorController({ columns: 40, rows: 24, write: () => {} }, () => {}, {
+      submitOnEnter: true, slashCommands: many,
+    });
+    ctl.begin();
+    ctl.receive(Buffer.from("/go" + "\u001b[B".repeat(17) + "\t"));
+    expect(ctl.document.text).toBe("/go17");
+    ctl.cancel();
   });
 });
 
@@ -134,23 +157,111 @@ describe("mouse caret and selected text", () => {
     c.cancel();
   });
 
-  it("ignores mouse clicks on slash suggestion rows", () => {
+  it("clicking a visible slash suggestion completes it without submitting", () => {
+    const submitted: (string | undefined)[] = [];
+    const c = new EditorController({ columns: 30, rows: 10, write: () => {} }, value => submitted.push(value), {
+      submitOnEnter: true, mouse: true, slashCommands: cmds,
+    });
+    c.begin();
+    c.receive(Buffer.from("/gi"));
+    c.receive(Buffer.from("\u001b[12;4R"));
+    c.receive(Buffer.from("\u001b[<0;8;14M"));
+    expect(c.document.text).toBe("/gitstatus");
+    expect(submitted).toEqual([]);
+    c.cancel();
+  });
+
+  it("uses wheel browsing only over visible menu rows and ignores off-screen clicks", () => {
     const c = new EditorController({ columns: 30, rows: 10, write: () => {} }, () => {}, {
       submitOnEnter: true, mouse: true, slashCommands: cmds,
     });
     c.begin();
     c.receive(Buffer.from("/gi"));
     c.receive(Buffer.from("\u001b[12;4R"));
-    c.receive(Buffer.from("\u001b[<0;8;13M"));
-    expect(c.document.cursor).toBe(3);
+    c.receive(Buffer.from("\u001b[<0;8;15M")); // footer is outside the menu
+    expect(c.document.text).toBe("/gi");
+    c.receive(Buffer.from("\u001b[<65;8;13M")); // wheel down over first visible candidate
+    c.receive(Buffer.from("\u001b[<0;50;14M")); // outside terminal width
+    expect(c.document.text).toBe("/gi");
+    c.receive(Buffer.from("\t"));
+    expect(c.document.text).toBe("/gitstatus");
     c.cancel();
   });
 
   it("renders suggestions without exceeding terminal height", () => {
     const doc = new EditorDocument();
     doc.insert("/gi");
-    const frame = editorFrame(doc, 30, 9, true, ["gitdiff", "gitstatus"], 1);
+    const frame = editorFrame(doc, 30, 9, true, [
+      { value: "gitdiff", label: "/gitdiff · compare changes" },
+      { value: "gitstatus", label: "/gitstatus · show status" },
+    ], 1);
     expect(frame.lines.length).toBeLessThanOrEqual(9);
-    expect(frame.lines.join("\n")).toContain("› /gitstatus");
+    expect(frame.lines.join("\n")).toContain("› /gitstatus · show status");
+  });
+
+  it("keeps a selection beyond the first page visible in a short terminal", () => {
+    const doc = new EditorDocument();
+    doc.insert("/go");
+    const suggestions = Array.from({ length: 18 }, (_, index) => ({
+      value: `go${index}`, label: `/go${index} · command ${index}`,
+    }));
+    const frame = editorFrame(doc, 32, 10, true, suggestions, 15);
+    expect(frame.lines.length).toBeLessThanOrEqual(10);
+    expect(frame.lines.join("\n")).toContain("› /go15 · command 15");
+    expect(frame.suggestionRows?.map(item => item.commandIndex)).toEqual([13, 14, 15]);
+  });
+
+  it("does not redraw or invalidate DSR coordinates when the terminal reports position", () => {
+    const out: string[] = [];
+    const c = new EditorController({ columns: 30, rows: 10, write: part => out.push(part) }, () => {}, {
+      submitOnEnter: true, mouse: true, slashCommands: cmds,
+    });
+    c.begin();
+    c.receive(Buffer.from("/gi"));
+    const afterPaint = out.join("");
+    c.receive(Buffer.from("\u001b[12;"));
+    c.receive(Buffer.from("4R"));
+    expect(out.join("")).toBe(afterPaint);
+    c.receive(Buffer.from("\u001b[<0;8;14M"));
+    expect(c.document.text).toBe("/gitstatus");
+    c.cancel();
+  });
+
+  it("requires a fresh position report after resize before menu clicks", () => {
+    const c = new EditorController({ columns: 30, rows: 14, write: () => {} }, () => {}, {
+      submitOnEnter: true, mouse: true, slashCommands: cmds,
+    });
+    c.begin();
+    c.receive(Buffer.from("/gi\u001b[12;4R"));
+    c.resized();
+    c.receive(Buffer.from("\u001b[<0;8;14M")); // old DSR was invalidated
+    expect(c.document.text).toBe("/gi");
+    c.receive(Buffer.from("\u001b[12;4R"));
+    c.receive(Buffer.from("\u001b[<0;8;14M"));
+    expect(c.document.text).toBe("/gitstatus");
+    c.cancel();
+  });
+
+  it("redraws a long menu within the new screen height after resize", async () => {
+    const screen = terminalHarness(40, 24);
+    const many = Array.from({ length: 20 }, (_, index) => ({
+      value: `go${index}`, label: `/go${index} · command ${index}`,
+    }));
+    const c = new EditorController(screen.output, () => {}, { submitOnEnter: true, slashCommands: many });
+    try {
+      c.begin();
+      c.receive(Buffer.from("/go" + "\u001b[B".repeat(17)));
+      await screen.flush();
+      expect(screen.visible().join("\n")).toContain("/go17");
+      screen.resize(32, 10);
+      c.resized();
+      await screen.flush();
+      expect(screen.visible()).toHaveLength(10);
+      expect(screen.visible().join("\n")).toContain("/go17");
+      expect(screen.visible().join("\n")).toContain("↑↓ choose");
+    } finally {
+      c.cancel();
+      screen.dispose();
+    }
   });
 });

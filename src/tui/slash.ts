@@ -18,5 +18,5 @@ export function slashSuggestions(
   return commands.filter(command =>
     /^[a-z][a-z0-9_-]*$/i.test(command.value) &&
     command.value.toLowerCase().startsWith(typed),
-  ).slice(0, 5);
+  );
 }

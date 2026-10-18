@@ -20,6 +20,28 @@ function fixture(prompts: string[]) {
 }
 
 describe("interactive TUI editor", () => {
+  it("shows filtered command suggestions and requires a second Enter to dispatch", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const screen = terminalHarness(56, 14);
+    const prompts: string[] = [];
+    const session = fixture(prompts);
+    const run = runRepl({ session, ...screen, stderr: screen.output, tui: true, inlineComposer: true });
+    try {
+      await vi.waitFor(() => expect(screen.bytes()).toContain("Enter send"));
+      screen.input.write("/he");
+      await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("/help"));
+      screen.input.write("\r");
+      await screen.flush();
+      expect(prompts).toEqual([]);
+      expect(screen.visible().join("\n")).toContain("/help");
+      screen.input.write("\r");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("Commands"));
+      expect(prompts).toEqual([]);
+      screen.input.write("\u0004");
+      expect(await run).toBe(0);
+    } finally { screen.input.end(); await run; screen.dispose(); }
+  });
+
   it("edits earlier rows, submits with Ctrl+S, and restores readline input", async () => {
     vi.stubEnv("TERM", "xterm-256color");
     const screen = terminalHarness(56, 18);

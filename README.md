@@ -129,6 +129,8 @@ Run `chivgent` with no question for an interactive session. It is saved under `~
 
 Local interactive terminals use the rich TUI by default. `--simple` selects the append-only interface; `--tui` remains available to request the rich TUI explicitly, including when stdout is redirected. Piped input or output, JSON, one-shot runs, `--serve`, and `--connect` keep their existing simple output. `TERM=dumb` selects the simple interface; `NO_COLOR` keeps the rich TUI and disables color. [TUI](docs/tui.md). A long session stays within the context window by summarizing older turns and keeping the list of files read and changed. [Context](docs/architecture.md#context-management).
 
+In its inline editor, type `/` to browse registered commands or keep typing to filter them. Use ↑/↓ to choose a command, then Tab or Enter to fill it into the draft; submit it with Enter afterward. A mouse click fills a visible command, and the wheel browses the menu. Esc closes the menu and keeps the draft. Fully typed commands still run with one Enter.
+
 ## Boundaries
 
 - Paths outside the workspace are rejected, including `..` and symlink escapes. Common credential paths are denied. Tool output is capped.
