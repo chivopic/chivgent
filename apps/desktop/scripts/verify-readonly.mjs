@@ -189,8 +189,17 @@ try {
     providerRequests: requests.length }, null, 2));
 } finally {
   try {
-    progress("closing Electron instance");
-    await activeApp?.close();
+    progress("requesting the application's normal quit path");
+    // Playwright's close() can stall after all UI assertions have passed when
+    // Electron intercepts window lifecycle events. Exercise the real app
+    // before-quit / HostBridge shutdown path explicitly, then close transport.
+    if (activeApp !== undefined) {
+      await activeApp.evaluate(({ app }) => {
+        app.quit();
+      });
+      progress("waiting for Electron shutdown after app.quit");
+      await activeApp.close();
+    }
   } finally {
     progress("closing fixture HTTP server and deleting temporary project");
     server.closeAllConnections();
