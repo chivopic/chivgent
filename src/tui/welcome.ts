@@ -1,9 +1,9 @@
-import { displayWidth, fitLine, fitLineTail, terminalText } from "./text.js";
+import { fitLine, fitLineTail } from "./text.js";
 
 export interface WelcomeOptions {
   readonly version: string;
   readonly provider: string;
-  readonly model: string;
+  readonly model?: string;
   readonly cwd: string;
   readonly resumed: boolean;
   readonly signedOut: boolean;
@@ -16,9 +16,10 @@ const COLOR = "\u001b[1;36m";
 const RESET = "\u001b[0m";
 
 /**
- * Compact first frame: identity, active model/workspace, and setup only when
- * the user needs to act. Full session detail stays available through commands.
- * It never takes the alternate screen or steals scrollback.
+ * Compact first frame: brand, workspace path, and one setup hint when the
+ * user must set a provider, model, or endpoint. The active provider and model
+ * are drawn under the composer. This frame never takes the alternate screen
+ * or steals scrollback.
  */
 export function welcome(options: WelcomeOptions): string {
   const width = Math.max(1, options.width - 1);
@@ -29,13 +30,11 @@ export function welcome(options: WelcomeOptions): string {
       : options.signedOut
         ? "Set up a Provider with /provider"
         : undefined;
-  const detailsWidth = Math.max(1, width - 2);
-  const details = `${terminalText(options.provider)} · ${terminalText(options.model)} · `;
-  const availablePathWidth = detailsWidth - Math.min(displayWidth(details), detailsWidth - 1);
-  const pathWidth = Math.min(detailsWidth - 1, Math.max(9, availablePathWidth));
+  // The path uses the whole line: the full path when it fits, the tail when
+  // it does not. It is not shortened to ~.
   const lines = [
     `◆ chivgent v${options.version}${options.resumed ? " · resumed" : ""}`,
-    `${fitLine(details, Math.max(1, detailsWidth - pathWidth))}${fitLineTail(options.cwd, pathWidth)}`,
+    fitLineTail(options.cwd, width),
     ...(setup === undefined ? [] : [setup]),
   ];
   return `\n${lines.map((line, index) => {

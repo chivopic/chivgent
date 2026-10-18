@@ -127,7 +127,7 @@ chivgent --continue                                  # 这个目录里的上一�
 
 `/compact` 压缩较早的轮次，完整记录仍留着，方便恢复。`/status` 显示模型、权限和 token 用量。其余的，`/help`。
 
-本地交互终端默认使用 rich TUI。`--simple` 选择追加式界面；`--tui` 仍可显式请求 rich TUI，包括将 stdout 重定向时。管道输入或输出、JSON、单次提问、`--serve` 和 `--connect` 保持原有简单输出。`TERM=dumb` 自动选择简单界面；设置 `NO_COLOR` 时仍使用 rich TUI，但不输出颜色。没有旧权限开关或显式权限模式时，rich TUI 默认使用 Ask for me。空闲输入框中的 Shift+Tab 可循环切换 Plan → Auto mode → Ask for me，页脚显示当前模式。简洁欢迎信息不显示 session ID；用 `/session` 或 `/status` 查看完整信息，`/help` 查看命令和快捷键。显式 `--permission-mode` 和旧权限开关继续按原有方式工作。[TUI](docs/tui.md)。长会话会压缩较早的轮次，并留下读过和改过的文件列表，从而留在上下文窗口里。[上下文](docs/architecture.md#context-management)。
+本地交互终端默认使用 rich TUI。`--simple` 选择追加式界面；`--tui` 仍可显式请求 rich TUI，包括将 stdout 重定向时。管道输入或输出、JSON、单次提问、`--serve` 和 `--connect` 保持原有简单输出。`TERM=dumb` 自动选择简单界面；设置 `NO_COLOR` 时仍使用 rich TUI，但不输出颜色。没有旧权限开关或显式权限模式时，rich TUI 默认使用 Ask for me。空闲输入框中的 Shift+Tab 可循环切换 Plan → Auto mode → Ask for me，页脚左侧显示当前供应商和模型，并显示当前模式。简洁欢迎信息显示工作区路径，不显示 session ID、供应商和模型；用 `/session` 或 `/status` 查看完整信息，`/help` 查看命令和快捷键。显式 `--permission-mode` 和旧权限开关继续按原有方式工作。[TUI](docs/tui.md)。长会话会压缩较早的轮次，并留下读过和改过的文件列表，从而留在上下文窗口里。[上下文](docs/architecture.md#context-management)。
 
 在内联编辑器中输入 `/` 可浏览已注册命令，继续输入可筛选命令。用 ↑/↓ 选择命令，再按 Tab 或 Enter 将其补全到草稿；之后按 Enter 提交。鼠标单击可补全可见命令，滚轮可浏览菜单。在记录区向上滚动时，滚轮会交还终端并滚动终端自己的滚动历史；下一次按键时输入框重新接管鼠标。Esc 关闭菜单并保留草稿。完整输入的命令仍可直接按一次 Enter 执行。`/login` 会先列出供应商再询问 Key，Key 存入你所选的那一个；`/login NAME` 跳过列表。
 

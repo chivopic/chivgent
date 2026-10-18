@@ -453,4 +453,53 @@ describe("mouse caret and selected text", () => {
     expect(colored.lines.join("\n")).toContain("\u001b[2mAsk chivgent to do anything\u001b[0m");
     expect(editorFrame(new EditorDocument(), 60, 12, true).lines.join("\n")).not.toContain("\u001b[");
   });
+
+  const modeHint = "Ask for me · Shift+Tab Plan · /help";
+
+  it("shows the provider and model under the composer and keeps the mode hint", () => {
+    const doc = new EditorDocument();
+    const frame = editorFrame(doc, 80, 12, true, [], 0, modeHint, false, "openai · gpt-test");
+    const footer = frame.lines.at(-1) ?? "";
+    expect(footer.startsWith("openai · gpt-test")).toBe(true);
+    expect(footer.endsWith(modeHint)).toBe(true);
+    expect(frame.lines.join("\n")).toContain("Ask chivgent to do anything");
+    expect(doc.text).toBe("");
+    expect(displayWidth(footer)).toBeLessThanOrEqual(79);
+    expect(footer).not.toContain("\u001b[");
+  });
+
+  it("keeps the mode hint when the model name does not fit", () => {
+    const identity = `openai · ${"m".repeat(180)}`;
+    const normal = editorFrame(new EditorDocument(), 80, 12, true, [], 0, modeHint, false, identity).lines.at(-1) ?? "";
+    expect(normal.startsWith("openai")).toBe(true);
+    expect(normal.endsWith(modeHint)).toBe(true);
+    expect(normal).toContain("…");
+    expect(normal).not.toContain("m".repeat(180));
+    expect(displayWidth(normal)).toBeLessThanOrEqual(79);
+    const narrow = editorFrame(new EditorDocument(), 40, 12, true, [], 0, modeHint, false, identity).lines.at(-1) ?? "";
+    expect(narrow.endsWith(modeHint)).toBe(true);
+    expect(narrow).not.toContain("m".repeat(40));
+    expect(displayWidth(narrow)).toBeLessThanOrEqual(39);
+  });
+
+  it("strips control characters from the footer provider and model", () => {
+    const footer = editorFrame(new EditorDocument(), 80, 12, true, [], 0, modeHint, false, "openai · \u001b[2Jgpt-test").lines.at(-1) ?? "";
+    expect(footer).toContain("openai · gpt-test");
+    expect(footer.endsWith(modeHint)).toBe(true);
+    expect(footer).not.toContain("\u001b[");
+  });
+
+  it("does not invent a model on the footer when none is active", () => {
+    const footer = editorFrame(new EditorDocument(), 80, 12, true, [], 0, modeHint).lines.at(-1) ?? "";
+    expect(footer).toBe(modeHint);
+    expect(footer).not.toContain("unknown model");
+  });
+
+  it("keeps the command hint in place of the model while the menu is open", () => {
+    const doc = new EditorDocument();
+    doc.insert("/he");
+    const footer = editorFrame(doc, 60, 12, true, [{ value: "help", label: "/help" }], 0, modeHint, false, "openai · gpt-test").lines.at(-1) ?? "";
+    expect(footer).toContain("↑↓ choose");
+    expect(footer).not.toContain("gpt-test");
+  });
 });

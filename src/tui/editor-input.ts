@@ -46,6 +46,8 @@ export class EditorController {
       readonly slashCommands?: readonly SlashSuggestion[];
       readonly mouse?: boolean;
       readonly footerStatus?: () => string | undefined;
+      /** Active provider and model. Omitted when either one is not set. */
+      readonly footerIdentity?: () => string | undefined;
       readonly color?: boolean;
       readonly onShiftTab?: () => Promise<void> | void;
     } = {},
@@ -489,7 +491,7 @@ export class EditorController {
     const matches = this.suggestions();
     this.completionIndex = matches.length > 0 ? Math.min(this.completionIndex, matches.length - 1) : 0;
     const frame = editorFrame(this.document, this.maxWidth(), this.maxHeight(), this.options.submitOnEnter === true,
-      matches, this.completionIndex, this.options.footerStatus?.(), this.options.color === true);
+      matches, this.completionIndex, this.options.footerStatus?.(), this.options.color === true, this.options.footerIdentity?.());
     this.lastFrame = frame;
     this.painter.render(frame);
     if (this.options.mouse) {
