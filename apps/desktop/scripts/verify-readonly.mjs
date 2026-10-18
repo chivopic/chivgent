@@ -93,7 +93,13 @@ try {
   await page.waitForFunction(() => document.querySelector('[data-testid="provider-select"]')?.value === "openai-compatible");
   await page.getByTestId("compatible-endpoint").getByText(endpoint, { exact: false }).waitFor();
   await page.getByRole("button", { name: "选择项目目录", exact: false }).click();
+  // A manual model override belongs to the provider that was selected when it was typed.
+  await page.getByTestId("model-input").fill("stale-model");
+  await page.getByTestId("provider-select").selectOption("deepseek");
+  assert.equal(await page.getByTestId("model-input").inputValue(), "");
+  await page.getByTestId("model-input").fill("deepseek-only");
   await page.getByTestId("provider-select").selectOption("openai-compatible");
+  assert.equal(await page.getByTestId("model-input").inputValue(), "");
   await page.getByTestId("model-input").fill("desktop-fixture");
   await page.getByTestId("composer").waitFor({ state: "visible" });
   await page.getByTestId("composer").fill("解释当前项目");
