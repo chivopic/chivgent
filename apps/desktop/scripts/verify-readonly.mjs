@@ -88,6 +88,10 @@ try {
   await activeApp.evaluate(({ dialog }, selected) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] });
   }, project);
+  // The renderer must inherit CHIVGENT_PROVIDER before its first request.
+  await page.getByTestId("provider-select").waitFor();
+  await page.waitForFunction(() => document.querySelector('[data-testid="provider-select"]')?.value === "openai-compatible");
+  await page.getByTestId("compatible-endpoint").getByText(endpoint, { exact: false }).waitFor();
   await page.getByRole("button", { name: "选择项目目录", exact: false }).click();
   await page.getByTestId("provider-select").selectOption("openai-compatible");
   await page.getByTestId("model-input").fill("desktop-fixture");
@@ -112,9 +116,24 @@ try {
   assert.equal(requests.length, beforeMissingKey);
   await page.getByTestId("provider-select").selectOption("openai-compatible");
   await page.getByTestId("model-input").fill("desktop-fixture");
+  // Repro: open the native folder picker, start a task while it is pending,
+  // then accept a project change while the task is still running.
+  await activeApp.evaluate(({ dialog }) => {
+    dialog.showOpenDialog = () => new Promise((resolve) => {
+      globalThis.__resolveDesktopProjectPicker = resolve;
+    });
+  });
+  await page.getByRole("button", { name: "切换项目目录" }).click();
   await page.getByTestId("composer").fill("取消测试");
   await page.getByTestId("send").click();
   await page.getByTestId("assistant-message").filter({ hasText: "正在等待取消" }).waitFor();
+  await activeApp.evaluate(() => {
+    globalThis.__resolveDesktopProjectPicker({ canceled: false, filePaths: [process.cwd()] });
+    delete globalThis.__resolveDesktopProjectPicker;
+  });
+  await page.getByText("运行期间不能切换项目。").waitFor();
+  await page.getByTestId("stop").waitFor({ state: "visible" });
+
   await page.getByTestId("stop").click();
   await page.getByTestId("run-status").getByText("已停止").waitFor({ timeout: 15_000 });
   await page.getByTestId("composer").fill("继续追问");
