@@ -50,7 +50,7 @@ jobs:
   desktop:
     runs-on: ubuntu-latest
     env:
-      CHIVGENT_DESKTOP_ARTIFACT_DIR: ${{ runner.temp }}/chivgent-desktop-e2e-artifacts
+      CHIVGENT_DESKTOP_ARTIFACT_DIR: ${{ github.workspace }}/apps/desktop/artifacts/desktop-e2e-failures
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -84,6 +84,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: desktop-e2e-diagnostics
-          path: ${{ runner.temp }}/chivgent-desktop-e2e-artifacts/
+          path: ${{ env.CHIVGENT_DESKTOP_ARTIFACT_DIR }}/
           if-no-files-found: ignore
           retention-days: 7
