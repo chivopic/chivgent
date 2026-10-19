@@ -77,6 +77,7 @@ chivgent --provider deepseek "讲讲 src/"
 chivgent                                             # 本地交互终端默认使用 rich TUI
 chivgent --simple                                    # 使用追加式界面
 chivgent --tui                                       # 显式请求 rich TUI
+chivgent --web-search https://search.example.com "Node.js 24 有什么变化？"
 chivgent --continue                                  # 这个目录里的上一次会话
 ```
 
@@ -92,6 +93,16 @@ chivgent --continue                                  # 这个目录里的上一�
 `--permission-mode` 在这个进程里代替那些开关。不能和 `--allow-writes`、`--allow-shell`、`--approve-all-shell`、`--shell-network` 一起用，也不能和 `--serve`、`--connect` 一起用。`/permissions` 查看或更改模式，但只有启动时选了模式的会话才行。这个选择不写进会话记录。恢复会话时用的是启动时选的模式，不是上次更宽的那个。
 
 `/plan` 是另一件事。它让 agent 停在只读工具和一份计划上。即使模型要求，写入、shell 和扩展工具也会被挡住。
+
+## 网页搜索
+
+只有指定后端时才会注册 `web_search`：
+
+```bash
+CHIVGENT_WEB_SEARCH_TOKEN=… chivgent --web-search https://search.example.com
+```
+
+后端是启用了 JSON API 的 SearXNG 实例。token 从环境变量读取，不放在命令行参数里。`ask-first` 和 `workspace` 每次查询都会显示完整查询文本并要求确认；`unrestricted` 直接查询；旧开关 `--allow-writes` / `--allow-shell` 会话把 `--web-search` 本身当作同意。离开本机的只有查询内容，不会发送模型 key 或对话历史。结果有上限，并作为不可信数据处理。见[网页搜索](docs/web-search.md)。
 
 ## 它怎么接在一起
 
@@ -111,6 +122,7 @@ chivgent --continue                                  # 这个目录里的上一�
 | 读这个项目 | 开着 | 当前目录。被忽略的、生成的和凭据路径会跳过。 |
 | 改文件 | `--allow-writes` | 工作区内的文件。修改必须精确匹配，写入是原子的。 |
 | 跑命令 | `--allow-shell` | macOS 用 Seatbelt，其他系统用 Docker。默认没有网络。每条命令都要确认。 |
+| 搜索网页 | `--web-search URL` | 配置好的 SearXNG JSON 接口。离开本机的只有获准的查询；ask-first 和 workspace 每次都问。 |
 | 选一种策略 | `--permission-mode` | `ask-first`、`workspace` 或 `unrestricted`。在这个进程里代替上面的开关。 |
 
 费用付给你选的供应商，按他们的价格。chivgent 显示 token 数，不折算成费用。
@@ -162,6 +174,7 @@ chivgent --continue                                  # 这个目录里的上一�
 | --- | --- |
 | [架构](docs/architecture.md) | 循环、供应商、上下文，以及源码在哪 |
 | [Shell 安全](docs/shell-sandbox.md) | Seatbelt、Docker，以及一条命令仍能读到什么 |
+| [网页搜索](docs/web-search.md) | 配置的后端、每次查询的确认、隐私与上限 |
 | [订阅登录](docs/subscription-oauth.md) | ChatGPT 和 xAI：存了什么，key 仍然做什么 |
 | [TUI](docs/tui.md) | 实时状态区、编辑器、diff 审阅 |
 | [Evals](docs/evals.md) | agent 能不能把活干完，和单元测试分开 |

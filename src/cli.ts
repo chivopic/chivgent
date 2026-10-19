@@ -48,6 +48,7 @@ import type { Message } from "./messages.js";
 import { createConfiguredClient } from "./providers/client.js";
 import { DeferredLLMClient } from "./providers/deferred-client.js";
 import { InteractiveProvider } from "./providers/interactive.js";
+import { webSearchProviderName } from "./websearch/backend.js";
 
 const EXIT_INTERRUPTED = 130;
 
@@ -81,6 +82,7 @@ const BUILT_IN_TOOL_NAMES = [
   "edit_file",
   "apply_patch",
   "bash",
+  "web_search",
 ] as const;
 
 /** Why --tui cannot run here, or undefined when it can. */
@@ -369,6 +371,9 @@ export async function main(argv: readonly string[]): Promise<number> {
         compactionEnabled: options.compaction,
         providerName: options.provider,
         modelName: options.model,
+        ...(options.webSearch === undefined
+          ? {}
+          : { webSearch: { provider: webSearchProviderName(options.webSearch.url) } }),
         permissions: [
           ...(options.permissionMode === undefined ? [] : [`mode:${options.permissionMode}`]),
           ...(options.allowWrites ? ["file-write"] : []),
@@ -509,6 +514,9 @@ function capabilitiesOf(options: CliOptions): readonly string[] {
   }
   if (options.allowShell) {
     granted.push("--allow-shell");
+  }
+  if (options.webSearch !== undefined) {
+    granted.push("--web-search");
   }
   if (!options.extensions) {
     granted.push("--no-extensions");

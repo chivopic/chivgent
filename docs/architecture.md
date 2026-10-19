@@ -12,6 +12,7 @@ User -> CLI -> Agent -> LLMClient |
                  +-> Tool Registry -> list_files / search_text / read_file -> Workspace
                  |                    write_file / edit_file (--allow-writes)
                  |                    bash (--allow-shell) -> Seatbelt on macOS / Docker elsewhere
+                 |                    web_search (--web-search) -> configured SearXNG JSON API
 ```
 
 The Agent runtime owns its own messages. Provider-specific schemas are converted
@@ -277,6 +278,9 @@ src/
     write-file.ts                Whole-file create and replace
     edit-file.ts                 Exact unique-match edit
     bash.ts                      Shell command execution
+    web-search.ts                Permission-gated, bounded web search
+  websearch/
+    backend.ts                   WebSearchBackend contract and SearXNG adapter
   prompts.ts                     The instructions the agent runs under
   evals/
     task.ts                      Task definitions and their validation

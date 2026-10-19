@@ -316,6 +316,45 @@ describe("remote session options", () => {
   });
 });
 
+describe("web search options", () => {
+  it("is off unless an explicit backend is configured", () => {
+    expect(parseCliArgs(["Question"], {})).not.toHaveProperty("webSearch");
+  });
+
+  it("keeps the endpoint in argv and the token in the environment", () => {
+    expect(parseCliArgs(["--web-search", "https://search.example"], {
+      CHIVGENT_WEB_SEARCH_TOKEN: "secret",
+    })).toMatchObject({
+      webSearch: { url: "https://search.example", token: "secret" },
+    });
+  });
+
+  it("accepts an endpoint with a path and without a token", () => {
+    expect(parseCliArgs(["--web-search", "http://127.0.0.1:8080/searxng"], {})).toMatchObject({
+      webSearch: { url: "http://127.0.0.1:8080/searxng" },
+    });
+  });
+
+  it.each([
+    ["a relative URL", "search.example"],
+    ["a non-HTTP scheme", "file:///etc/passwd"],
+    ["embedded credentials", "https://user:pass@search.example"],
+    ["a query string", "https://search.example/?q=x"],
+  ])("rejects %s", (_name, value) => {
+    expect(() => parseCliArgs(["--web-search", value], {})).toThrow(TypeError);
+  });
+
+  it("rejects a local backend when attaching to a served session", () => {
+    expect(() => parseCliArgs(["--connect", "abc", "--web-search", "https://search.example"], {}))
+      .toThrow(/cannot be used with --connect/);
+  });
+
+  it("documents the flag and the token environment variable", () => {
+    expect(helpText()).toContain("--web-search URL");
+    expect(helpText()).toContain("CHIVGENT_WEB_SEARCH_TOKEN");
+  });
+});
+
 describe("json mode and the interactive prompt", () => {
   it("keeps --json a separate concern from streaming and sessions", () => {
     // A regression guard for the wiring: in JSON mode stdout must carry only

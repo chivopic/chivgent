@@ -8,7 +8,7 @@ import type { LLMClient } from "./llm.js";
 import type { Message } from "./messages.js";
 import type { AppliedCompaction } from "./context/context-manager.js";
 import type { UsageTotal } from "./providers/usage.js";
-import { SHELL_SYSTEM_PROMPT, SYSTEM_PROMPT, WRITE_SYSTEM_PROMPT } from "./prompts.js";
+import { SHELL_SYSTEM_PROMPT, SYSTEM_PROMPT, WEB_SEARCH_SYSTEM_PROMPT, WRITE_SYSTEM_PROMPT } from "./prompts.js";
 import { AgentSession } from "./session.js";
 import { ShellApprovalGate } from "./shell/approval.js";
 import { PermissionWorkspace, type PermissionPolicy } from "./permissions.js";
@@ -20,8 +20,10 @@ import { EditFileTool } from "./tools/edit-file.js";
 import { ListFilesTool } from "./tools/list-files.js";
 import { ReadFileTool } from "./tools/read-file.js";
 import { SearchTextTool } from "./tools/search-text.js";
+import { WebSearchTool } from "./tools/web-search.js";
 import { WriteFileTool } from "./tools/write-file.js";
 import { UpdatePlanTool } from "./tools/update-plan.js";
+import { SearxngBackend } from "./websearch/backend.js";
 import { LocalWorkspace } from "./workspace.js";
 
 interface LocalSessionConfig {
@@ -51,9 +53,16 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
   const modernPolicy = config.permissionPolicy !== undefined;
   const allowWrites = modernPolicy || options.allowWrites;
   const allowShell = modernPolicy || options.allowShell;
+  const webSearchBackend = options.webSearch === undefined
+    ? undefined
+    : new SearxngBackend({
+        baseURL: options.webSearch.url,
+        ...(options.webSearch.token === undefined ? {} : { token: options.webSearch.token }),
+      });
   if (allowWrites) prompt.push(WRITE_SYSTEM_PROMPT);
   if (allowShell) prompt.push(SHELL_SYSTEM_PROMPT);
-  if (modernPolicy) prompt.push(`A process-local permission policy governs file changes, shell commands, and extension tools; its mode can change during the conversation and is not restored from a saved session. For files or network outside the workspace, request bash with scope "host" and explain why in justification; this asks for one-command broad host access. Never retry denied actions using another tool.`);
+  if (webSearchBackend !== undefined) prompt.push(WEB_SEARCH_SYSTEM_PROMPT);
+  if (modernPolicy) prompt.push(`A process-local permission policy governs file changes, shell commands, web search, and extension tools; its mode can change during the conversation and is not restored from a saved session. For files or network outside the workspace, request bash with scope "host" and explain why in justification; this asks for one-command broad host access. Never retry denied actions using another tool.`);
   prompt.push(...(extensions?.systemPromptContributions ?? []));
 
   const contextManager = new ContextManager({
@@ -75,6 +84,13 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
     tools: [
       new ListFilesTool(),
       new SearchTextTool(),
+      ...(webSearchBackend === undefined ? [] : [new WebSearchTool({
+        backend: webSearchBackend,
+        ...(modernPolicy ? {
+          authorize: (query: string, signal?: AbortSignal) =>
+            config.permissionPolicy!.authorizeWebSearch(query, webSearchBackend.name, signal),
+        } : {}),
+      })]),
       new ReadFileTool(),
       new UpdatePlanTool(),
       ...(allowWrites ? [new WriteFileTool(), new EditFileTool(), new ApplyPatchTool()] : []),

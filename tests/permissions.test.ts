@@ -159,6 +159,42 @@ describe("permission policy", () => {
     expect(exec).toHaveBeenCalledOnce();
   });
 
+  it("asks for each web search with the exact query and provider", async () => {
+    const approval = vi.fn(async () => true);
+    const policy = new PermissionPolicy("workspace", approval);
+    await expect(policy.authorizeWebSearch("node 24 release notes", "searxng (search.example)")).resolves.toBe(true);
+    expect(approval).toHaveBeenCalledWith(
+      "node 24 release notes",
+      undefined,
+      "Web search via searxng (search.example)",
+    );
+  });
+
+  it("denies web search without an approval channel in ask-first and workspace", async () => {
+    for (const mode of ["ask-first", "workspace"] as const) {
+      const policy = new PermissionPolicy(mode);
+      await expect(policy.authorizeWebSearch("q", "searxng (search.example)")).resolves.toBe(false);
+    }
+  });
+
+  it("allows web search in unrestricted mode without prompting", async () => {
+    const approval = vi.fn(async () => false);
+    const policy = new PermissionPolicy("unrestricted", approval);
+    await expect(policy.authorizeWebSearch("q", "searxng (search.example)")).resolves.toBe(true);
+    expect(approval).not.toHaveBeenCalled();
+  });
+
+  it("does not approve a web search that completes after cancellation", async () => {
+    const controller = new AbortController();
+    const approval = vi.fn(async (_query: string, signal?: AbortSignal) => {
+      controller.abort();
+      return signal?.aborted !== true;
+    });
+    const policy = new PermissionPolicy("ask-first", approval);
+    await expect(policy.authorizeWebSearch("q", "searxng (search.example)", controller.signal)).resolves.toBe(false);
+    expect(approval).toHaveBeenCalledOnce();
+  });
+
   it("does not cache a one-command host approval for the next command", async () => {
     const cwd = await root();
     const policy = new PermissionPolicy("workspace");

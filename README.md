@@ -77,6 +77,7 @@ chivgent --provider deepseek "Explain src/"
 chivgent                                                 # rich TUI in a local interactive terminal
 chivgent --simple                                        # append-only interface
 chivgent --tui                                           # explicitly request the rich TUI
+chivgent --web-search https://search.example.com "What changed in Node.js 24?"
 chivgent --continue                                      # last session in this directory
 ```
 
@@ -92,6 +93,16 @@ chivgent --continue                                      # last session in this 
 `--permission-mode` replaces the flags for this process. It cannot be combined with `--allow-writes`, `--allow-shell`, `--approve-all-shell`, or `--shell-network`, and it cannot be used with `--serve` or `--connect`. `/permissions` inspects or changes the mode, only in a session that started with one. The choice is not saved in the transcript. Resuming a session uses the mode you selected at startup, not a broader one from last time.
 
 `/plan` is separate. It keeps the agent on read tools and a plan. Writes, shell, and extension tools stay blocked even if the model asks for them.
+
+## Web search
+
+`web_search` is off unless you name a backend:
+
+```bash
+CHIVGENT_WEB_SEARCH_TOKEN=… chivgent --web-search https://search.example.com
+```
+
+The backend is a SearXNG instance with its JSON API enabled. The token comes from the environment, never argv. `ask-first` and `workspace` prompt for each query with the full query text; `unrestricted` runs queries without a prompt; legacy `--allow-writes` / `--allow-shell` sessions treat `--web-search` itself as consent. Only the query is sent, never a provider key or conversation history. Results are bounded and treated as untrusted data. See [Web search](docs/web-search.md).
 
 ## How it fits together
 
@@ -111,6 +122,7 @@ This is the build, not the auto-style default above.
 | Read the project | on | This directory. Ignored, generated, and credential paths are skipped. |
 | Change files | `--allow-writes` | Files inside the workspace. An edit has to match exactly, and it is written atomically. |
 | Run a command | `--allow-shell` | Seatbelt on macOS, Docker elsewhere. Network is off. Each command requires confirmation. |
+| Search the web | `--web-search URL` | The configured SearXNG JSON endpoint. Only the approved query leaves the machine; ask-first and workspace prompt each time. |
 | Pick a policy | `--permission-mode` | `ask-first`, `workspace`, or `unrestricted`. Replaces the flags for this process. |
 
 You pay the provider you picked, at their prices. chivgent shows token counts; it does not convert them into costs.
@@ -162,6 +174,7 @@ This repository also has an Electron desktop app. It opens a project through the
 | --- | --- |
 | [Architecture](docs/architecture.md) | The loop, providers, context, and where the source lives |
 | [Shell safety](docs/shell-sandbox.md) | Seatbelt, Docker, and what a command can still read |
+| [Web search](docs/web-search.md) | The configured backend, per-query consent, privacy, and bounds |
 | [Subscription sign-in](docs/subscription-oauth.md) | ChatGPT and xAI: what is stored, and what a key still does |
 | [TUI](docs/tui.md) | The live region, the editor, and diff review |
 | [Evals](docs/evals.md) | Whether the agent finishes the task, separate from the unit tests |

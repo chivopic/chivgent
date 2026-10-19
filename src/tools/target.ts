@@ -18,7 +18,9 @@ export function callTarget(argumentsValue: unknown): string | undefined {
       ? record.path
       : typeof record.command === "string"
         ? record.command
-        : undefined;
+        : typeof record.query === "string"
+          ? record.query
+          : undefined;
   if (value === undefined || value.length === 0) {
     return undefined;
   }
