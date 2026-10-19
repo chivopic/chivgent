@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,20 @@ if (sourceApp === undefined || !existsSync(sourceApp)) {
 }
 
 const root = mkdtempSync(join(tmpdir(), "chivgent-desktop-m0-"));
+function isolatedLaunch(label) {
+  const userData = join(root, `${label}-user-data`);
+  const authHome = join(root, `${label}-auth`);
+  const historyDirectory = join(root, `${label}-history`);
+  const pidFile = join(root, `${label}-host.pid`);
+  for (const directory of [userData, authHome, historyDirectory]) mkdirSync(directory, { recursive: true, mode: 0o700 });
+  return {
+    args: [`--user-data-dir=${userData}`],
+    pidFile,
+    env: { ...process.env, CHIVGENT_DESKTOP_HOST_PID_FILE: pidFile,
+      CHIVGENT_DESKTOP_HISTORY_DIR: historyDirectory, CHIVGENT_HOME: authHome,
+      CHIVGENT_DESKTOP_DEMO: "1" },
+  };
+}
 const appPath = join(root, "chivgent.app");
 const copied = spawnSync("ditto", [sourceApp, appPath], { encoding: "utf8" });
 if (copied.status !== 0) {
@@ -18,7 +32,6 @@ if (copied.status !== 0) {
   process.exit(1);
 }
 const executable = join(appPath, "Contents", "MacOS", "chivgent");
-const pidFile = join(root, "host.pid");
 
 const report = {
   copiedOutsideSourceTree: !appPath.includes("/Users/chiv/developer/chivgent"),
@@ -36,14 +49,12 @@ const report = {
   partialTextSettled: false,
 };
 
+const primary = isolatedLaunch("primary");
 const app = await electron.launch({
   executablePath: executable,
+  args: primary.args,
   cwd: root,
-  env: {
-    ...process.env,
-    CHIVGENT_DESKTOP_HOST_PID_FILE: pidFile,
-    CHIVGENT_DESKTOP_DEMO: "1",
-  },
+  env: primary.env,
 });
 
 try {
@@ -110,20 +121,22 @@ try {
     window.close();
     return { visible: window.isVisible(), destroyed: window.isDestroyed() };
   });
-  const hostStillUp = spawnSync("ps", ["-p", readFileSync(pidFile, "utf8").trim()], { encoding: "utf8" });
+  const hostStillUp = spawnSync("ps", ["-p", readFileSync(primary.pidFile, "utf8").trim()], { encoding: "utf8" });
   report.closeHidesWindow = hidden.visible === false && hidden.destroyed === false && hostStillUp.status === 0;
 } finally {
   await app.close();
 }
 
-const hostPid = readFileSync(pidFile, "utf8").trim();
+const hostPid = readFileSync(primary.pidFile, "utf8").trim();
 const leftover = spawnSync("ps", ["-p", hostPid], { encoding: "utf8" });
 report.hostGoneAfterQuit = leftover.status !== 0;
 
+const exitProfile = isolatedLaunch("exit");
 const exitApp = await electron.launch({
   executablePath: executable,
+  args: exitProfile.args,
   cwd: root,
-  env: { ...process.env, CHIVGENT_DESKTOP_HOST_PID_FILE: pidFile, CHIVGENT_DESKTOP_DEMO: "1" },
+  env: exitProfile.env,
 });
 try {
   const page = await exitApp.firstWindow();
@@ -136,12 +149,16 @@ try {
   await page.getByTestId("composer").fill("中途退出 host");
   await page.getByTestId("send").click();
   await page.getByTestId("tool-activity").waitFor({ timeout: 15_000 });
-  process.kill(Number(readFileSync(pidFile, "utf8")), "SIGTERM");
+  process.kill(Number(readFileSync(exitProfile.pidFile, "utf8")), "SIGTERM");
   await page.getByTestId("notice").getByText("退出", { exact: false }).waitFor({ timeout: 10_000 });
   report.hostExitVisible = true;
 } finally {
   await exitApp.close();
 }
+
+const exitHostPid = readFileSync(exitProfile.pidFile, "utf8").trim();
+const exitHostLeftover = spawnSync("ps", ["-p", exitHostPid], { encoding: "utf8" });
+report.exitHostGoneAfterQuit = exitHostLeftover.status !== 0;
 
 const unpackedHost = join(appPath, "Contents", "Resources", "app.asar.unpacked", "out", "host");
 const hostFile = ["index.mjs", "index.cjs", "index.js"]
@@ -152,7 +169,8 @@ if (hostFile === undefined) {
 }
 const hidden = `${hostFile}.hidden`;
 renameSync(hostFile, hidden);
-const broken = await electron.launch({ executablePath: executable, cwd: root });
+const brokenProfile = isolatedLaunch("broken");
+const broken = await electron.launch({ executablePath: executable, args: brokenProfile.args, cwd: root, env: brokenProfile.env });
 try {
   const page = await broken.firstWindow();
   await page.getByTestId("notice").waitFor({ timeout: 15_000 });

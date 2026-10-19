@@ -125,6 +125,21 @@ describe("desktop real runtime", () => {
     await f.service.shutdown();
   });
 
+  it("keeps every accepted request id for the real createSession path", async () => {
+    const f = fixture();
+    await select(f.service, f.messages, f.first);
+    for (let index = 0; index < 100; index += 1) {
+      await run(f.service, f.messages, `request-${index}`, `prompt-${index}`);
+    }
+    const calls = f.requests.length;
+    f.service.handle({ type: "start", requestId: "request-100", prompt: "prompt-100", provider: "openai-compatible", model: "fixture-model" });
+    expect(f.messages.at(-1)).toMatchObject({ type: "error", code: "request_log_full" });
+    f.service.handle({ type: "start", requestId: "request-0", prompt: "prompt-0", provider: "openai-compatible", model: "fixture-model" });
+    expect(f.messages.at(-1)).toMatchObject({ type: "started", requestId: "request-0", replayed: true });
+    expect(f.requests.length).toBe(calls);
+    await f.service.shutdown();
+  });
+
   it("reports missing credentials without touching the auth directory or constructing a Provider", async () => {
     const cwd = temporaryProject();
     let constructed = false;
@@ -286,9 +301,8 @@ describe("desktop real runtime", () => {
     expect(JSON.stringify(messages[0])).not.toContain("secret");
   });
 
-  it("keeps accepting real project prompts after the 100-request demo limit", async () => {
+  it("retains real request ids and refuses starts after the 100-request limit", async () => {
     const first = temporaryProject();
-    const second = temporaryProject();
     const messages: HostToMain[] = [];
     const service = new HostService({
       send: (message) => messages.push(message),
@@ -299,15 +313,16 @@ describe("desktop real runtime", () => {
       }),
     });
     await select(service, messages, first);
-    for (let i = 0; i < 105; i++) {
+    for (let i = 0; i < 100; i++) {
       service.handle({ type: "start", requestId: `prompt-${i}`, prompt: "hello" });
       await new Promise(setImmediate);
     }
-    await select(service, messages, second, "switch-project");
-    service.handle({ type: "start", requestId: "after-switch", prompt: "still works" });
-    await new Promise(setImmediate);
-    expect(messages.filter((message) => message.type === "started")).toHaveLength(106);
-    expect(messages.some((message) => message.type === "error" && message.code === "request_log_full")).toBe(false);
+    service.handle({ type: "start", requestId: "overflow", prompt: "must be refused" });
+    expect(messages.at(-1)).toMatchObject({ type: "error", code: "request_log_full" });
+    const beforeReplay = messages.length;
+    service.handle({ type: "start", requestId: "prompt-0", prompt: "hello" });
+    expect(messages.at(-1)).toMatchObject({ type: "started", requestId: "prompt-0", replayed: true });
+    expect(messages.length).toBe(beforeReplay + 1);
     await service.shutdown();
   });
 

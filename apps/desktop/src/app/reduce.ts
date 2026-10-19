@@ -1,4 +1,4 @@
-import type { AgentEventPayload, HostStatus } from "../protocol/messages.js";
+import type { AgentEventPayload, HostStatus, SessionSnapshot } from "../protocol/messages.js";
 
 export type RunPhase = "idle" | "running" | "completed" | "stopped" | "error";
 
@@ -38,16 +38,19 @@ export interface DeskState {
   readonly items: readonly TimelineItem[];
   readonly lastSequence: number;
   readonly sequenceGap: boolean;
+  readonly hostInstanceId: string | null;
+  readonly sessionId: string | null;
 }
 
 export type DeskAction =
   | { readonly type: "host"; readonly status: HostStatus }
   | { readonly type: "submit"; readonly text: string }
   | { readonly type: "started"; readonly runId: string }
-  | { readonly type: "agent"; readonly runId: string; readonly sequence: number; readonly event: AgentEventPayload }
+  | { readonly type: "agent"; readonly hostInstanceId?: string; readonly sessionId?: string; readonly runId: string; readonly sequence: number; readonly event: AgentEventPayload }
   | { readonly type: "run-error"; readonly runId: string; readonly message: string; readonly cancelled?: boolean }
   | { readonly type: "fail"; readonly message: string }
   | { readonly type: "cancelled" }
+  | { readonly type: "hydrate"; readonly snapshot: SessionSnapshot }
   | { readonly type: "reset" };
 
 export const initialDeskState: DeskState = {
@@ -58,6 +61,8 @@ export const initialDeskState: DeskState = {
   items: [],
   lastSequence: 0,
   sequenceGap: false,
+  hostInstanceId: null,
+  sessionId: null,
 };
 
 export function reduceDesk(state: DeskState, action: DeskAction): DeskState {
@@ -66,6 +71,8 @@ export function reduceDesk(state: DeskState, action: DeskAction): DeskState {
       return applyHost(state, action.status);
     case "reset":
       return { ...initialDeskState, host: state.host };
+    case "hydrate":
+      return hydrateSnapshot(state, action.snapshot);
     case "submit":
       return {
         ...state,
@@ -88,8 +95,35 @@ export function reduceDesk(state: DeskState, action: DeskAction): DeskState {
     case "cancelled":
       return { ...state, items: settleStreaming(state.items), phase: "stopped", runId: null, notice: "运行已停止。" };
     case "agent":
-      return applyEvent(state, action.runId, action.sequence, action.event);
+      return applyEvent(state, action.runId, action.sequence, action.event, action.hostInstanceId, action.sessionId);
   }
+}
+
+function hydrateSnapshot(state: DeskState, snapshot: SessionSnapshot): DeskState {
+  let next: DeskState = { ...initialDeskState, host: state.host, hostInstanceId: snapshot.hostInstanceId, sessionId: snapshot.sessionId };
+  const runs = snapshot.runs ?? (snapshot.run === undefined ? [] : [snapshot.run]);
+  for (const run of runs) {
+    const runEvents = snapshot.events.filter((item) => item.runId === run.runId);
+    next = reduceDesk(next, { type: "submit", text: run.prompt });
+    next = { ...next, runId: run.runId };
+    for (const item of runEvents) {
+      next = applyEvent(next, item.runId, next.lastSequence + 1, item.event, snapshot.hostInstanceId, snapshot.sessionId);
+    }
+    if (run.status === "interrupted" || run.status === "unknown" || run.status === "started") {
+      next = {
+        ...next,
+        phase: "error",
+        items: next.items.map((item) => item.kind === "tool" && item.status === "running"
+          ? { ...item, status: "error", output: "执行结果未知，需要检查工作区。" }
+          : item.kind === "assistant" && item.streaming ? { ...item, streaming: false } : item),
+        runId: null,
+        notice: "运行中断，结果未知；请检查工作区。没有自动重放工具。",
+      };
+    }
+  }
+  next = { ...next, lastSequence: snapshot.sequence };
+  if (snapshot.incomplete) next = { ...next, notice: `${next.notice ? `${next.notice} ` : ""}历史记录不完整（${snapshot.corruption === "tail" ? "尾部" : "中间"}损坏）。` };
+  return next;
 }
 
 export function phaseLabel(phase: RunPhase, host: HostStatus): string {
@@ -139,7 +173,12 @@ function applyEvent(
   runId: string,
   sequence: number,
   event: AgentEventPayload,
+  hostInstanceId?: string,
+  sessionId?: string,
 ): DeskState {
+  if (sequence <= state.lastSequence) return state;
+  if (state.hostInstanceId !== null && hostInstanceId !== undefined && state.hostInstanceId !== hostInstanceId) return state;
+  if (state.sessionId !== null && sessionId !== undefined && state.sessionId !== sessionId) return state;
   // Only the active run may modify the visible timeline or terminal status.
   if (state.phase !== "running" || state.runId !== runId) return state;
   const gap = state.lastSequence !== 0 && sequence !== state.lastSequence + 1;
@@ -159,7 +198,7 @@ function applyEvent(
     case "tool_execution_start":
       return upsertTool(next, {
         kind: "tool",
-        id: event.toolCallId ?? `tool-${next.items.length}`,
+        id: `${runId}-${event.toolCallId ?? `tool-${next.items.length}`}`,
         runId,
         toolCallId: event.toolCallId ?? "",
         name: event.toolName ?? "tool",
@@ -168,9 +207,9 @@ function applyEvent(
         status: "running",
       });
     case "tool_execution_update":
-      return patchTool(next, event.toolCallId, { output: event.content ?? "" });
+      return patchTool(next, runId, event.toolCallId, { output: event.content ?? "" });
     case "tool_execution_end":
-      return patchTool(next, event.toolCallId, {
+      return patchTool(next, runId, event.toolCallId, {
         output: event.content ?? "",
         status: event.isError === true ? "error" : "done",
       });
@@ -238,7 +277,7 @@ function settleAssistant(state: DeskState, runId: string, turn: number, text: st
 
 function upsertTool(state: DeskState, tool: ToolItem): DeskState {
   const index = state.items.findIndex(
-    (item) => item.kind === "tool" && item.toolCallId === tool.toolCallId,
+    (item) => item.kind === "tool" && item.runId === tool.runId && item.toolCallId === tool.toolCallId,
   );
   if (index === -1) {
     return { ...state, items: [...state.items, tool] };
@@ -250,6 +289,7 @@ function upsertTool(state: DeskState, tool: ToolItem): DeskState {
 
 function patchTool(
   state: DeskState,
+  runId: string,
   toolCallId: string | undefined,
   patch: Partial<Pick<ToolItem, "output" | "status">>,
 ): DeskState {
@@ -257,7 +297,7 @@ function patchTool(
     return state;
   }
   const index = state.items.findIndex(
-    (item) => item.kind === "tool" && item.toolCallId === toolCallId,
+    (item) => item.kind === "tool" && item.runId === runId && item.toolCallId === toolCallId,
   );
   const current = index === -1 ? undefined : state.items[index];
   if (current === undefined || current.kind !== "tool") {

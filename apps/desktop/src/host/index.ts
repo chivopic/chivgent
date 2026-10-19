@@ -27,6 +27,7 @@ if (port === undefined) {
 
 const workspaceRoot = mkdtempSync(join(tmpdir(), "chivgent-desktop-"));
 const parentPid = process.ppid;
+const demoMode = process.env["CHIVGENT_DESKTOP_DEMO"] === "1";
 
 const service = new HostService({
   send: (message: HostToMain) => {
@@ -35,7 +36,8 @@ const service = new HostService({
   defaultProvider: process.env["CHIVGENT_PROVIDER"],
   compatibleBaseURL: process.env["OPENAI_BASE_URL"],
   createAgent: (onEvent, projectPath) => createDemoAgent({ workspaceRoot: projectPath ?? workspaceRoot, timing: VISIBLE_DEMO_TIMING, onEvent }),
-  ...(process.env["CHIVGENT_DESKTOP_DEMO"] === "1" ? {} : {
+  ...(demoMode ? {} : {
+    historyDirectory: process.env["CHIVGENT_DESKTOP_HISTORY_DIR"],
     createSession: async (cwd, provider, model, messages, compaction) => {
       return createDesktopSession({ cwd, provider, model, messages, compaction });
     },

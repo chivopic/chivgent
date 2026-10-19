@@ -169,6 +169,7 @@ app.whenReady().then(() => {
   }
   installMenu();
   installIpc();
+  process.env["CHIVGENT_DESKTOP_HISTORY_DIR"] ??= join(app.getPath("userData"), "desktop-history-v1");
   bridge.onEvent((message) => {
     sendToRenderer(IPC.event, message);
   });
