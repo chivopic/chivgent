@@ -7,3 +7,4 @@ coverage/
 apps/desktop/node_modules/
 apps/desktop/out/
 apps/desktop/release/
+apps/desktop/artifacts/desktop-e2e-failures/

@@ -5,7 +5,7 @@ import type { Agent } from "@chivgent/agent.ts";
 import type { AgentEvent } from "@chivgent/events.ts";
 import type { Message } from "@chivgent/messages.ts";
 import type { AppliedCompaction } from "@chivgent/context/context-manager.ts";
-import { DesktopHistory, readLastProject, saveLastProject, type HistoryEvent, type LoadedHistory } from "./history.js";
+import { DesktopHistory, HistoryWriteError, readLastProject, saveLastProject, type HistoryEvent, type LoadedHistory } from "./history.js";
 import {
   acceptedRequestLimit,
   DESKTOP_PROTOCOL_VERSION,
@@ -208,7 +208,8 @@ export class HostService {
       this.history?.saveRun({ type: "run", runId, prompt: request.prompt, status: "started" });
     } catch (error: unknown) {
       this.accepted.delete(request.requestId);
-      this.send({ type: "error", requestId: request.requestId, runId, code: "history_write_failed", message: `历史保存失败，未开始运行：${error instanceof Error ? error.message : "未知错误"}` });
+      this.historyNotice = `历史保存失败，未开始运行：${error instanceof Error ? error.message : "未知错误"}`;
+      this.send({ type: "error", requestId: request.requestId, runId, code: "history_write_failed", historyStage: "acceptance", message: this.historyNotice });
       return;
     }
     const controller = new AbortController();
@@ -232,7 +233,8 @@ export class HostService {
         // Streaming text stays in host memory for refresh snapshots; terminal and tool state is journaled.
         if (event.type !== "message_update") this.history?.appendEvent(stored);
       } catch (error: unknown) {
-        this.send({ type: "error", runId, code: "history_write_failed", message: `历史保存失败：${error instanceof Error ? error.message : "未知错误"}` });
+        this.historyNotice = `历史保存失败：${error instanceof Error ? error.message : "未知错误"}`;
+        this.send({ type: "error", runId, code: "history_write_failed", historyStage: "event", message: this.historyNotice });
       }
       this.send({
         type: "event",
@@ -281,7 +283,14 @@ export class HostService {
     };
     void run()
       .catch((error: unknown) => {
-        try { this.history?.saveRun({ type: "run", runId, prompt: request.prompt, status: "unknown" }); } catch { /* The error message below keeps the failure visible. */ }
+        if (error instanceof HistoryWriteError) {
+          this.historyNotice = error.message;
+          this.send({ type: "error", requestId: request.requestId, runId, code: "history_write_failed", historyStage: "checkpoint", message: error.message });
+          return;
+        }
+        let historyError: unknown;
+        try { this.history?.saveRun({ type: "run", runId, prompt: request.prompt, status: "unknown" }); }
+        catch (errorWhileRecording: unknown) { historyError = errorWhileRecording; }
         this.send({
           type: "error",
           requestId: request.requestId,
@@ -289,6 +298,10 @@ export class HostService {
           code: "run_error",
           message: error instanceof Error ? error.message : "The run failed.",
         });
+        if (historyError !== undefined) {
+          this.historyNotice = historyError instanceof Error ? historyError.message : "历史写入结果未知。";
+          this.send({ type: "error", requestId: request.requestId, runId, code: "history_write_failed", historyStage: "checkpoint", message: this.historyNotice });
+        }
       })
       .finally(() => {
         if (this.active?.runId === runId) {
@@ -376,6 +389,7 @@ export class HostService {
       runs,
       incomplete: history.incomplete,
       corruption: history.corruption,
+      ...((this.historyNotice ?? history.historyNotice) === undefined ? {} : { historyNotice: this.historyNotice ?? history.historyNotice }),
     };
   }
 

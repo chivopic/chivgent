@@ -110,8 +110,12 @@ export function App(): JSX.Element {
         });
       } else if (message.type === "error" && message.runId !== undefined) {
         // Correlate terminal errors with their run; picker errors have no runId.
-        dispatch({ type: "run-error", runId: message.runId, message: message.message,
-          cancelled: message.code === "cancelled" });
+        if (message.code === "history_write_failed") {
+          dispatch({ type: "history-error", message: message.message, stage: message.historyStage });
+        } else {
+          dispatch({ type: "run-error", runId: message.runId, message: message.message,
+            cancelled: message.code === "cancelled" });
+        }
       }
     });
     const stopStatus = api.onHostStatus((status) => {

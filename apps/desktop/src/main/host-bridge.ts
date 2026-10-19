@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { chmodSync, closeSync, fstatSync, openSync, writeFileSync, writeSync } from "node:fs";
 import { utilityProcess, type UtilityProcess } from "electron";
 import {
   isHostToMain,
@@ -10,6 +10,7 @@ import { hostEntryError, hostEntryPath } from "./paths.js";
 
 const HOST_SERVICE_NAME = "chivgent-agent-host";
 const REQUEST_TIMEOUT_MS = 8_000;
+const MAX_TEST_HOST_LOG_BYTES = 128 * 1024;
 
 export interface HostBridge {
   readonly start: () => HostStatus;
@@ -89,7 +90,24 @@ export function createHostBridge(): HostBridge {
     });
     let stderr = "";
     started.stderr?.on("data", (chunk: Buffer | string) => {
-      stderr = `${stderr}${chunk.toString()}`.slice(-2_000);
+      const text = chunk.toString();
+      stderr = `${stderr}${text}`.slice(-2_000);
+      const logFile = process.env["CHIVGENT_DESKTOP_HOST_LOG_FILE"];
+      if (logFile !== undefined) {
+        try {
+          const fd = openSync(logFile, "a", 0o600);
+          try {
+            chmodSync(logFile, 0o600);
+            const remaining = Math.max(0, MAX_TEST_HOST_LOG_BYTES - fstatSync(fd).size);
+            const bytes = Buffer.from(text).subarray(0, remaining);
+            if (bytes.length > 0) writeSync(fd, bytes);
+          } finally {
+            closeSync(fd);
+          }
+        } catch {
+          // Test-only diagnostics must never affect application behavior.
+        }
+      }
     });
     started.stdout?.on("data", () => {
       // Drain so a piped host cannot block on a full buffer.

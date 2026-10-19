@@ -48,6 +48,7 @@ export type DeskAction =
   | { readonly type: "started"; readonly runId: string }
   | { readonly type: "agent"; readonly hostInstanceId?: string; readonly sessionId?: string; readonly runId: string; readonly sequence: number; readonly event: AgentEventPayload }
   | { readonly type: "run-error"; readonly runId: string; readonly message: string; readonly cancelled?: boolean }
+  | { readonly type: "history-error"; readonly message: string; readonly stage?: "acceptance" | "event" | "checkpoint" }
   | { readonly type: "fail"; readonly message: string }
   | { readonly type: "cancelled" }
   | { readonly type: "hydrate"; readonly snapshot: SessionSnapshot }
@@ -90,6 +91,10 @@ export function reduceDesk(state: DeskState, action: DeskAction): DeskState {
       return action.cancelled
         ? { ...state, items: settleStreaming(state.items), phase: "stopped", runId: null, notice: "运行已停止。" }
         : { ...state, items: settleStreaming(state.items), phase: "error", notice: action.message };
+    case "history-error":
+      return action.stage === "acceptance"
+        ? { ...state, items: settleStreaming(state.items), phase: "error", runId: null, notice: action.message }
+        : { ...state, notice: action.message };
     case "fail":
       return { ...state, items: settleStreaming(state.items), phase: "error", notice: action.message };
     case "cancelled":
@@ -122,7 +127,8 @@ function hydrateSnapshot(state: DeskState, snapshot: SessionSnapshot): DeskState
     }
   }
   next = { ...next, lastSequence: snapshot.sequence };
-  if (snapshot.incomplete) next = { ...next, notice: `${next.notice ? `${next.notice} ` : ""}历史记录不完整（${snapshot.corruption === "tail" ? "尾部" : "中间"}损坏）。` };
+  if (snapshot.incomplete) next = { ...next, notice: `${next.notice ? `${next.notice} ` : ""}${snapshot.corruption === null ? "历史写入结果未知，请检查恢复状态。" : `历史记录不完整（${snapshot.corruption === "tail" ? "尾部" : "中间"}损坏）。`}` };
+  if (snapshot.historyNotice !== undefined) next = { ...next, notice: `${next.notice ? `${next.notice} ` : ""}${snapshot.historyNotice}` };
   return next;
 }
 

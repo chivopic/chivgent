@@ -1,0 +1,2 @@
+# SSE events require a blank line delimiter, including the final saved event.
+apps/desktop/scripts/fixtures/protocol/*.sse whitespace=-blank-at-eof

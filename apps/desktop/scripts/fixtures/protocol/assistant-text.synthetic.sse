@@ -1,0 +1,6 @@
+data: {"id":"synthetic-text","object":"chat.completion.chunk","created":1,"model":"{{MODEL}}","choices":[{"index":0,"delta":{"role":"assistant","content":"A synthetic streamed answer includes {{MARKER}}."},"finish_reason":null}]}
+
+data: {"id":"synthetic-text","object":"chat.completion.chunk","created":1,"model":"{{MODEL}}","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+

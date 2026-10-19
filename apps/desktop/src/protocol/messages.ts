@@ -82,6 +82,7 @@ export interface SessionSnapshot {
   readonly runs?: readonly { readonly runId: string; readonly status: "started" | "running" | "completed" | "interrupted" | "unknown"; readonly prompt: string }[];
   readonly incomplete: boolean;
   readonly corruption: "tail" | "middle" | null;
+  readonly historyNotice?: string;
 }
 
 export interface StartedMessage {
@@ -122,6 +123,7 @@ export interface HostErrorMessage {
   readonly runId?: string;
   readonly code: string;
   readonly message: string;
+  readonly historyStage?: "acceptance" | "event" | "checkpoint";
 }
 
 /**
@@ -281,7 +283,8 @@ export function isHostToMain(value: unknown): value is HostToMain {
     case "shutdown_ack":
       return isRequestId(record.requestId);
     case "error":
-      return typeof record.code === "string" && typeof record.message === "string";
+      return typeof record.code === "string" && typeof record.message === "string" &&
+        (record.historyStage === undefined || ["acceptance", "event", "checkpoint"].includes(String(record.historyStage)));
     case "event":
       return (
         isRequestId(record.hostInstanceId) &&
@@ -313,5 +316,6 @@ function isSessionSnapshot(value: unknown): value is SessionSnapshot {
       Number.isSafeInteger((event as { sequence?: unknown }).sequence) && ((event as { sequence: number }).sequence > 0) && isRequestId((event as { runId?: unknown }).runId) &&
       typeof (event as { event?: unknown }).event === "object" && (event as { event?: { type?: unknown } }).event !== null && typeof (event as { event: { type?: unknown } }).event.type === "string") &&
     (item.run === undefined || validRun(item.run)) && (item.runs === undefined || (Array.isArray(item.runs) && item.runs.every(validRun))) &&
-    typeof item.incomplete === "boolean" && (item.corruption === null || item.corruption === "tail" || item.corruption === "middle");
+    typeof item.incomplete === "boolean" && (item.corruption === null || item.corruption === "tail" || item.corruption === "middle") &&
+    (item.historyNotice === undefined || typeof item.historyNotice === "string");
 }

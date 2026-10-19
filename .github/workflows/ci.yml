@@ -49,6 +49,8 @@ jobs:
 
   desktop:
     runs-on: ubuntu-latest
+    env:
+      CHIVGENT_DESKTOP_ARTIFACT_DIR: ${{ runner.temp }}/chivgent-desktop-e2e-artifacts
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -73,3 +75,15 @@ jobs:
 
       - name: Electron read-only end-to-end verification (offline fixture)
         run: xvfb-run -a node apps/desktop/scripts/verify-readonly.mjs
+
+      - name: Electron history recovery end-to-end verification (offline fixture)
+        run: xvfb-run -a node apps/desktop/scripts/verify-history.mjs
+
+      - name: Upload Desktop E2E failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-e2e-diagnostics
+          path: ${{ runner.temp }}/chivgent-desktop-e2e-artifacts/
+          if-no-files-found: ignore
+          retention-days: 7

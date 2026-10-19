@@ -1,0 +1,2 @@
+data: {"id":"synthetic-cancel","object":"chat.completion.chunk","created":1,"model":"{{MODEL}}","choices":[{"index":0,"delta":{"role":"assistant","content":"Synthetic partial response before cancellation."},"finish_reason":null}]}
+

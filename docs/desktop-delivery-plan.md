@@ -52,7 +52,7 @@ Luna 负责第 1 项实现及行为测试；主代理负责检查边界、复核
 4. `npm run check`、`npm test`、`npm run build`、`npm run desktop:test`、`npm run desktop:build` 的实际结果。
 5. Electron 实际交互、打包应用和真实供应商调用分别记录；没执行的不能写成通过。
 
-按[代码规范](code-standards.md)检查；桌面测试不在根 `npm test` 中；现有 CI 通过独立 desktop job 运行桌面测试、构建和只读 Electron 验证，新历史恢复脚本尚未接入。首批第 1 项完成后，已按计划交付第 2 项最小闭环；完整任务界面及导入继续作为后续工作。
+按[代码规范](code-standards.md)检查；桌面测试不在根 `npm test` 中；CI 通过独立 Desktop job 运行桌面测试、构建、只读 Electron 验证和历史恢复验证，并在失败时上传限期诊断产物。首批第 1 项完成后，已按计划交付第 2 项最小闭环；完整任务界面及导入继续作为后续工作。
 
 ## 本轮交付与验证记录
 
@@ -103,3 +103,25 @@ GUI 运行和打包均在本机 macOS arm64 完成。真实供应商账号调用
 主代理还在最终构建副本上分别移除初始化快照和模型上下文保存：前者使 `verify-history.mjs` 在刷新后找不到原流式文本（`snapshot-removed.log`），后者使重启后的模型请求缺少最初用户输入（`checkpoint-removed.log` 中 `resumed conversation must contain the original prompt once` 断言失败）。两项均退出 1；随后恢复原构建并重跑同一 Electron 脚本通过。
 
 本批未重新执行 Desktop `.app` 打包及仓库外 packaged 验收、CLI tarball 安装验收、Docker smoke、live eval 或 release candidate 检查；沿用历史记录不能替代本批验证。
+
+## #96 历史存储故障与离线回归
+
+此增量基于 #68 首批恢复实现，专注于真实临时文件 I/O 故障、共享离线 Electron fixture 与 CI 诊断，不扩展完整任务导航或 CLI 导入。执行环境为 macOS arm64、Node.js 26.9.0。当前本地验收如下：
+
+| 命令或检查 | 结果 |
+| --- | --- |
+| `npm run check` | 通过 |
+| `env TMPDIR=/private/tmp npm test` | 通过：63 个文件，787 passed、1 skipped |
+| `npm run build` | 通过 |
+| `npm run desktop:test` | 通过：6 个文件、73 项测试 |
+| `npm run desktop:build` | 通过 |
+| `npm run eval -- --dry-run --allow-writes --allow-shell` | 通过：10 项任务，无跳过；不调用模型 |
+| `node apps/desktop/scripts/verify-readonly.mjs` | 通过：9 项断言、5 次 localhost fake Provider 请求；覆盖真实工具、多轮、缺凭证、取消与最小窗口 |
+| `node apps/desktop/scripts/verify-history.mjs` | 通过：11 项断言、4 次 localhost fake Provider 请求；覆盖刷新、重启、主动续聊、Host 崩溃 unknown 和不重放 |
+| `git diff --check` | 通过 |
+
+新 I/O 测试先对依赖 PR 的旧源运行，产生实际行为红证据：短写导致 Unicode 历史尾行不完整、锁 fsync 失败遗留 `.lock`、partial append 后伪称成功并继续追加、fsync 失败后写入内容发生变化、metadata 短写不能解析，以及 `agent_end completed` 后 checkpoint 落盘失败被误报为 `run_error`。最后一项覆盖事件 fsync 失败后 writer 进入停写状态的相邻路径；旧代码继续发 `run_error` 而非 `history_write_failed/checkpoint`，红日志为 `/private/tmp/chivgent-issue96-evidence/event-fsync-classification-red.log`。基础 I/O 红摘要保存在 `/private/tmp/chivgent-issue96-evidence/checkpoint-save-red.log`；独立 I/O 边界 red 在 `/private/tmp/chivgent-issue96-evidence/independent-io-red.log`。独立审阅在隔离源码副本做反证：移除 short-write 循环令两项断言失败，移除锁清理令锁测试失败，恢复后独立边界测试通过，日志见同目录 `short-write-loop-removed.log`、`lock-cleanup-removed.log` 和 `independent-io-restored.log`。
+
+共享 fixture 运行时每次使用独立临时项目、profile、auth、history、localhost 动态端口及 Host PID/log 路径；成功清除临时资源。受控执行 `CHIVGENT_DESKTOP_ARTIFACT_DIR=/private/tmp/luna-issue96-final-artifacts CHIVGENT_DESKTOP_E2E_FAIL_AT=after-project-selected node apps/desktop/scripts/verify-history.mjs` 按预期退出 1，并生成 trace、截图、失败阶段、脱敏请求与 Host stderr/no-output 诊断；扫描生成的 trace 未发现 `fixture-key`、`Bearer fixture-key` 或 `OPENAI_API_KEY`。独立审阅另在运行中请求阶段和正常重启场景注入失败，确认两个 Electron 主进程及两个 Host PID 全部退出、临时根目录删除，重启前的诊断请求摘要脱敏；检查摘要见 `/private/tmp/chivgent-issue96-evidence/parent-final-restart-artifacts-review.json`。最终恢复流程截图保存为 `/private/tmp/chivgent-issue96-evidence/final-history.png`。
+
+GitHub Actions Desktop job 现会在 Node.js 22 下运行两条离线 Electron E2E，并在 job 失败时将共同 artifact 目录上传、保留 7 天；工作流原有触发器、`contents: read` 权限与其他 job 保持不变。此次本地未运行 Node.js 22/24 CI 环境、Desktop 打包/签名、公证、其他平台、真实账号模型调用、live eval、Docker smoke 或 release candidate 验收。Synthetic SSE 样本为手写兼容协议片段，不是供应商抓包。

@@ -160,6 +160,22 @@ describe("composer and scroll", () => {
     expect(duplicate).toBe(first);
   });
 
+  it("keeps model completion while showing a later history checkpoint failure", () => {
+    const completed = { ...initialDeskState, phase: "completed" as const, runId: null };
+    const failedCheckpoint = reduceDesk(completed, { type: "history-error", stage: "checkpoint", message: "history write outcome unknown" });
+    expect(failedCheckpoint.phase).toBe("completed");
+    expect(failedCheckpoint.notice).toContain("history write outcome unknown");
+  });
+
+  it("restores the history persistence diagnosis after a renderer snapshot refresh", () => {
+    const restored = reduceDesk(initialDeskState, { type: "hydrate", snapshot: {
+      hostInstanceId: "host-history-error", sessionId: "session-history-error", projectPath: "/tmp/project", sequence: 0,
+      runs: [], events: [], incomplete: true, corruption: null, historyNotice: "checkpoint may not be durable",
+    } });
+    expect(restored.notice).toContain("checkpoint may not be durable");
+    expect(restored.notice).toContain("历史写入结果未知");
+  });
+
   it("hydrates an interrupted tool as unknown and never treats it as completed", () => {
     const restored = reduceDesk(initialDeskState, { type: "hydrate", snapshot: {
       hostInstanceId: "host-restored", sessionId: "session-restored", projectPath: "/tmp/project", sequence: 1,

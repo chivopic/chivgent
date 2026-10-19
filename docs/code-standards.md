@@ -38,11 +38,11 @@ A change is ready for review only when it shows each of the following that appli
 1. **A test that fails without the change.** Put the old code back and run the new test. It must fail naming the behavior. Then restore the change and check the test passes. Say which test, and what it failed with.
 2. **Tests off the real machine.** The run does not touch `~/.chivgent` or a live credential.
 3. **The build and the suite.** `npm run check`, `npm test`, and `npm run build`. `npm test` does not include `apps/desktop` (`vitest.config.ts` excludes it). When the change is a shared predicate, run the suite, not only the file you think you touched.
-4. **Desktop tests, when `apps/desktop` changes.** `npm run desktop:test`. CI does not run this, so a green CI run is not evidence. Say so when it was not run.
+4. **Desktop tests, when `apps/desktop` changes.** `npm run desktop:test`, `npm run desktop:build`, and the relevant offline Electron flow. CI's Desktop job runs unit/integration tests, the build, and both read-only and history Electron E2E flows under Xvfb; a local pass still records the exact platform and Node version.
 5. **The check that matches the surface.** Eval preflight is `npm run eval -- --dry-run --allow-writes --allow-shell`. It does not call a model, and CI stops there. Docker sandbox smoke is `node scripts/docker-smoke.mjs`, and CI runs it only on Node.js 22. A release candidate also runs `npm run release:check`.
 6. **Real use where possible.** A report about a platform is checked on that platform. There is no native Windows shell. A pass on macOS is not a Windows result, and it is not described as one. What was not tried is not told to users as working.
 
-CI (`.github/workflows/ci.yml`) runs `npm ci`, `npm run check`, `npm test`, `npm run build`, the eval dry-run, and `npm pack --dry-run` on Node.js 22 and 24. Docker smoke runs only on Node.js 22. That is the whole CI bar. Do not treat it as coverage of the desktop app, a live eval, or Node.js 24's Docker smoke.
+CI (`.github/workflows/ci.yml`) runs `npm ci`, `npm run check`, `npm test`, `npm run build`, the eval dry-run, and `npm pack --dry-run` on Node.js 22 and 24. Docker smoke runs only on Node.js 22. Its separate Desktop job uses Node.js 22 to run `npm run desktop:test`, `npm run desktop:build`, and both offline Electron verification scripts under Xvfb; it uploads failure diagnostics for up to seven days. CI does not run a live/paid model eval or Desktop packaging/signing.
 
 ## Reviewing a PR
 

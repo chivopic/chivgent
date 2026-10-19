@@ -23,10 +23,19 @@ export function readLastProject(directory: string): string | undefined {
 export function saveLastProject(directory: string, projectPath: string): void {
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const temp = join(directory, `.last-project-${process.pid}-${Date.now()}.tmp`);
-  const fd = openSync(temp, "wx", 0o600);
-  try { writeSync(fd, JSON.stringify({ version: FORMAT_VERSION, projectPath })); fsyncSync(fd); }
-  finally { closeSync(fd); }
-  renameSync(temp, join(directory, "last-project.json"));
+  let fd: number | undefined;
+  try {
+    fd = openSync(temp, "wx", 0o600);
+    writeAll(fd, Buffer.from(JSON.stringify({ version: FORMAT_VERSION, projectPath }), "utf8"));
+    fsyncSync(fd);
+    closeSync(fd);
+    fd = undefined;
+    renameSync(temp, join(directory, "last-project.json"));
+  } catch (error: unknown) {
+    if (fd !== undefined) { try { closeSync(fd); } catch { /* The original I/O failure is more useful. */ } }
+    try { unlinkSync(temp); } catch { /* A missing/undeletable temp file does not change the old metadata. */ }
+    throw error;
+  }
 }
 
 export interface HistoryEvent {
@@ -61,6 +70,15 @@ export interface LoadedHistory {
   readonly runs: readonly HistoryRun[];
   readonly incomplete: boolean;
   readonly corruption: "tail" | "middle" | null;
+  readonly historyNotice?: string;
+}
+
+export class HistoryWriteError extends Error {
+  readonly code = "history_write_failed";
+  constructor(message: string, options: ErrorOptions) {
+    super(message, options);
+    this.name = "HistoryWriteError";
+  }
 }
 
 /** A conservative single-writer, append-only journal for one desktop session. */
@@ -72,6 +90,7 @@ export class DesktopHistory {
   private readonly lockFd: number;
   private readonly corruption: "tail" | "middle" | null;
   private closed = false;
+  private writeFailure: string | undefined;
   private entries: Entry[];
 
   private constructor(directory: string, projectPath: string, entries: Entry[], lockFd: number, corruption: "tail" | "middle" | null) {
@@ -89,15 +108,19 @@ export class DesktopHistory {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const sessionId = `session-${createHash("sha256").update(projectPath).digest("hex").slice(0, 24)}`;
     const lockPath = join(directory, `${sessionId}.lock`);
-    const lockFd = acquireLock(lockPath, sessionId);
-    writeSync(lockFd, JSON.stringify({ pid: process.pid, sessionId }));
-    fsyncSync(lockFd);
-    const logPath = join(directory, `${sessionId}.jsonl`);
+    let lockFd: number | undefined;
     try {
+      lockFd = acquireLock(lockPath, sessionId);
+      writeAll(lockFd, Buffer.from(JSON.stringify({ pid: process.pid, sessionId }), "utf8"));
+      fsyncSync(lockFd);
+      const logPath = join(directory, `${sessionId}.jsonl`);
       const loaded = readEntries(logPath);
       return new DesktopHistory(directory, projectPath, loaded.entries, lockFd, loaded.corruption);
+    } catch (error: unknown) {
+      if (lockFd !== undefined) { try { closeSync(lockFd); } catch { /* Preserve the initialization failure. */ } }
+      if (lockFd !== undefined) { try { unlinkSync(lockPath); } catch { /* Keep the original failure visible. */ } }
+      throw error;
     }
-    catch (error) { closeSync(lockFd); unlinkSync(lockPath); throw error; }
   }
 
   snapshot(): LoadedHistory {
@@ -121,8 +144,9 @@ export class DesktopHistory {
       ...(context === undefined || this.corruption !== null ? {} : { messages: context.messages, ...(context.compaction === undefined ? {} : { compaction: context.compaction }) }),
       ...(activeRun === undefined ? {} : { activeRun }),
       runs: [...runById.values()].map((run) => run.status === "started" ? { ...run, status: "interrupted" as const } : run),
-      incomplete: this.corruption !== null,
+      incomplete: this.corruption !== null || this.writeFailure !== undefined,
       corruption: this.corruption,
+      ...(this.writeFailure === undefined ? {} : { historyNotice: `历史写入结果未知，记录可能部分写入或尚未持久化。${this.writeFailure}` }),
     };
   }
 
@@ -140,13 +164,41 @@ export class DesktopHistory {
   }
 
   private append(value: HistoryEvent | HistoryContext | HistoryRun): void {
-    if (this.closed) throw new Error("Desktop history is closed.");
-    if (this.corruption !== null) throw new Error(`历史记录损坏（${this.corruption === "tail" ? "尾部" : "中间"}），已进入只读恢复状态。`);
+    if (this.closed) {
+      const message = "Desktop history is closed; the record was not saved.";
+      throw new HistoryWriteError(message, { cause: new Error(message) });
+    }
+    if (this.writeFailure !== undefined) {
+      const message = `历史写入结果未知，记录可能部分写入或尚未持久化；当前写入者已停写，请重启后检查历史。${this.writeFailure}`;
+      throw new HistoryWriteError(message, { cause: new Error(this.writeFailure) });
+    }
+    if (this.corruption !== null) {
+      const message = `历史记录损坏（${this.corruption === "tail" ? "尾部" : "中间"}），已进入只读恢复状态。`;
+      throw new HistoryWriteError(message, { cause: new Error(message) });
+    }
     const entry: Entry = { version: FORMAT_VERSION, value: redact(value) as typeof value };
-    const fd = openSync(this.logPath, "a", 0o600);
-    try { writeSync(fd, `${JSON.stringify(entry)}\n`); fsyncSync(fd); }
-    finally { closeSync(fd); }
+    let fd: number | undefined;
+    try {
+      fd = openSync(this.logPath, "a", 0o600);
+      writeAll(fd, Buffer.from(`${JSON.stringify(entry)}\n`, "utf8"));
+      fsyncSync(fd);
+      closeSync(fd);
+      fd = undefined;
+    } catch (error: unknown) {
+      this.writeFailure = error instanceof Error ? error.message : String(error);
+      if (fd !== undefined) { try { closeSync(fd); } catch { /* Preserve the write error and keep the journal read-only. */ } }
+      throw new HistoryWriteError(`历史写入失败，记录可能部分写入或尚未持久化；当前写入者已停写：${this.writeFailure}`, { cause: error });
+    }
     this.entries.push(entry);
+  }
+}
+
+function writeAll(fd: number, value: Uint8Array): void {
+  let offset = 0;
+  while (offset < value.byteLength) {
+    const written = writeSync(fd, value, offset, value.byteLength - offset);
+    if (!Number.isInteger(written) || written <= 0 || written > value.byteLength - offset) throw new Error("文件写入未能推进，写入结果未知。");
+    offset += written;
   }
 }
 

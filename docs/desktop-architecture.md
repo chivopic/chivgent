@@ -192,6 +192,8 @@ hostInstanceId 改变后原请求结果视为未知，不跨 host 自动重试�
 
 记录运行受理、工具事件、完成事件和 Agent 可恢复的模型上下文；流式文本只保留在 host 内存快照，不逐 token 同步写入。保存运行受理失败会拒绝该次运行；日志写失败、损坏尾行或中间记录损坏会显示恢复状态，损坏日志不继续追加。启动时从最后可靠上下文恢复后续用户主动运行；重启时将无终态运行显示为 interrupted/unknown，未完成工具结果标注需检查工作区，绝不自动重放。日志不储存 Provider 凭证配置或权限，历史恢复也不设置运行权限。项目切换、多个已完成 Run 的最小时间线可恢复；完整任务列表、重命名/归档 UI、旧 CLI 导入及跨进程幂等请求记录不在本批范围。
 
+持久化边界的故障测试使用临时真实文件并在具体 I/O 操作注入错误：短写会循环完成（无进展则失败），锁初始化失败只清理本实例已取得的锁；JSONL 追加或同步失败后同一 writer 停止继续写，恢复时仍把可靠前缀和不确定尾部区分开。模型完成事件之后的 checkpoint/terminal 保存失败仍保留模型完成态，并通过独立 `history_write_failed` notice 和后续快照显示持久化诊断；运行异常也不会被写 unknown 失败覆盖。
+
 继续使用 JSONL，但分开两种读取结果：供模型恢复的上下文，与供界面展示的运行/消息/工具活动时间线。现有 `FileSessionStore.read()` 主要围绕最终消息快照，需要增加历史投影读取器。
 
 新记录明确保存 session/run/item ID、运行开始和终态、最终消息、工具开始/结果、审批决策和有效配置引用。文本 delta 不逐 token 落盘；工具进度只保留有界快照或最终输出。
@@ -253,20 +255,20 @@ worktree 首批只做创建、选择、任务绑定与可恢复清理；搬移�
 
 ## 11. 实施顺序与交付关卡
 
-每阶段都产出可运行结果；需要的共享抽象随真实路径提取。M0 桌面原型已完成；P1 首批真实只读路径已实现，后续历史与恢复依次推进。详见本轮 [交付顺序与验收记录](desktop-delivery-plan.md)。
+每阶段都产出可运行结果；需要的共享抽象随真实路径提取。M0 桌面原型、P1 首批真实只读路径和 P3 单项目记录/恢复首批均已实现；完整任务导航与旧 CLI 导入继续跟踪在 #68 后续。详见本轮 [交付顺序与验收记录](desktop-delivery-plan.md)。
 
 | 阶段 | 状态 | 交付内容 | 验收 / 证据 |
 | --- | --- | --- | --- |
-| P0 桌面底座 / M0 | 已实现并通过本地验证 | 单窗口、utility host、stub Agent、流式显示、停止、macOS arm64 `.app` | `npm run desktop:pack` 成功；复制到源码树外运行 [verify-packaged.mjs](../apps/desktop/scripts/verify-packaged.mjs)，12 项断言全通过：重复 initialize、IME、流式文本、文本出现后取消及光标收起、工具活动/展开、完成、host 退出与启动失败提示、关窗隐藏、退出清理。CLI `npm run check`、`npm run build` 通过；获批原生权限并设置 `TMPDIR=/private/tmp` 后 `npm test`：56 个文件，679 passed、1 skipped。Desktop `npm run desktop:test`：9 passed。产物未签名；上述验收结果来自本地；当前 CI 另有桌面单元/集成测试、构建和只读 Electron 验证。 |
+| P0 桌面底座 / M0 | 已实现并通过本地验证 | 单窗口、utility host、stub Agent、流式显示、停止、macOS arm64 `.app` | `npm run desktop:pack` 成功；复制到源码树外运行 [verify-packaged.mjs](../apps/desktop/scripts/verify-packaged.mjs)，12 项断言全通过：重复 initialize、IME、流式文本、文本出现后取消及光标收起、工具活动/展开、完成、host 退出与启动失败提示、关窗隐藏、退出清理。CLI `npm run check`、`npm run build` 通过；获批原生权限并设置 `TMPDIR=/private/tmp` 后 `npm test`：56 个文件，679 passed、1 skipped。Desktop `npm run desktop:test`：9 passed。产物未签名；上述验收结果来自本地；当前 CI 另有桌面单元/集成测试、构建和只读及历史恢复 Electron 验证。 |
 | P1 真实任务 | 首批已实现 | 最小 runtime、Provider/model 选择、目录授权、只读工具与流式会话 | fake Provider Electron E2E 验证选定临时项目、真实 read_file、多轮、取消、缺密钥恢复；完整命令见下文 |
 | P2 执行控制 | 待实现 | 写入/网络/Shell 设置、审批、取消、关窗/退出、通知 | 允许命令能执行、拒绝无副作用；关窗任务继续；退出清理；新设置只作用下一轮 |
-| P3 历史与会话 | 单项目记录与恢复首批已实现；后续仍跟踪 [#68](https://github.com/chivopic/chivgent/issues/68) | 版本化历史、host 快照、模型上下文和运行/工具恢复已实现；完整任务导航、旧 CLI 导入、标题/归档和跨 host 幂等记录待实现 | 刷新不断任务；重启恢复且不重放工具；损坏/写失败可见；后续再验收 CLI 导入与任务导航 |
+| P3 历史与会话 | 单项目记录与恢复首批已实现；完整范围继续跟踪 [#68](https://github.com/chivopic/chivgent/issues/68) | 版本化历史、host 快照、模型上下文和运行/工具恢复已实现；完整任务导航、旧 CLI 导入、标题/归档和跨 host 幂等记录待实现 | 刷新不断任务；重启恢复且不重放工具；损坏/写失败可见；后续再验收 CLI 导入与任务导航 |
 | P4 本地可用版 / M1 | 待实现，UI 后续跟踪 [#69](https://github.com/chivopic/chivgent/issues/69) | 侧栏、设置、凭证、diff、预览、草稿、主题、安装完善 | 完成修复→审批→测试→检查 diff→重启继续；无源码依赖；CLI 回归通过 |
 | P5 工作台 / M2 | 待实现 | 运行中介入、持久终端、review、worktree、并行任务 | 按上一节逐项关卡交付；共用能力进入 CLI 回归 |
 
-Desktop 凭证只读复用 CLI 的环境变量和 `auth.json` 解析；不写 `~/.chivgent`，不自动刷新 OAuth。 切换 Provider 会清空手工填写的模型覆盖；切换模型或 Provider 时复用当前对话和 ContextManager 压缩检查点，避免长对话重新压缩丢失摘要。与运行关联的终态事件必须匹配当前 runId，迟到的确认不得重新打开已完成运行。离线真实-adapter E2E 使用 localhost fake Provider 与临时项目，不使用外部服务或模型额度：先 `npm run desktop:build`，再运行 `node apps/desktop/scripts/verify-readonly.mjs`。`npm run desktop:test` 使用临时目录与 fake LLM。完整 CLI 回归仍需每阶段运行；本阶段不代表已实现项目历史或恢复。
+Desktop 凭证只读复用 CLI 的环境变量和 `auth.json` 解析；不写 `~/.chivgent`，不自动刷新 OAuth。切换 Provider 会清空手工填写的模型覆盖；切换模型或 Provider 时复用当前对话和 ContextManager 压缩检查点，避免长对话重新压缩丢失摘要。与运行关联的终态事件必须匹配当前 runId，迟到的确认不得重新打开已完成运行。离线真实-adapter E2E 使用共享临时 fixture、localhost fake Provider 与手写 synthetic protocol replay，不使用外部服务或模型额度：先 `npm run desktop:build`，再运行 `node apps/desktop/scripts/verify-readonly.mjs` 和 `node apps/desktop/scripts/verify-history.mjs`。失败时可设置 `CHIVGENT_DESKTOP_ARTIFACT_DIR` 保存脱敏诊断；通过 `CHIVGENT_DESKTOP_E2E_FAIL_AT=after-project-selected` 可验证脚本的失败产物路径。`npm run desktop:test` 使用临时目录与 fake LLM。完整 CLI 回归仍需每阶段运行；恢复行为见 [测试指南](desktop-testing.md)。
 
-有副作用的 P2 依赖最小持久运行记录与保存失败门控，随 P2 先落地；P3 再完成全部历史界面、导入和恢复能力。不能等到 P3 才知道 P2 的工具执行是否留有记录。
+有副作用的 P2 依赖最小持久运行记录与保存失败门控，随 P2 先落地；P3 后续工作完成全部历史界面、旧 CLI 导入和任务导航。不能等到后续 UI 工作才知道 P2 的工具执行是否留有记录。
 
 桌面端到端重点覆盖：中文输入、流式状态、审批拒绝、取消、快照重连、host 故障、关窗继续、退出清理、旧历史导入、目录含空格及离开源码树启动。故障注入验证“工具修改成功但结果尚未记录”的恢复状态。
 
@@ -281,7 +283,7 @@ P0 Desktop 原型与 P1 首批只读闭环已实现；P1 的具体实现位于 [
 3. 已通过现有 Agent 和 stub Provider 验证事件流、停止和 host 故障展示。
 4. 已实现任务主界面、多行输入、中文输入法处理、工具活动与停止；对话状态更新和 host failure 时收束流式指示。
 5. 已生成 macOS arm64 未签名 `.app`，复制到源码树外运行并通过上述 12 项验收。`npm run desktop:pack` 的 `identity: null` 明确跳过代码签名；未执行公证或发布。
-6. CLI 检查、构建、完整测试通过；本轮未将 CLI tarball 安装到独立目录做发布验证。当前 CI 另运行桌面测试、构建与只读 Electron 验证，未执行 Desktop 安装包验收或本批历史恢复脚本。
+6. CLI 检查、构建、完整测试通过；本轮未将 CLI tarball 安装到独立目录做发布验证。当前 CI 另运行桌面测试、构建、只读 Electron 验证和历史恢复脚本；未执行 Desktop 安装包验收。
 
 M1 完成标准：用户可以安装应用，在自己的项目中完成一次受控代码修改，看到执行过程和验证结果，检查改动，并在重启后继续同一任务。
 
