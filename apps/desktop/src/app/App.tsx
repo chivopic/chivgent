@@ -28,11 +28,14 @@ export function App(): JSX.Element {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [projectPath, setProjectPath] = useState("");
   const [projectError, setProjectError] = useState("");
-  const [runtimeConfig, setRuntimeConfig] = useState("");
+  const [runtimeConfig, setRuntimeConfig] = useState<{ provider: string; model: string; endpoint?: string } | null>(null);
   const [compatibleEndpoint, setCompatibleEndpoint] = useState("");
   const [demoMode, setDemoMode] = useState(false);
   const [provider, setProvider] = useState("openai");
   const [model, setModel] = useState("");
+  const [detailPanel, setDetailPanel] = useState<"project" | "settings" | "status" | null>(null);
+  const [copyPathFeedback, setCopyPathFeedback] = useState("");
+  const detailsDialogRef = useRef<HTMLDialogElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const ignoreEnter = useRef(false);
@@ -55,7 +58,8 @@ export function App(): JSX.Element {
         setCompatibleEndpoint(message.compatibleBaseURL ?? "");
         setDemoMode(message.capabilities.includes("demo-agent"));
       } else if (message.type === "runtime-config") {
-        setRuntimeConfig(`${message.provider} · ${message.model}${message.baseURL ? ` · ${message.baseURL}` : ""}`);
+        setRuntimeConfig({ provider: message.provider, model: message.model,
+          ...(message.baseURL === undefined ? {} : { endpoint: message.baseURL }) });
       } else if (message.type === "started") {
         // Broadcast can arrive before the invoke ACK; claim this run only
         // when it belongs to the currently pending request.
@@ -88,6 +92,11 @@ export function App(): JSX.Element {
       stopStatus();
     };
   }, []);
+
+  useEffect(() => {
+    const dialog = detailsDialogRef.current;
+    if (detailPanel !== null && dialog !== null && !dialog.open) dialog.showModal();
+  }, [detailPanel]);
 
   useEffect(() => {
     const node = composerRef.current;
@@ -163,7 +172,7 @@ export function App(): JSX.Element {
     if (result.value.type === "project-selected") {
       pendingStartRef.current = null;
       setProjectPath(result.value.path);
-      setRuntimeConfig("");
+      setRuntimeConfig(null);
       setProjectError("");
       dispatch({ type: "reset" });
     }
@@ -195,7 +204,7 @@ export function App(): JSX.Element {
           <button className="sidebar-toggle" type="button" aria-label="折叠侧栏" title="折叠侧栏" onClick={() => setSidebarOpen(false)}>‹</button>
         </div>
         <button className="new-task" type="button" onClick={() => void chooseProject()} disabled={running}><span>＋</span> {projectPath ? "切换项目目录" : "选择项目目录"}</button>
-        {projectPath && <div className="project-path" title={projectPath}>{projectPath}</div>}
+        {projectPath && <div className="project-path" title={projectPath}>{projectName(projectPath)}</div>}
         <section className="side-block grow">
           <h2>最近任务</h2>
           <div className="task current" data-testid="task-row" title="当前会话">
@@ -203,33 +212,57 @@ export function App(): JSX.Element {
             <span className="task-copy"><span className="task-title">当前会话</span><span className="task-phase" data-testid="run-status">{label}</span></span>
           </div>
         </section>
-        <footer className="sidebar-foot" data-testid="host-status">
-          <span className={`dot ${state.host.phase === "ready" ? "ready" : "bad"}`} />
-          <span>{hostLabel(state.host)}</span>
-        </footer>
       </aside>
       <main className="stage">
         {!sidebarOpen && <button className="reopen-sidebar" type="button" aria-label="展开侧栏" title="展开侧栏" onClick={() => setSidebarOpen(true)}>☰</button>}
         <header className="stage-head">
           <div>
             <h1>当前会话</h1>
-            <p>{projectPath || "先选择项目目录"}</p>
+            {projectPath ? <button className="project-identity" type="button" onClick={() => { setCopyPathFeedback(""); setDetailPanel("project"); }}>
+              {projectName(projectPath)} <span aria-hidden="true">⌄</span>
+            </button> : <p>先选择项目目录</p>}
           </div>
-          <span className={`pill ${statusTone(state)}`} data-testid="phase-pill">{label}</span>
+          <div className="head-actions">
+            <button className="quiet-action" type="button" onClick={() => setDetailPanel("settings")}>设置</button>
+            <button className="status-action" type="button" data-testid="status-action" aria-label={`连接状态详情：${hostLabel(state.host)}`} title="连接状态详情" onClick={() => setDetailPanel("status")}>
+              <span className={`dot ${state.host.phase === "ready" ? "ready" : state.host.phase === "starting" ? "run" : "bad"}`} />
+            </button>
+            {!sidebarOpen && <span className={`pill ${statusTone(state)}`} data-testid="phase-pill">{label}</span>}
+          </div>
         </header>
-        <div className="runtime-settings">
-          <label>Provider <select aria-label="Provider" data-testid="provider-select" value={provider} disabled={running} onChange={(event) => { setProvider(event.target.value); setModel(""); }}>
-            <option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="openai-compatible">OpenAI compatible</option><option value="openrouter">OpenRouter</option><option value="groq">Groq</option><option value="xai">xAI</option><option value="moonshot">Moonshot</option>
-          </select></label>
-          <label>Model <input aria-label="Model" data-testid="model-input" value={model} placeholder="沿用 Provider 环境配置" disabled={running} onChange={(event) => setModel(event.target.value)} /></label>
-          {provider === "openai-compatible" && <span data-testid="compatible-endpoint">请求端点：{compatibleEndpoint || "未配置 OPENAI_BASE_URL"}</span>}
-          {runtimeConfig && <span data-testid="runtime-config">{running ? "当前运行" : "最近使用"}：{runtimeConfig}</span>}
-        </div>
         {demoMode && <div className="banner" data-testid="demo-notice" role="status">离线演示：此模式不会读取所选项目文件，也不会连接真实 Provider。</div>}
         {state.notice !== null && (
           <div className="banner" role="status" data-testid="notice">{state.notice}</div>
         )}
         {projectError && <div className="banner" role="alert">{projectError}</div>}
+        <dialog className="details-dialog" ref={detailsDialogRef} aria-labelledby="details-title" onClose={() => setDetailPanel(null)}>
+          {detailPanel === "project" && <>
+            <div className="dialog-head"><div><h2 id="details-title">项目详情</h2><p>当前项目目录</p></div><button type="button" className="dialog-close" aria-label="关闭详情" onClick={() => detailsDialogRef.current?.close()}>×</button></div>
+            <div className="detail-block"><span className="detail-label">项目名称</span><strong>{projectName(projectPath)}</strong></div>
+            <div className="detail-block"><span className="detail-label">完整路径</span><code className="path-value">{projectPath}</code></div>
+            <button type="button" className="secondary-action" onClick={() => {
+              void navigator.clipboard.writeText(projectPath).then(() => setCopyPathFeedback("已复制完整路径。"), () => setCopyPathFeedback("复制失败，请手动选择上方路径。"));
+            }}>复制完整路径</button>
+            {copyPathFeedback && <p className="copy-feedback" role={copyPathFeedback.startsWith("复制失败") ? "alert" : "status"}>{copyPathFeedback}</p>}
+          </>}
+          {detailPanel === "settings" && <>
+            <div className="dialog-head"><div><h2 id="details-title">会话设置</h2><p>Provider 和模型的更改仅用于下一轮运行。</p></div><button type="button" className="dialog-close" aria-label="关闭设置" onClick={() => detailsDialogRef.current?.close()}>×</button></div>
+            <div className="settings-form">
+              <label>Provider <select aria-label="Provider" data-testid="provider-select" value={provider} disabled={running} onChange={(event) => { setProvider(event.target.value); setModel(""); }}>
+                <option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="openai-compatible">OpenAI compatible</option><option value="openrouter">OpenRouter</option><option value="groq">Groq</option><option value="xai">xAI</option><option value="moonshot">Moonshot</option>
+              </select></label>
+              <label>Model <input aria-label="Model" data-testid="model-input" value={model} placeholder="沿用 Provider 环境配置" disabled={running} onChange={(event) => setModel(event.target.value)} /></label>
+              {provider === "openai-compatible" && <div className="detail-block" data-testid="compatible-endpoint"><span className="detail-label">请求端点 · OPENAI_BASE_URL</span><code className="path-value">{compatibleEndpoint || "未配置"}</code></div>}
+              {runtimeConfig && <div className="detail-block" data-testid="runtime-config"><span className="detail-label">{running ? "当前运行的有效配置" : "最近一次运行的有效配置"}</span><code className="path-value">{runtimeConfig.provider} · {runtimeConfig.model}{runtimeConfig.endpoint ? ` · ${runtimeConfig.endpoint}` : ""}</code></div>}
+            </div>
+            <div className="dialog-actions"><button type="button" className="secondary-action" onClick={() => detailsDialogRef.current?.close()}>完成</button></div>
+          </>}
+          {detailPanel === "status" && <>
+            <div className="dialog-head"><div><h2 id="details-title">连接状态</h2><p>{hostLabel(state.host)}</p></div><button type="button" className="dialog-close" aria-label="关闭状态详情" onClick={() => detailsDialogRef.current?.close()}>×</button></div>
+            <div className="detail-block" data-testid="host-status"><span className="detail-label">Agent host</span><strong>{hostLabel(state.host)}</strong></div>
+            {state.host.message && <div className="detail-block"><span className="detail-label">诊断信息</span><code className="path-value">{state.host.message}</code></div>}
+          </>}
+        </dialog>
         <div
           className="timeline"
           ref={timelineRef}
@@ -393,6 +426,10 @@ function Empty(): JSX.Element {
       <h2>你想构建什么？</h2>
     </div>
   );
+}
+
+function projectName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
 }
 
 function Mark(props: { small?: boolean }): JSX.Element {

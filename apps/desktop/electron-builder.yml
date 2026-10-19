@@ -10,6 +10,7 @@ asar: true
 asarUnpack:
   - out/host/**
 mac:
+  icon: resources/icon.icns
   category: public.app-category.developer-tools
   identity: null
   hardenedRuntime: false

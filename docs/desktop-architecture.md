@@ -1,8 +1,8 @@
 # chivgent Desktop 产品与实施规划书
 
-更新：2026-10-18。状态：P1 首批真实只读运行已实现；Desktop 仍是单活动会话原型，历史恢复及 M1 后续能力未实现。
+更新：2026-10-19。状态：P1 首批真实只读运行已实现；Desktop 仍是单活动会话原型，历史恢复及 M1 后续能力未实现。
 
-默认运行真实 Agent。用户通过 main process 原生目录对话框选择项目；host 解析规范路径并为其创建只读 `AgentSession`，复用 CLI Provider、凭证解析、流式事件与 `list_files`、`search_text`、`read_file`、`update_plan` 工具。UI 可选择已有 Provider 和模型名称；endpoint 与 API key 沿用 Provider 环境变量及只读 CLI `auth.json`。Renderer 不接收密钥。缺少凭证时 host 给出可操作错误，应用和项目选择仍可使用。OAuth 刷新、项目写入、Shell 均未接入。
+默认运行真实 Agent。用户通过 main process 原生目录对话框选择项目；host 解析规范路径并为其创建只读 `AgentSession`，复用 CLI Provider、凭证解析、流式事件与 `list_files`、`search_text`、`read_file`、`update_plan` 工具。Provider 和模型可从紧凑的会话设置入口选择，具体展示契约见[第 6 节](#6-项目会话与配置契约)。Renderer 不接收密钥，endpoint 与 API key 沿用 Provider 环境变量及只读 CLI `auth.json`。缺少凭证时 host 给出可操作错误，应用和项目选择仍可使用。OAuth 刷新、项目写入、Shell 均未接入。
 
 每个项目当前只有一个内存中的会话，支持多轮上下文；切换目录会开始新上下文，运行期间不能切换。Provider/model 改变时用旧 transcript 重建 session。没有项目/会话历史列表、磁盘持久化、应用重启恢复、并行运行或自动任务排队。离线演示仅在显式设置 `CHIVGENT_DESKTOP_DEMO=1` 时启用。macOS arm64 `.app` 本地打包未签名；这不代表公开发布或 CI 已覆盖 Desktop。恢复与持久化见 [#68](https://github.com/chivopic/chivgent/issues/68)，UI 后续见 [#69](https://github.com/chivopic/chivgent/issues/69)。
 
@@ -154,6 +154,8 @@ UI 叫“任务/会话”；内部沿用 Session 和 Run，对应 Thread/Turn �
 
 每次运行冻结有效配置：Provider、model、endpoint、cwd、工具写权限、Shell 启用/后端/网络策略、审批策略与上下文预算。快照只记录凭证引用，不保存密钥。
 
+界面将下一轮 Provider/model 选择与最近一次实际运行的有效配置分开展示：会话设置入口允许选择 Provider 和模型覆盖，切换 Provider 会清除模型覆盖；运行期间仍可打开设置查看当前有效配置，但不能修改选择。endpoint 与完整配置仅在设置详情中可见。项目名称是项目详情入口，详情显示 host 解析后的完整规范路径并提供复制；侧栏和对话标题不铺开重复路径。正常 Agent host 连接仅显示为可访问的状态点，连接详情按需打开；连接失败和其他需要用户处理的提示持续显示。
+
 修改模型或权限只影响下一次运行。要立即生效先停止再开始；审批回复只授权该次动作。M1 不在已有会话中切换 cwd，改用新建任务。恢复历史不能静默扩大权限，界面展示本次继续执行的有效设置。
 
 M1 同一 host 只执行一个 Run，其他会话可查看、编辑草稿或等待；不自动排队。这只约束本应用，不声称阻止外部编辑器或其他 CLI 修改同一目录。M2 按规范化工作目录调度；不同目录可并行，同目录写任务串行或使用独立 worktree。
@@ -252,13 +254,13 @@ worktree 首批只做创建、选择、任务绑定与可恢复清理；搬移�
 | 阶段 | 状态 | 交付内容 | 验收 / 证据 |
 | --- | --- | --- | --- |
 | P0 桌面底座 / M0 | 已实现并通过本地验证 | 单窗口、utility host、stub Agent、流式显示、停止、macOS arm64 `.app` | `npm run desktop:pack` 成功；复制到源码树外运行 [verify-packaged.mjs](../apps/desktop/scripts/verify-packaged.mjs)，12 项断言全通过：重复 initialize、IME、流式文本、文本出现后取消及光标收起、工具活动/展开、完成、host 退出与启动失败提示、关窗隐藏、退出清理。CLI `npm run check`、`npm run build` 通过；获批原生权限并设置 `TMPDIR=/private/tmp` 后 `npm test`：56 个文件，679 passed、1 skipped。Desktop `npm run desktop:test`：9 passed。产物未签名；上述 Desktop 验收为本地运行，CI 目前未覆盖 Desktop。 |
-| P1 真实任务 | 首批已实现 | 最小 runtime、Provider/model 选择、目录授权、只读工具与流式会话 | fake Provider Electron E2E 验证选定临时项目、真实 read_file、多轮、取消、缺密钥恢复；完整命令见下文 |
+| P1 真实任务 | 首批已实现 | 最小 runtime、Provider/model 选择、目录授权、只读工具与流式会话 | fake Provider Electron E2E 验证默认信息层级、路径详情/复制、设置开关/键盘关闭/焦点返回、真实 Provider 请求、read_file、多轮、取消、缺密钥恢复及 880px 布局；完整命令见下文 |
 | P2 执行控制 | 待实现 | 写入/网络/Shell 设置、审批、取消、关窗/退出、通知 | 允许命令能执行、拒绝无副作用；关窗任务继续；退出清理；新设置只作用下一轮 |
 | P3 历史与会话 | 待实现，跟踪 [#68](https://github.com/chivopic/chivgent/issues/68) | 新格式、历史投影、订阅快照、任务元数据、导入和锁 | 刷新不断任务；重启恢复；崩溃不重放工具；旧日志不覆盖；导入保留来源 |
 | P4 本地可用版 / M1 | 待实现，UI 后续跟踪 [#69](https://github.com/chivopic/chivgent/issues/69) | 侧栏、设置、凭证、diff、预览、草稿、主题、安装完善 | 完成修复→审批→测试→检查 diff→重启继续；无源码依赖；CLI 回归通过 |
 | P5 工作台 / M2 | 待实现 | 运行中介入、持久终端、review、worktree、并行任务 | 按上一节逐项关卡交付；共用能力进入 CLI 回归 |
 
-Desktop 凭证只读复用 CLI 的环境变量和 `auth.json` 解析；不写 `~/.chivgent`，不自动刷新 OAuth。 切换 Provider 会清空手工填写的模型覆盖；切换模型或 Provider 时复用当前对话和 ContextManager 压缩检查点，避免长对话重新压缩丢失摘要。与运行关联的终态事件必须匹配当前 runId，迟到的确认不得重新打开已完成运行。离线真实-adapter E2E 使用 localhost fake Provider 与临时项目，不使用外部服务或模型额度：先 `npm run desktop:build`，再运行 `node apps/desktop/scripts/verify-readonly.mjs`。`npm run desktop:test` 使用临时目录与 fake LLM。完整 CLI 回归仍需每阶段运行；本阶段不代表已实现项目历史或恢复。
+Desktop 凭证只读复用 CLI 的环境变量和 `auth.json` 解析；不写 `~/.chivgent`，不自动刷新 OAuth。切换 Provider 会清空手工填写的模型覆盖；切换模型或 Provider 时复用当前对话和 ContextManager 压缩检查点，避免长对话重新压缩丢失摘要。与运行关联的终态事件必须匹配当前 runId，迟到的确认不得重新打开已完成运行。离线真实-adapter E2E 使用 localhost fake Provider 与临时项目，不使用外部服务或模型额度：先 `npm run desktop:build`，再运行 `node apps/desktop/scripts/verify-readonly.mjs [normal.png] [narrow.png]`；脚本验证真实配置请求、路径复制、重要提示、键盘行为，并可保存真实渲染截图。`npm run desktop:test` 使用临时目录与 fake LLM。完整 CLI 回归仍需每阶段运行；本阶段不代表已实现项目历史或恢复。
 
 有副作用的 P2 依赖最小持久运行记录与保存失败门控，随 P2 先落地；P3 再完成全部历史界面、导入和恢复能力。不能等到 P3 才知道 P2 的工具执行是否留有记录。
 

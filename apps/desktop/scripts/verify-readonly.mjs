@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -10,17 +10,20 @@ import { _electron as electron } from "playwright-core";
 // Exercise the built app through its real IPC, host, Provider adapter and
 // workspace tools. Only this loopback fixture receives model requests.
 const desktop = fileURLToPath(new URL("../", import.meta.url));
-const root = await mkdtemp(join(tmpdir(), "chivgent-desktop-readonly-"));
-const project = join(root, "中文 project");
+const root = await mkdtemp(join(tmpdir(), "chivgent desktop 中文-"));
+const project = join(root, "chivopic");
 const auth = join(root, "auth");
 await mkdir(project);
 await mkdir(auth);
+const canonicalProject = await realpath(project);
 const marker = "fixture-project-入口-123";
 await writeFile(join(project, "README.md"), `${marker}\n`);
 const requests = [];
 const fixtureErrors = [];
 let activeApp;
 let stage = "setup";
+let endpointPath = "";
+let endpoint = "";
 // A hung fixture must report which assertion/cleanup stage stopped progressing.
 // Electron's utility process is reaped by its parent watchdog on hard exit.
 const watchdog = setTimeout(() => {
@@ -35,7 +38,7 @@ const progress = (label) => {
 };
 const server = createServer(async (request, response) => {
   try {
-    assert.equal(request.url, "/v1/chat/completions");
+    assert.equal(request.url, `${endpointPath}/chat/completions`);
     assert.equal(request.method, "POST");
     assert.equal(request.headers.authorization, "Bearer fixture-key");
     let raw = "";
@@ -84,7 +87,8 @@ try {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", accept);
   });
-  const endpoint = `http://127.0.0.1:${server.address().port}/v1`;
+  endpointPath = `/v1/${"long-endpoint-segment-".repeat(5)}`;
+  endpoint = `http://127.0.0.1:${server.address().port}${endpointPath}`;
   const environment = {};
   for (const key of ["PATH", "TMPDIR", "LANG", "LC_ALL", "SystemRoot", "DISPLAY", "XAUTHORITY"]) {
     if (process.env[key] !== undefined) environment[key] = process.env[key];
@@ -98,16 +102,76 @@ try {
   });
   progress("Electron launched; waiting for host readiness");
   const page = await activeApp.firstWindow();
-  await page.getByTestId("host-status").getByText("已连接", { exact: false }).waitFor({ timeout: 20_000 });
+  progress("checking default information hierarchy");
+  await page.locator(".dot.ready").first().waitFor({ timeout: 20_000 });
+  assert.equal(await page.getByTestId("provider-select").isVisible().catch(() => false), false,
+    "provider controls must stay hidden until the user opens settings");
+  assert.equal(await page.getByTestId("compatible-endpoint").isVisible().catch(() => false), false,
+    "request endpoint must not be visible in the default view");
+  assert.equal(await page.getByTestId("runtime-config").isVisible().catch(() => false), false,
+    "effective runtime configuration must stay out of the default view");
+  assert.equal(await page.getByTestId("host-status").isVisible().catch(() => false), false,
+    "normal host connectivity must not occupy the main view");
+  assert.equal(await page.getByText(canonicalProject, { exact: true }).count(), 0,
+    "the full project path must not be repeated in the conversation view");
+  assert.equal(await page.getByText("Agent host 已连接", { exact: true }).count(), 0,
+    "normal host diagnostics must not occupy the default view");
+  await page.getByTestId("status-action").click();
+  await page.getByTestId("host-status").getByText("Agent host 已连接", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "关闭状态详情" }).click();
   await activeApp.evaluate(({ dialog }, selected) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] });
   }, project);
-  // The renderer must inherit CHIVGENT_PROVIDER before its first request.
-  await page.getByTestId("provider-select").waitFor();
+  await page.getByRole("button", { name: "选择项目目录", exact: false }).click();
+  assert.equal(await page.getByText(canonicalProject, { exact: true }).count(), 0,
+    "the selected full path stays out of the conversation view");
+  assert.equal(await page.getByTestId("user-message").count(), 0,
+    "a newly selected project starts with an empty visible conversation");
+  if (process.argv[2] !== undefined) await page.screenshot({ path: resolve(process.argv[2]) });
+  await page.getByRole("button", { name: "折叠侧栏" }).click();
+  await activeApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(880, 600));
+  await page.waitForFunction(() => window.innerWidth === 880);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth &&
+    [...document.querySelectorAll(".stage-head button")].every((element) => {
+      const bounds = element.getBoundingClientRect();
+      return bounds.left >= 0 && bounds.right <= window.innerWidth;
+    })), "the narrow window must keep header controls within the viewport");
+  if (process.argv[3] !== undefined) await page.screenshot({ path: resolve(process.argv[3]) });
+  await activeApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 780));
+  await page.waitForFunction(() => window.innerWidth === 1180);
+  await page.locator(".project-identity").click();
+  assert.equal(await page.locator(".path-value").innerText(), canonicalProject,
+    "project details must expose the complete selected path");
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+      writeText: async (text) => {
+        if (window.__failDesktopClipboardFixture) throw new Error("fixture clipboard unavailable");
+        window.__desktopClipboardFixture = text;
+      },
+      readText: async () => window.__desktopClipboardFixture ?? "",
+    } });
+  });
+  await page.evaluate(() => { window.__failDesktopClipboardFixture = true; });
+  await page.getByRole("button", { name: "复制完整路径" }).click();
+  await page.getByRole("alert").getByText("复制失败", { exact: false }).waitFor();
+  await page.evaluate(() => { window.__failDesktopClipboardFixture = false; });
+  await page.getByRole("button", { name: "复制完整路径" }).click();
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), canonicalProject,
+    "project details must copy the exact selected path");
+  await page.getByRole("status").getByText("已复制完整路径", { exact: false }).waitFor();
+  await page.getByRole("button", { name: "关闭详情" }).click();
+  assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("project-identity")), true,
+    "closing project details must return focus to its opening control");
+  progress("project selected; verifying provider change clears manual model");
+  await page.getByRole("button", { name: "设置" }).click();
+  await page.getByTestId("provider-select").waitFor({ state: "visible" });
   await page.waitForFunction(() => document.querySelector('[data-testid="provider-select"]')?.value === "openai-compatible");
   await page.getByTestId("compatible-endpoint").getByText(endpoint, { exact: false }).waitFor();
-  await page.getByRole("button", { name: "选择项目目录", exact: false }).click();
-  progress("project selected; verifying provider change clears manual model");
+  await page.keyboard.press("Escape");
+  await page.getByTestId("provider-select").waitFor({ state: "hidden" });
+  assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), "设置",
+    "Escape must return focus to the settings opener");
+  await page.getByRole("button", { name: "设置" }).click();
   // A manual model override belongs to the provider that was selected when it was typed.
   await page.getByTestId("model-input").fill("stale-model");
   await page.getByTestId("provider-select").selectOption("deepseek");
@@ -117,13 +181,52 @@ try {
   assert.equal(await page.getByTestId("model-input").inputValue(), "");
   await page.getByTestId("model-input").fill("desktop-fixture");
   await page.getByTestId("composer").waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "完成", exact: true }).click();
   progress("provider/model controls verified; starting project read");
   await page.getByTestId("composer").fill("解释当前项目");
   await page.getByTestId("send").click();
   await page.getByTestId("run-status").getByText("已完成").waitFor({ timeout: 20_000 });
+  assert.equal(await page.getByTestId("compatible-endpoint").count(), 0,
+    "endpoint stays hidden after a completed run");
+  assert.equal(await page.getByTestId("runtime-config").count(), 0,
+    "the last effective config stays hidden after a completed run");
+  await page.getByRole("button", { name: "设置" }).click();
+  await page.getByTestId("runtime-config").getByText(endpoint, { exact: false }).waitFor();
+  await page.getByRole("button", { name: "完成", exact: true }).click();
   await page.getByTestId("tool-activity").getByRole("button").click();
   assert.ok((await page.getByTestId("tool-activity").innerText()).includes(marker));
   assert.ok((await page.getByTestId("assistant-message").last().innerText()).includes(marker));
+  await activeApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(880, 600));
+  await page.waitForFunction(() => window.innerWidth === 880);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth &&
+    [...document.querySelectorAll(".stage-head button")].every((element) => {
+      const bounds = element.getBoundingClientRect();
+      return bounds.left >= 0 && bounds.right <= window.innerWidth;
+    })), "the narrow window must keep header controls within the viewport");
+  await page.getByRole("button", { name: "设置" }).click();
+  await page.getByTestId("compatible-endpoint").getByText(endpoint, { exact: false }).waitFor();
+  assert.ok(await page.evaluate(() => {
+    const dialog = document.querySelector(".details-dialog");
+    const value = dialog?.querySelector(".path-value");
+    if (!dialog || !value) return false;
+    const dialogBounds = dialog.getBoundingClientRect();
+    const valueBounds = value.getBoundingClientRect();
+    return document.documentElement.scrollWidth <= window.innerWidth &&
+      dialogBounds.left >= 0 && dialogBounds.right <= window.innerWidth && valueBounds.right <= dialogBounds.right;
+  }), "the long endpoint must wrap inside settings at narrow width");
+  await page.getByRole("button", { name: "完成", exact: true }).click();
+  await page.locator(".project-identity").click();
+  assert.ok(await page.evaluate(() => {
+    const dialog = document.querySelector(".details-dialog");
+    const value = dialog?.querySelector(".path-value");
+    if (!dialog || !value) return false;
+    const dialogBounds = dialog.getBoundingClientRect();
+    const valueBounds = value.getBoundingClientRect();
+    return dialogBounds.left >= 0 && dialogBounds.right <= window.innerWidth && valueBounds.right <= dialogBounds.right;
+  }), "the complete project path must wrap inside project details at narrow width");
+  await page.getByRole("button", { name: "关闭详情" }).click();
+  await activeApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 780));
+  await page.waitForFunction(() => window.innerWidth === 1180);
   progress("project read and tool output verified; testing context carryover");
   await page.getByTestId("composer").fill("继续追问");
   await page.getByTestId("send").click();
@@ -131,15 +234,20 @@ try {
   await page.getByTestId("run-status").getByText("已完成").waitFor();
   progress("multi-turn verified; testing missing credential recovery");
   const beforeMissingKey = requests.length;
+  await page.getByRole("button", { name: "设置" }).click();
   await page.getByTestId("provider-select").selectOption("deepseek");
   await page.getByTestId("model-input").fill("desktop-fixture");
+  await page.getByRole("button", { name: "完成", exact: true }).click();
   await page.getByTestId("composer").fill("缺凭证测试");
   await page.getByTestId("send").click();
   await page.getByTestId("notice").filter({ hasText: "API key" }).waitFor();
   await page.getByTestId("run-status").getByText("出错").waitFor();
   assert.equal(requests.length, beforeMissingKey);
+  await page.getByRole("button", { name: "设置" }).click();
   await page.getByTestId("provider-select").selectOption("openai-compatible");
   await page.getByTestId("model-input").fill("desktop-fixture");
+  await page.getByRole("button", { name: "完成", exact: true }).click();
+  await page.getByRole("button", { name: "展开侧栏" }).click();
   // Repro: open the native folder picker, start a task while it is pending,
   // then accept a project change while the task is still running.
   await activeApp.evaluate(({ dialog }) => {
@@ -152,6 +260,14 @@ try {
   await page.getByTestId("composer").fill("取消测试");
   await page.getByTestId("send").click();
   await page.getByTestId("assistant-message").filter({ hasText: "正在等待取消" }).waitFor();
+  await page.getByRole("button", { name: "设置" }).click();
+  assert.equal(await page.getByTestId("provider-select").isDisabled(), true,
+    "provider cannot change during a run");
+  assert.equal(await page.getByTestId("model-input").isDisabled(), true,
+    "model cannot change during a run");
+  assert.equal(await page.getByTestId("runtime-config").isVisible(), true,
+    "the active run configuration remains inspectable while controls are disabled");
+  await page.getByRole("button", { name: "完成", exact: true }).click();
   await activeApp.evaluate(() => {
     globalThis.__resolveDesktopProjectPicker({ canceled: false, filePaths: [process.cwd()] });
     delete globalThis.__resolveDesktopProjectPicker;
@@ -170,19 +286,32 @@ try {
   assert.deepEqual(await readdir(project), ["README.md"]);
   assert.deepEqual(await readdir(auth), []);
   assert.deepEqual(fixtureErrors, []);
+  const longProjectName = "x".repeat(180);
+  const longNameProject = join(root, longProjectName);
+  await mkdir(longNameProject);
+  const canonicalLongNameProject = await realpath(longNameProject);
+  await activeApp.evaluate(({ dialog }, selected) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] });
+  }, longNameProject);
+  await page.getByRole("button", { name: "切换项目目录" }).click();
+  await page.waitForFunction((name) => document.querySelector(".project-identity")?.textContent?.includes(name), longProjectName);
   await activeApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(880, 600));
   await page.waitForFunction(() => window.innerWidth === 880);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    "a long project basename must not overflow the narrow conversation header");
+  await page.locator(".project-identity").click();
   assert.ok(await page.evaluate(() => {
-    const controls = [...document.querySelectorAll(".runtime-settings input, .runtime-settings select")];
-    return document.documentElement.scrollWidth <= window.innerWidth && controls.every((element) => {
-      const bounds = element.getBoundingClientRect();
-      return bounds.left >= 0 && bounds.right <= window.innerWidth;
-    });
-  }), "the supported minimum window width must keep the model controls on screen");
-  await activeApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 780));
-  await page.waitForFunction(() => window.innerWidth === 1180);
-  progress("minimum window layout verified; closing Electron");
-  if (process.argv[2] !== undefined) await page.screenshot({ path: resolve(process.argv[2]) });
+    const dialog = document.querySelector(".details-dialog");
+    const name = dialog?.querySelector(".detail-block strong");
+    if (!dialog || !name) return false;
+    const d = dialog.getBoundingClientRect();
+    const n = name.getBoundingClientRect();
+    return d.left >= 0 && d.right <= innerWidth && n.left >= d.left && n.right <= d.right &&
+      dialog.scrollWidth <= dialog.clientWidth;
+  }), "a long project basename must wrap inside project details at narrow width");
+  assert.equal(await page.locator(".path-value").innerText(), canonicalLongNameProject);
+  progress("long project basename layout verified; closing Electron");
+  await page.getByRole("button", { name: "关闭详情" }).click();
   console.log(JSON.stringify({ selectedProjectRead: true, toolOutputVisible: true,
     multiTurn: true, missingCredentialRecovery: true, cancellation: true, continueAfterStop: true,
     readonlyWorkspace: true, noCredentialWrites: true, minimumWindowLayout: true,

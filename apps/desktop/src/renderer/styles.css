@@ -106,7 +106,6 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .sidebar-closed .stage-head { padding-left: 60px; }
 .mark { position: relative; display: block; flex: none; overflow: hidden; border-radius: 7px; background: #fffaf0; }
 .mark-image { position: absolute; top: 50%; left: 50%; width: 172%; height: 172%; max-width: none; transform: translate(-50%, -50%); }
-.desk-home .stage-head { display: none; }
 .desk-home .timeline { display: flex; flex: 1; align-items: center; justify-content: center; width: 100%; min-height: 0; padding: 0 28px; margin: 0; }
 .desk-home .empty { margin: 0 auto; transform: translateY(-3vh); }
 .desk-home .composer { margin: 0 auto 20px; }
@@ -124,4 +123,42 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   .desk-home .timeline { padding-left: 16px; padding-right: 16px; }
   .empty h2 { font-size: 22px; }
   .desk-home .timeline { padding-bottom: 12px; }
+}
+.head-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 7px; min-width: 0; }
+.stage-head .head-actions { flex-shrink: 0; }
+.project-identity { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; border: 0; border-radius: 5px; padding: 1px 4px; margin: 1px 0 0 -4px; background: transparent; color: var(--mute); font-size: 11px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.project-identity:hover { background: #f4f1eb; color: var(--ink); }
+.quiet-action, .status-action { border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 5px 9px; color: #625e56; font-size: 11px; white-space: nowrap; }
+.quiet-action:hover, .status-action:hover { background: #f8f6f1; }
+.status-action { display: grid; place-items: center; width: 27px; height: 27px; padding: 0; }
+.details-dialog { width: min(480px, calc(100vw - 28px)); max-height: min(80vh, 680px); overflow: auto; border: 1px solid #e4e0d7; border-radius: 16px; padding: 20px; background: var(--paper); color: var(--ink); box-shadow: 0 18px 60px #25201930; }
+.details-dialog .detail-block strong { display: block; max-width: 100%; overflow-wrap: anywhere; }
+.details-dialog::backdrop { background: #27231c66; }
+.dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 18px; }
+.dialog-head h2 { margin: 0; font-size: 17px; font-weight: 600; }
+.dialog-head p { margin: 4px 0 0; color: var(--mute); font-size: 12px; overflow-wrap: anywhere; }
+.dialog-close { flex: none; width: 30px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: var(--mute); font-size: 22px; line-height: 1; }
+.dialog-close:hover { background: #f1eee7; }
+.detail-block { display: flex; flex-direction: column; gap: 5px; min-width: 0; margin: 13px 0; }
+.detail-label { color: var(--mute); font-size: 11px; }
+.path-value { display: block; max-width: 100%; overflow-wrap: anywhere; white-space: pre-wrap; font: 12px/1.6 "SF Mono", ui-monospace, Menlo, monospace; color: #49453d; }
+.settings-form { display: flex; flex-direction: column; gap: 12px; }
+.settings-form label { display: flex; flex-direction: column; gap: 5px; color: var(--mute); font-size: 12px; }
+.settings-form select, .settings-form input { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--sidebar); color: var(--ink); }
+.settings-form input::placeholder { color: var(--mute); }
+.settings-form :disabled { opacity: .6; }
+.secondary-action { border: 1px solid #ded9cf; border-radius: 8px; background: #f7f5ef; padding: 8px 11px; font-size: 12px; }
+.secondary-action:hover { background: #efede6; }
+.copy-feedback { margin: 8px 0 0; color: #557363; font-size: 12px; }
+.dialog-actions { display: flex; justify-content: flex-end; margin-top: 20px; }
+.sidebar .project-path { font-size: 12px; color: var(--ink); font-weight: 550; }
+@media (max-width: 640px) {
+  .stage-head { align-items: flex-start; gap: 8px; padding: 14px 12px 8px; }
+  .stage-head p { max-width: 22vw; }
+  .head-actions { gap: 4px; }
+  .quiet-action, .status-action { padding: 5px 6px; font-size: 10px; }
+  .pill { margin-left: 0; padding: 4px 7px; }
+  .banner { margin-left: 12px; margin-right: 12px; overflow-wrap: anywhere; }
+  .timeline { padding-left: 12px; padding-right: 12px; }
+  .composer { width: calc(100% - 24px); }
 }

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -48,13 +48,21 @@ const app = await electron.launch({
 
 try {
   const page = await app.firstWindow();
+  await page.locator(".dot.ready").first().waitFor({ timeout: 20_000 });
+  report.normalHostMessageHidden = await page.getByTestId("host-status").count() === 0;
+  report.providerControlsHidden = await page.getByTestId("provider-select").count() === 0;
   await app.evaluate(({ dialog }, projectPath) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [projectPath] });
   }, root);
-  await page.getByTestId("host-status").getByText("已连接", { exact: false }).waitFor({ timeout: 20_000 });
+  await page.getByTestId("status-action").click();
+  await page.getByTestId("host-status").getByText("Agent host 已连接", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "关闭状态详情" }).click();
   await page.getByTestId("demo-notice").getByText("离线演示", { exact: false }).waitFor();
   await page.getByRole("button", { name: "选择项目目录" }).click();
-  await page.locator(".project-path").filter({ hasText: root }).waitFor({ timeout: 5_000 });
+  await page.locator(".project-path").getByText(root.split(/[\\/]/).filter(Boolean).at(-1), { exact: true }).waitFor({ timeout: 5_000 });
+  await page.locator(".project-identity").click();
+  await page.getByText(realpathSync(root), { exact: true }).waitFor();
+  await page.getByRole("button", { name: "关闭详情" }).click();
   const initializeResults = await page.evaluate(async () =>
     Promise.all([window.chivgent.initialize(), window.chivgent.initialize()]),
   );
@@ -122,9 +130,9 @@ try {
   await exitApp.evaluate(({ dialog }, projectPath) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [projectPath] });
   }, root);
-  await page.getByTestId("host-status").getByText("已连接", { exact: false }).waitFor({ timeout: 20_000 });
+  await page.locator(".status-action .dot.ready").waitFor({ timeout: 20_000 });
   await page.getByRole("button", { name: "选择项目目录" }).click();
-  await page.locator(".project-path").filter({ hasText: root }).waitFor({ timeout: 5_000 });
+  await page.locator(".project-path").getByText(root.split(/[\\/]/).filter(Boolean).at(-1), { exact: true }).waitFor({ timeout: 5_000 });
   await page.getByTestId("composer").fill("中途退出 host");
   await page.getByTestId("send").click();
   await page.getByTestId("tool-activity").waitFor({ timeout: 15_000 });

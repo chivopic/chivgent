@@ -164,6 +164,9 @@ app.setAboutPanelOptions({
 });
 
 app.whenReady().then(() => {
+  if (!app.isPackaged && process.platform === "darwin") {
+    app.dock?.setIcon(join(app.getAppPath(), "resources", "icon.png"));
+  }
   installMenu();
   installIpc();
   bridge.onEvent((message) => {
