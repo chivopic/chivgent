@@ -29,9 +29,9 @@ chivgent 是跑在你打开的目录里的本地 agent。它要做的，是 [Cla
 
 桌面版正在开发中，将项目会话、流式回答和工具活动集中到一个简洁的本地工作台。欢迎关注[开发进展与当前能力](docs/desktop-architecture.md)。
 
-![chivgent 桌面版开发预览：chivopic 项目中的对话和文件读取过程。](product-media/desktop/02-conversation.png)
+![chivgent 桌面版开发预览：chivopic 项目的简洁工作台。](product-media/desktop/01-workspace.png)
 
-*开发预览：chivopic 示例项目与离线演示对话。*
+*开发预览：chivopic 示例项目。*
 
 ## 快速开始
 

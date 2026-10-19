@@ -29,9 +29,9 @@ The default that category expects is auto mode. Ordinary reads, workspace edits,
 
 The desktop app is in active development, bringing project conversations, streaming responses, and tool activity into a focused local workspace. Follow the [development progress and current limits](docs/desktop-architecture.md).
 
-![chivgent Desktop development preview showing a conversation and file-reading activity in the chivopic sample project.](product-media/desktop/02-conversation.png)
+![chivgent Desktop development preview showing the clean workspace for the chivopic sample project.](product-media/desktop/01-workspace.png)
 
-*Development preview using the chivopic sample project and an offline demo conversation.*
+*Development preview using the chivopic sample project.*
 
 ## Getting started
 
