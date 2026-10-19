@@ -52,7 +52,7 @@ Luna 负责第 1 项实现及行为测试；主代理负责检查边界、复核
 4. `npm run check`、`npm test`、`npm run build`、`npm run desktop:test`、`npm run desktop:build` 的实际结果。
 5. Electron 实际交互、打包应用和真实供应商调用分别记录；没执行的不能写成通过。
 
-按[代码规范](code-standards.md)检查；桌面测试不在根 `npm test` 或现有 CI 中。首批第 1 项完成后，已按计划交付第 2 项最小闭环；完整任务界面及导入继续作为后续工作。
+按[代码规范](code-standards.md)检查；桌面测试不在根 `npm test` 中；现有 CI 通过独立 desktop job 运行桌面测试、构建和只读 Electron 验证，新历史恢复脚本尚未接入。首批第 1 项完成后，已按计划交付第 2 项最小闭环；完整任务界面及导入继续作为后续工作。
 
 ## 本轮交付与验证记录
 

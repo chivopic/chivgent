@@ -4,7 +4,7 @@
 
 默认运行真实 Agent。用户通过 main process 原生目录对话框选择项目；host 解析规范路径并为其创建只读 `AgentSession`，复用 CLI Provider、凭证解析、流式事件与 `list_files`、`search_text`、`read_file`、`update_plan` 工具。UI 可选择已有 Provider 和模型名称；endpoint 与 API key 沿用 Provider 环境变量及只读 CLI `auth.json`。Renderer 不接收密钥。缺少凭证时 host 给出可操作错误，应用和项目选择仍可使用。OAuth 刷新、项目写入、Shell 均未接入。
 
-每个项目当前提供一个最小会话，支持多轮上下文；切换到有历史的项目会恢复其会话，首次打开才开始新上下文，运行期间不能切换。Provider/model 改变时用旧 transcript 重建 session。真实运行现在把当前项目及版本化运行记录保存在应用 userData 下的 `desktop-history-v1`；可用 `CHIVGENT_DESKTOP_HISTORY_DIR` 为验证指定隔离目录。host 初始化时恢复所选项目的原子快照；Renderer 刷新不重新提交任务，重启只读取历史和上下文，不自动运行模型或工具。未结束运行显示 interrupted/unknown；未完成工具提示检查工作区。历史损坏和写入失败会显示错误，损坏日志保持只读。记录不含凭证配置字段，序列化内容会对常见 token/key 形态脱敏。离线演示仅在显式设置 `CHIVGENT_DESKTOP_DEMO=1` 时启用，当前 demo 路径不持久化。macOS arm64 `.app` 本地打包未签名；这不代表公开发布或 CI 已覆盖 Desktop。完整恢复与 CLI 兼容仍见 [#68](https://github.com/chivopic/chivgent/issues/68)，UI 后续见 [#69](https://github.com/chivopic/chivgent/issues/69)。
+每个项目当前提供一个最小会话，支持多轮上下文；切换到有历史的项目会恢复其会话，首次打开才开始新上下文，运行期间不能切换。Provider/model 改变时用旧 transcript 重建 session。真实运行现在把当前项目及版本化运行记录保存在应用 userData 下的 `desktop-history-v1`；可用 `CHIVGENT_DESKTOP_HISTORY_DIR` 为验证指定隔离目录。host 初始化时恢复所选项目的原子快照；Renderer 刷新不重新提交任务，重启只读取历史和上下文，不自动运行模型或工具。未结束运行显示 interrupted/unknown；未完成工具提示检查工作区。历史损坏和写入失败会显示错误，损坏日志保持只读。记录不含凭证配置字段，序列化内容会对常见 token/key 形态脱敏。离线演示仅在显式设置 `CHIVGENT_DESKTOP_DEMO=1` 时启用，当前 demo 路径不持久化。macOS arm64 `.app` 本地打包未签名；这不代表公开发布或签名/安装包已通过 CI；当前桌面 CI 范围以 [workflow](../.github/workflows/ci.yml) 为准。完整恢复与 CLI 兼容仍见 [#68](https://github.com/chivopic/chivgent/issues/68)，UI 后续见 [#69](https://github.com/chivopic/chivgent/issues/69)。
 
 ## 1. 产品目标与参考关系
 
@@ -257,7 +257,7 @@ worktree 首批只做创建、选择、任务绑定与可恢复清理；搬移�
 
 | 阶段 | 状态 | 交付内容 | 验收 / 证据 |
 | --- | --- | --- | --- |
-| P0 桌面底座 / M0 | 已实现并通过本地验证 | 单窗口、utility host、stub Agent、流式显示、停止、macOS arm64 `.app` | `npm run desktop:pack` 成功；复制到源码树外运行 [verify-packaged.mjs](../apps/desktop/scripts/verify-packaged.mjs)，12 项断言全通过：重复 initialize、IME、流式文本、文本出现后取消及光标收起、工具活动/展开、完成、host 退出与启动失败提示、关窗隐藏、退出清理。CLI `npm run check`、`npm run build` 通过；获批原生权限并设置 `TMPDIR=/private/tmp` 后 `npm test`：56 个文件，679 passed、1 skipped。Desktop `npm run desktop:test`：9 passed。产物未签名；上述 Desktop 验收为本地运行，CI 目前未覆盖 Desktop。 |
+| P0 桌面底座 / M0 | 已实现并通过本地验证 | 单窗口、utility host、stub Agent、流式显示、停止、macOS arm64 `.app` | `npm run desktop:pack` 成功；复制到源码树外运行 [verify-packaged.mjs](../apps/desktop/scripts/verify-packaged.mjs)，12 项断言全通过：重复 initialize、IME、流式文本、文本出现后取消及光标收起、工具活动/展开、完成、host 退出与启动失败提示、关窗隐藏、退出清理。CLI `npm run check`、`npm run build` 通过；获批原生权限并设置 `TMPDIR=/private/tmp` 后 `npm test`：56 个文件，679 passed、1 skipped。Desktop `npm run desktop:test`：9 passed。产物未签名；上述验收结果来自本地；当前 CI 另有桌面单元/集成测试、构建和只读 Electron 验证。 |
 | P1 真实任务 | 首批已实现 | 最小 runtime、Provider/model 选择、目录授权、只读工具与流式会话 | fake Provider Electron E2E 验证选定临时项目、真实 read_file、多轮、取消、缺密钥恢复；完整命令见下文 |
 | P2 执行控制 | 待实现 | 写入/网络/Shell 设置、审批、取消、关窗/退出、通知 | 允许命令能执行、拒绝无副作用；关窗任务继续；退出清理；新设置只作用下一轮 |
 | P3 历史与会话 | 单项目记录与恢复首批已实现；后续仍跟踪 [#68](https://github.com/chivopic/chivgent/issues/68) | 版本化历史、host 快照、模型上下文和运行/工具恢复已实现；完整任务导航、旧 CLI 导入、标题/归档和跨 host 幂等记录待实现 | 刷新不断任务；重启恢复且不重放工具；损坏/写失败可见；后续再验收 CLI 导入与任务导航 |
@@ -281,7 +281,7 @@ P0 Desktop 原型与 P1 首批只读闭环已实现；P1 的具体实现位于 [
 3. 已通过现有 Agent 和 stub Provider 验证事件流、停止和 host 故障展示。
 4. 已实现任务主界面、多行输入、中文输入法处理、工具活动与停止；对话状态更新和 host failure 时收束流式指示。
 5. 已生成 macOS arm64 未签名 `.app`，复制到源码树外运行并通过上述 12 项验收。`npm run desktop:pack` 的 `identity: null` 明确跳过代码签名；未执行公证或发布。
-6. CLI 检查、构建、完整测试通过；本轮未将 CLI tarball 安装到独立目录做发布验证。CI 当前只覆盖 CLI，不覆盖 Desktop 打包和 Electron GUI。
+6. CLI 检查、构建、完整测试通过；本轮未将 CLI tarball 安装到独立目录做发布验证。当前 CI 另运行桌面测试、构建与只读 Electron 验证，未执行 Desktop 安装包验收或本批历史恢复脚本。
 
 M1 完成标准：用户可以安装应用，在自己的项目中完成一次受控代码修改，看到执行过程和验证结果，检查改动，并在重启后继续同一任务。
 
