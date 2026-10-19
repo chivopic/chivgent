@@ -25,6 +25,14 @@ chivgent is a local agent for the directory you have open. The category is the o
 
 The default that category expects is auto mode. Ordinary reads, workspace edits, and sandboxed commands proceed. The agent stops when an action leaves the workspace, or when a command needs the host. Here that policy is `workspace`. It is not a second model reviewing each action, and it is not a bypass. Local interactive rich-TUI sessions start in Ask for me unless a permission mode or legacy capability flag was selected; file changes and commands require approval. Shift+Tab cycles through Plan, Auto mode, and Ask for me. Headless, simple, and remote starts keep their existing defaults.
 
+## Desktop — Coming soon
+
+The desktop app is in active development, bringing project conversations, streaming responses, and tool activity into a focused local workspace. Follow the [development progress and current limits](docs/desktop-architecture.md).
+
+![chivgent Desktop development preview showing the clean workspace for the chivopic sample project.](product-media/desktop/01-workspace.png)
+
+*Development preview using the chivopic sample project.*
+
 ## Getting started
 
 You need Node.js 22 or newer.

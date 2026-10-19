@@ -25,6 +25,14 @@ chivgent 是跑在你打开的目录里的本地 agent。它要做的，是 [Cla
 
 这一类现在的默认是 auto mode。工作区内的读取、编辑，以及沙箱里的命令，直接进行。动作离开工作区，或者命令要用宿主机，就停。这里这个策略叫 `workspace`。它不是另一个模型在逐条审查，也不是跳过所有边界。本地交互式 rich TUI 在没有指定权限模式或旧权限开关时默认使用 Ask for me：文件修改和命令都要确认；在空闲输入框按 Shift+Tab 可在 Plan、Auto mode 和 Ask for me 之间循环。headless、simple 和远程启动保留原有默认值。
 
+## 桌面版 — 开发中 / Coming soon
+
+桌面版正在开发中，将项目会话、流式回答和工具活动集中到一个简洁的本地工作台。欢迎关注[开发进展与当前能力](docs/desktop-architecture.md)。
+
+![chivgent 桌面版开发预览：chivopic 项目的简洁工作台。](product-media/desktop/01-workspace.png)
+
+*开发预览：chivopic 示例项目。*
+
 ## 快速开始
 
 需要 Node.js 22 或更高版本。
