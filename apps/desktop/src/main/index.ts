@@ -164,6 +164,9 @@ app.setAboutPanelOptions({
 });
 
 app.whenReady().then(() => {
+  if (!app.isPackaged && process.platform === "darwin") {
+    app.dock?.setIcon(join(app.getAppPath(), "resources", "icon.png"));
+  }
   installMenu();
   installIpc();
   process.env["CHIVGENT_DESKTOP_HISTORY_DIR"] ??= join(app.getPath("userData"), "desktop-history-v1");

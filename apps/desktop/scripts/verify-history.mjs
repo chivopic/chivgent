@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -14,9 +14,10 @@ const desktop = process.argv[2] === undefined
 const require = createRequire(join(desktop, 'package.json'));
 const { _electron: electron } = require('playwright-core');
 const root = await mkdtemp(join(tmpdir(), 'chivgent-history-e2e-'));
-const project = join(root, '中文 project');
+const project = join(root, 'chivopic');
 const auth = join(root, 'auth');
 await mkdir(project); await mkdir(auth);
+const canonicalProject = await realpath(project);
 const marker = 'history-real-file-123';
 await writeFile(join(project, 'README.md'), marker + '\n');
 let activeApp;
@@ -64,7 +65,10 @@ async function launch(endpoint) {
   activeApp = await electron.launch({ executablePath: require('electron'), args: [desktop, `--user-data-dir=${join(root, 'profile')}`], cwd: root,
     env: { ...environment, CHIVGENT_DESKTOP_HOST_PID_FILE: join(root, 'host.pid'), CHIVGENT_DESKTOP_HISTORY_DIR: join(root, 'history'), CHIVGENT_HOME: auth, CHIVGENT_PROVIDER: 'openai-compatible', OPENAI_API_KEY: 'fixture-key', OPENAI_MODEL: 'history-fixture', OPENAI_BASE_URL: endpoint } });
   const page = await activeApp.firstWindow();
-  await page.getByTestId('host-status').getByText('已连接', { exact: false }).waitFor({ timeout: 15_000 });
+  await page.locator('[data-testid="status-action"] .dot.ready').waitFor({ timeout: 15_000 });
+  await page.getByTestId('status-action').click();
+  await page.getByTestId('host-status').getByText('Agent host 已连接', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '关闭状态详情' }).click();
   return page;
 }
 async function quit() {
@@ -77,9 +81,13 @@ try {
   await new Promise((accept, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', accept); });
   const endpoint = `http://127.0.0.1:${server.address().port}/v1`;
   let page = await launch(endpoint);
-  await activeApp.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);
+  await page.getByRole('button', { name: '设置' }).click();
   await page.waitForFunction(() => document.querySelector('[data-testid="provider-select"]')?.value === 'openai-compatible');
+  await page.getByRole('button', { name: '完成', exact: true }).click();
+  await activeApp.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);
   await page.getByRole('button', { name: '选择项目目录', exact: false }).click();
+  await page.waitForFunction(() => document.querySelector('.project-identity')?.textContent?.includes('chivopic'));
+  await page.getByRole('button', { name: '设置' }).click();
   await page.getByTestId('provider-select').selectOption('deepseek');
   await page.getByTestId('model-input').fill('manual-model');
   await page.evaluate(async () => {
@@ -88,15 +96,29 @@ try {
   });
   assert.equal(await page.getByTestId('provider-select').inputValue(), 'deepseek', 'resynchronizing history must preserve the user-selected Provider');
   assert.equal(await page.getByTestId('model-input').inputValue(), 'manual-model');
+  await page.getByRole('button', { name: '完成', exact: true }).click();
+  await page.locator('.project-identity').click();
+  assert.equal(await page.locator('.path-value').innerText(), canonicalProject, 'snapshot hydration retains the selected canonical project path');
+  await page.getByRole('button', { name: '关闭详情' }).click();
+  await page.getByRole('button', { name: '设置' }).click();
   await page.getByTestId('provider-select').selectOption('openai-compatible');
   await page.getByTestId('model-input').fill('history-fixture');
+  await page.getByRole('button', { name: '完成', exact: true }).click();
   await page.getByTestId('composer').fill('读取文件并验证恢复');
   await page.getByTestId('send').click();
   await page.getByTestId('assistant-message').filter({ hasText: '恢复前的流式片段' }).waitFor({ timeout: 15_000 });
   assert.equal(requests.length, 2);
+  await page.getByRole('button', { name: '设置' }).click();
+  assert.equal(await page.getByTestId('provider-select').isDisabled(), true, 'active-session settings stay inspectable but cannot be edited');
+  const activeConfig = await page.getByTestId('runtime-config').innerText();
+  assert.match(activeConfig, /当前运行的有效配置/);
+  assert.match(activeConfig, /history-fixture/);
+  assert.ok(activeConfig.includes(endpoint), 'the current endpoint remains available in settings details');
+  await page.getByRole('button', { name: '完成', exact: true }).click();
   progress('reload during a live response');
   await page.reload();
-  await page.getByTestId('host-status').getByText('已连接', { exact: false }).waitFor();
+  await page.locator('[data-testid="status-action"] .dot.ready').waitFor({ timeout: 15_000 });
+  await page.waitForFunction(() => document.querySelector('.project-identity')?.textContent?.includes('chivopic'));
   await page.getByTestId('assistant-message').filter({ hasText: '恢复前的流式片段' }).waitFor({ timeout: 5_000 });
   assert.equal(await page.getByTestId('user-message').count(), 1);
   assert.equal(await page.getByTestId('tool-activity').count(), 1);
@@ -108,6 +130,10 @@ try {
   progress('normal quit and restart');
   await quit();
   page = await launch(endpoint);
+  await page.waitForFunction(() => document.querySelector('.project-identity')?.textContent?.includes('chivopic'));
+  await page.locator('.project-identity').click();
+  assert.equal(await page.locator('.path-value').innerText(), canonicalProject, 'a fresh renderer hydrates the selected project path from the host snapshot');
+  await page.getByRole('button', { name: '关闭详情' }).click();
   await page.getByTestId('assistant-message').filter({ hasText: marker }).waitFor({ timeout: 5_000 });
   assert.equal(await page.getByTestId('user-message').count(), 1);
   assert.equal(requests.length, 2, 'startup must load history without model execution');
@@ -128,9 +154,15 @@ try {
   const hostPid = Number(await readFile(join(root, 'host.pid'), 'utf8'));
   assert.ok(Number.isSafeInteger(hostPid) && hostPid > 0);
   process.kill(hostPid, 'SIGKILL');
-  await page.getByTestId('host-status').getByText('退出', { exact: false }).waitFor();
+  await page.locator('[data-testid="status-action"] .dot.bad').waitFor({ timeout: 10_000 });
+  await page.getByTestId('status-action').click();
+  await page.getByTestId('host-status').getByText(/退出/).waitFor();
+  await page.getByRole('button', { name: '关闭状态详情' }).click();
   await page.reload();
-  await page.getByTestId('host-status').getByText('已连接', { exact: false }).waitFor({ timeout: 15_000 });
+  await page.locator('[data-testid="status-action"] .dot.ready').waitFor({ timeout: 15_000 });
+  await page.getByTestId('status-action').click();
+  await page.getByTestId('host-status').getByText('Agent host 已连接', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '关闭状态详情' }).click();
   await page.getByTestId('notice').filter({ hasText: '结果未知' }).waitFor();
   assert.equal(await page.getByTestId('user-message').count(), 3);
   assert.equal(requests.length, 4, 'crash recovery must never replay the interrupted prompt');
