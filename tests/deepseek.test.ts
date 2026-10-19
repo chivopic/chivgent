@@ -22,6 +22,7 @@ const tools: LLMRequest["tools"] = [
 describe("DeepSeekChatClient", () => {
   it("maps an initial request and preserves reasoning in continuation", async () => {
     const create = vi.fn().mockResolvedValue({
+      model: "provider-canonical-model",
       choices: [
         {
           message: {
@@ -72,6 +73,7 @@ describe("DeepSeekChatClient", () => {
       ],
       stream: false,
     });
+    expect(result.reportedModel).toBe("provider-canonical-model");
     expect(result.message).toEqual({
       role: "assistant",
       content: "",
@@ -84,6 +86,7 @@ describe("DeepSeekChatClient", () => {
       ],
     });
     expect(result.message).not.toHaveProperty("reasoning_content");
+    expect(result.message).not.toHaveProperty("reportedModel");
     expect(result.continuation).toMatchObject({
       provider: "deepseek-chat",
       systemPrompt: "System prompt",

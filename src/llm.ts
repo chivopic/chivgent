@@ -35,6 +35,8 @@ export interface Usage {
 
 export interface LLMResponse {
   readonly message: AssistantMessage;
+  /** Provider-reported model ID. May differ from the requested alias; not proof of underlying weights. */
+  readonly reportedModel?: string;
   readonly continuation?: LLMContinuation;
   /**
    * Absent when the Provider did not report it, which is a normal state and

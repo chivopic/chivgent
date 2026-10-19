@@ -116,6 +116,8 @@ const client = new OpenAICompatibleChatClient({
 The compatibility layer also preserves optional Provider-only fields such as
 DeepSeek's `reasoning_content` inside opaque continuation state.
 
+Provider adapters also expose an optional `reportedModel` on `LLMResponse` when the API supplies a model ID. The Agent forwards it to `message_end` events (including JSON event streams), but deliberately does not place it in conversation history: server-provided model IDs are diagnostics, may be aliases, and are not proof of underlying model weights. Missing metadata stays missing, never guessed from the requested model. This mirrors OpenCode's distinction between selected catalog identity and provider API identity.
+
 Changing only `baseURL` is not a promise of complete compatibility. Providers
 can differ in model names, authentication, tool-schema support, strict mode,
 reasoning fields, streaming events, and error behavior. Keep those differences

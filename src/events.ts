@@ -71,6 +71,8 @@ export interface MessageEndEvent {
   readonly type: "message_end";
   readonly turn: number;
   readonly message: AssistantMessage;
+  /** Model ID reported in the Provider response; absent if it was not reported. */
+  readonly reportedModel?: string;
   /** What this turn cost, when the Provider reported it. */
   readonly usage?: Usage;
 }
