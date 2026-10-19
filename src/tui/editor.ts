@@ -246,7 +246,8 @@ export function editorFrame(document: EditorDocument, width: number, height: num
   const boxed = submitOnEnter;
   const boxWidth = Math.min(cellWidth, spare);
   const extra = boxed ? 1 : 0;
-  const suggestionLimit = Math.max(0, height - 7);
+  const maxSuggestions = 5;
+  const suggestionLimit = Math.max(0, Math.min(maxSuggestions, height - 7));
   const visibleSuggestionCount = Math.min(suggestions.length, suggestionLimit);
   const suggestionStart = Math.max(0, Math.min(
     selectedSuggestion - visibleSuggestionCount + 1,

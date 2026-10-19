@@ -60,6 +60,7 @@ export interface SlashCommandContext {
   readonly permissions?: readonly string[];
   readonly permissionPolicy?: PermissionPolicy;
   readonly inlineComposer?: boolean;
+  readonly interactivePicker?: boolean;
   readonly sessionOptions?: {
     readonly list?: () => Promise<readonly { readonly id: string; readonly title?: string }[]>;
     readonly create?: (title?: string) => Promise<AgentSession>;
@@ -100,53 +101,65 @@ export interface SignIn {
 
 export const BUILT_IN_COMMANDS = [
   "help",
-  "session",
   "status",
-  "compact",
-  "plan",
-  "permissions",
   "new",
   "resume",
   "rename",
-  "tools",
   "diff",
+  "clear",
+  "compact",
+  "permissions",
+  "provider",
+  "model",
+  "endpoint",
+  "login",
+  "exit",
+] as const;
+
+export const LEGACY_COMMAND_ALIASES = [
+  "session",
+  "plan",
+  "tools",
   "compose",
   "editor",
   "review",
   "gitdiff",
-  "clear",
-  "exit",
   "quit",
-  "login",
   "logout",
-  "provider",
-  "model",
-  "endpoint",
 ] as const;
+
+export const BUILT_IN_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  help: "show this help",
+  status: "show session, model, tokens & permissions",
+  new: "save and start a fresh session",
+  resume: "switch to a saved session in workspace",
+  rename: "set current session title",
+  diff: "review workspace Git changes (/diff patch for patch)",
+  clear: "clear transcript in current session",
+  compact: "summarise older history for the model",
+  permissions: "inspect or change permission policy",
+  provider: "choose a Provider",
+  model: "show or change current model",
+  endpoint: "set URL for OpenAI-compatible Provider",
+  login: "store API key or sign in with subscription",
+  exit: "leave chivgent",
+};
 
 const HELP = `Commands:
   /help      Show this help
-  /session   Show the current session id, workspace, and size
-  /status    Show live session, model, permissions, plan state, and usage
+  /status    Show live session, model, permissions, plan state, and usage (alias: /session)
   /compact   Summarise older history for the model; keeps the full transcript
   /plan [on|off]  Toggle restricted read-only Plan Mode
-  /permissions [ask-first|workspace|unrestricted]  Inspect or change this process's policy
+  /permissions [ask-first|workspace|unrestricted|plan]  Inspect or change this process's policy
   /new [title]    Save this session and start a fresh session
   /resume [id]    Switch to a saved session in this workspace
   /rename TITLE  Set the current session title
-  /tools     List the tools available to the model
-  /diff [N]  Review the latest successful apply_patch, page N
-  /compose   Write a multi-line prompt (/send to submit, /cancel to discard)
-  /editor    Open the cursor-editable multiline composer (Ctrl+S sends)
-  /review    Browse last applied patch with arrows, q to close
-  /gitdiff [--staged]  Review actual workspace Git changes after explicit approval
+  /diff [--staged|patch]  Review workspace Git changes (or latest patch)
   /clear     Start a new transcript in the same session
   /provider  Choose a Provider (↑↓ and Enter in the TUI)
   /model     Show or change the current model: /model MODEL
   /endpoint  Set the URL for an OpenAI-compatible Provider
-  /login     Choose a Provider, then store its key; /login NAME skips the list
-  /login oauth [openai|xai]  Sign in with a subscription
-  /logout    Sign out of the current OAuth subscription
+  /login     Store API key or sign in with subscription (/login logout to sign out)
   /exit      Leave chivgent
 
 Anything else is sent to the model. Ctrl+C stops a running answer.
@@ -190,9 +203,6 @@ export function handleSlashCommand(
       return "handled";
 
     case "/session":
-      context.write(describeSession(context));
-      return "handled";
-
     case "/status":
       context.write(describeStatus(context));
       return "handled";
@@ -222,13 +232,19 @@ export function handleSlashCommand(
 
     case "/permissions": {
       const argument = trimmed.slice("/permissions".length).trim().toLowerCase();
+      if (argument === "plan" || argument === "plan on") {
+        return { kind: "plan", enabled: true };
+      }
+      if (argument === "plan off") {
+        return { kind: "plan", enabled: false };
+      }
       if (context.permissionPolicy === undefined) {
         context.write("Named permission modes are unavailable because this session uses legacy capability flags. Start with --permission-mode to enable them.\n");
       } else if (!argument) {
         context.write(`Permission mode: ${context.permissionPolicy.mode}\n${describePermissionMode(context.permissionPolicy.mode)}\nMode changes last for this process and are not restored from saved sessions.\n`);
       } else {
         try { return { kind: "permission-mode", mode: parsePermissionMode(argument) }; }
-        catch { context.write("Usage: /permissions [ask-first|workspace|unrestricted]\n"); }
+        catch { context.write("Usage: /permissions [ask-first|workspace|unrestricted|plan]\n"); }
       }
       return "handled";
     }
@@ -258,13 +274,28 @@ export function handleSlashCommand(
 
     case "/diff": {
       const argument = trimmed.slice("/diff".length).trim();
-      if (argument.length > 0 && !/^[1-9]\d*$/.test(argument)) {
-        context.write("Usage: /diff [positive page number]\n");
+      if (argument === "patch" || argument.startsWith("patch ")) {
+        const pageArg = argument.slice("patch".length).trim();
+        if (pageArg.length > 0 && !/^[1-9]\d*$/.test(pageArg)) {
+          context.write("Usage: /diff patch [positive page number]\n");
+          return "handled";
+        }
+        const patch = mostRecentSuccessfulPatch(context.session.messages);
+        if (patch === undefined) {
+          context.write("No successfully applied patch found in this session.\n");
+          return "handled";
+        }
+        const page = pageArg.length === 0 ? 1 : Number(pageArg);
+        context.write(formatDiffPage(patch, page, context.width ?? 80, context.color === true).text);
+        return "handled";
+      }
+      if (argument.length > 0 && !/^[1-9]\d*$/.test(argument) && argument !== "--staged") {
+        context.write("Usage: /diff [--staged|patch [positive page number]]\n");
         return "handled";
       }
       const patch = mostRecentSuccessfulPatch(context.session.messages);
       if (patch === undefined) {
-        context.write("No successfully applied patch found in this session.\n");
+        context.write("No successfully applied patch found in this session. In interactive TUI, use /diff to review workspace Git changes.\n");
         return "handled";
       }
       const page = argument.length === 0 ? 1 : Number(argument);
@@ -273,11 +304,15 @@ export function handleSlashCommand(
     }
 
     case "/compose":
-      context.write("Use /compose at the interactive prompt to enter multi-line mode.\n");
+      context.write(context.inlineComposer
+        ? "The multiline editor is already active in this prompt. Enter sends; Ctrl+O inserts a newline.\n"
+        : "Use /compose at the interactive prompt to enter multi-line mode.\n");
       return "handled";
 
     case "/editor":
-      context.write("Use /editor in the rich interactive TUI to open the multiline editor.\n");
+      context.write(context.inlineComposer
+        ? "The cursor-addressable multiline editor is already active in this prompt. Enter sends; Ctrl+O inserts a newline.\n"
+        : "Use /editor in the rich interactive TUI to open the multiline editor.\n");
       return "handled";
 
     case "/review":
@@ -299,6 +334,9 @@ export function handleSlashCommand(
         return "handled";
       }
       if (trimmed === "/provider") {
+        if (context.interactivePicker === true) {
+          return { kind: "provider", argument: "" };
+        }
         context.write(context.providers.describe());
         return "handled";
       }
@@ -326,14 +364,23 @@ export function handleSlashCommand(
       }
       return { kind: "endpoint", argument: trimmed.slice("/endpoint".length).trim() };
 
-    case "/login":
+    case "/login": {
+      const argument = trimmed.slice("/login".length).trim();
+      if (argument === "logout" || argument === "--logout") {
+        if (context.signIn?.signOut === undefined) {
+          context.write("OAuth sign-out is unavailable in this session.\n");
+          return "handled";
+        }
+        return { kind: "login", providerArgument: "__logout__" };
+      }
       if (context.signIn === undefined) {
         context.write(
           "This session cannot store a key; it is attached to a server that already has one.\n",
         );
         return "handled";
       }
-      return { kind: "login", providerArgument: trimmed.slice("/login".length).trim() };
+      return { kind: "login", providerArgument: argument };
+    }
 
     case "/logout":
       if (context.signIn?.signOut === undefined) {
@@ -380,31 +427,20 @@ function describeUsage(context: SlashCommandContext): readonly string[] {
   ];
 }
 
-function describeSession(context: SlashCommandContext): string {
-  const lines = [
-    `id:        ${context.session.id}`,
-    `workspace: ${context.session.cwd}`,
-    `prompts:   ${context.session.turns}`,
-    `messages:  ${context.session.messages.length}`,
-    ...describeUsage(context),
-  ];
-  const sessionFile = context.sessionFileForSession?.(context.session) ?? context.sessionFile;
-  if (sessionFile !== undefined) {
-    lines.push(`log:       ${sessionFile}`);
-  }
-  return `${lines.join("\n")}\n`;
-}
 
 function describeStatus(context: SlashCommandContext): string {
   const usage = describeUsage(context);
   let contextEstimate = "unavailable";
   try { contextEstimate = `approximately ${new HeuristicTokenEstimator().estimateMessages(context.session.messages)} tokens (transcript only; excludes system prompt and tool schemas)`; }
   catch { /* inaccessible estimates are reported explicitly */ }
+  const sessionFile = context.sessionFileForSession?.(context.session) ?? context.sessionFile;
   const lines = [
     `provider:  ${context.providers?.provider ?? context.providerName ?? "unavailable"}`,
     `model:     ${context.providers === undefined ? context.modelName ?? "unavailable" : context.providers.model ?? "unavailable"}`,
-    `cwd:       ${context.session.cwd}`,
-    `session:   ${context.session.id}${context.session.title ? ` · ${context.session.title}` : ""}`,
+    `workspace: ${context.session.cwd}`,
+    `id:        ${context.session.id}${context.session.title ? ` · ${context.session.title}` : ""}`,
+    `prompts:   ${context.session.turns}`,
+    `messages:  ${context.session.messages.length}`,
     `plan:      ${context.session.planMode ? "on (writes and Shell blocked for this session)" : "off"}`,
     ...(context.permissionPolicy === undefined ? [] : [`permissions: ${context.permissionPolicy.mode} (${describePermissionMode(context.permissionPolicy.mode)})`]),
     ...(context.permissionPolicy === undefined ? [
@@ -414,6 +450,7 @@ function describeStatus(context: SlashCommandContext): string {
     ] : []),
     ...usage,
     `context:   ${contextEstimate}`,
+    ...(sessionFile !== undefined ? [`log:       ${sessionFile}`] : []),
   ];
   return `${lines.join("\n")}\n`;
 }
@@ -552,7 +589,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
   const menu = tuiInput === undefined ? undefined : new InputMenu(readline, options.output);
   let dismissedLine: string | undefined;
   let refreshQueued = false;
-  const menuPriority = ["provider", "model", "editor", "review", "help"];
+  const menuPriority = ["status", "diff", "provider", "model", "new", "resume", "help"];
   const commands: readonly MenuItem[] = [...BUILT_IN_COMMANDS, ...(options.extensionCommands ?? []).map((command) => command.name)]
     .filter((name, index, all) => all.indexOf(name) === index)
     .sort((a, b) => {
@@ -563,10 +600,9 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       return rank(a) - rank(b);
     })
     .map((name) => {
-      const description = options.extensionCommands?.find(command => command.name === name)?.description;
-      const suffix = name === "provider" ? "  ·  choose a Provider"
-        : name === "model" ? "  ·  change model"
-          : description === undefined ? "" : `  ·  ${description}`;
+      const description = BUILT_IN_DESCRIPTIONS[name]
+        ?? options.extensionCommands?.find(command => command.name === name)?.description;
+      const suffix = description === undefined ? "" : `  ·  ${description}`;
       return { value: name, label: `/${name}${suffix}` };
     });
   const menuItems = (line: string): readonly MenuItem[] => {
@@ -1007,19 +1043,28 @@ export async function runRepl(options: ReplOptions): Promise<number> {
 
       const fromComposer = line.trim() === "/compose";
       const fromEditor = line.trim() === "/editor";
-      if (line.trim() === "/review") {
+      if (line.trim() === "/review" || line.trim() === "/diff patch") {
         await inspectPatch();
         if (inputClosed) break;
         showPrompt();
         continue;
       }
-      if (line.trim().startsWith("/gitdiff")) {
-        await inspectLiveGitDiff(line.trim());
+      if (line.trim() === "/diff" || line.trim() === "/diff --staged" || line.trim().startsWith("/gitdiff")) {
+        const gitDiffLine = line.trim().startsWith("/gitdiff")
+          ? line.trim()
+          : `/gitdiff${line.trim().slice("/diff".length)}`;
+        await inspectLiveGitDiff(gitDiffLine);
         if (inputClosed) break;
         showPrompt();
         continue;
       }
       if (fromComposer || fromEditor) {
+        if (options.inlineComposer && tuiInput !== undefined) {
+          write("The cursor-addressable multiline editor is already active in this prompt. Enter sends; Ctrl+O inserts a newline.\n");
+          if (inputClosed) break;
+          showPrompt();
+          continue;
+        }
         const draft = fromEditor ? await collectEditor() : await collectMultiline();
         if (draft === undefined) {
           if (inputClosed) break;
@@ -1048,6 +1093,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         ...(options.permissions === undefined ? {} : { permissions: options.permissions }),
         ...(options.permissionPolicy === undefined ? {} : { permissionPolicy: options.permissionPolicy }),
         ...(options.inlineComposer === true ? { inlineComposer: true } : {}),
+        ...(tuiInput !== undefined ? { interactivePicker: true } : {}),
         ...(options.sessionOptions === undefined ? {} : { sessionOptions: options.sessionOptions }),
       });
       if (outcome === "exit") {
@@ -1134,6 +1180,27 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       }
       if (typeof outcome === "object" && (outcome.kind === "provider" || outcome.kind === "model" || outcome.kind === "endpoint")) {
         if (options.providers !== undefined) {
+          if (outcome.kind === "provider" && outcome.argument.length === 0 && tuiInput !== undefined) {
+            signingIn = true;
+            let chosen: string | undefined;
+            try {
+              chosen = await chooseLoginProvider();
+            } finally {
+              signingIn = false;
+            }
+            if (chosen === undefined) {
+              write("No Provider selected; current Provider retained.\n");
+              if (inputClosed) break;
+              showPrompt();
+              continue;
+            }
+            const selected = await options.providers.select(chosen);
+            write(selected.message);
+            if (selected.ok) await signInAfterProviderSelection();
+            if (inputClosed) break;
+            showPrompt();
+            continue;
+          }
           const selected = outcome.kind === "provider"
             ? await options.providers.select(outcome.argument)
             : outcome.kind === "model" ? await options.providers.changeModel(outcome.argument)

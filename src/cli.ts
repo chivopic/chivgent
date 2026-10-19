@@ -34,7 +34,7 @@ import { loadExtensions } from "./extensions/loader.js";
 import { TrustStore } from "./extensions/trust.js";
 import type { ExtensionRegistry } from "./extensions/registry.js";
 import type { RegisteredCommand } from "./extensions/api.js";
-import { BUILT_IN_COMMANDS } from "./repl.js";
+import { BUILT_IN_COMMANDS, LEGACY_COMMAND_ALIASES } from "./repl.js";
 import { SessionServer, SocketInUseError } from "./remote/server.js";
 import { RemoteSession } from "./remote/client.js";
 import {
@@ -142,7 +142,7 @@ async function setupExtensions(
 
   const { registry } = await loadExtensions(discovered, {
     reservedToolNames: [...BUILT_IN_TOOL_NAMES],
-    reservedCommandNames: [...BUILT_IN_COMMANDS],
+    reservedCommandNames: [...BUILT_IN_COMMANDS, ...LEGACY_COMMAND_ALIASES],
     onWarning: (message) => process.stderr.write(`extension: ${message}\n`),
   });
   return registry;
