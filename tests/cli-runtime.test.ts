@@ -41,6 +41,42 @@ describe("local CLI session setup", () => {
     expect(llm.requests[0]?.systemPrompt).not.toContain("You can also run shell commands");
   });
 
+  it("identifies the agent without inventing a backend model", async () => {
+    const llm = new FakeLLMClient([assistant("Done")]);
+    const session = createLocalSession({
+      options: parseCliArgs([], {}),
+      cwd: "/workspace",
+      llm,
+      restored: { resumed: false },
+    });
+
+    await session.prompt("Which model are you?");
+    const prompt = llm.requests[0]?.systemPrompt ?? "";
+    expect(prompt).toContain("You are chivgent, a coding agent");
+    expect(prompt).toContain("The host chooses the provider and model.");
+    expect(prompt).toContain("Do not guess or assert an unverified backend model identity.");
+    expect(prompt).not.toContain("You can also change files with write_file");
+    expect(prompt).not.toContain("You can also run shell commands with bash");
+  });
+
+  it("requires tool evidence and offers an executable workflow", async () => {
+    const llm = new FakeLLMClient([assistant("Done")]);
+    const session = createLocalSession({
+      options: parseCliArgs(["--allow-writes", "--allow-shell"], {}),
+      cwd: "/workspace",
+      llm,
+      restored: { resumed: false },
+    });
+
+    await session.prompt("Fix the bug and test it");
+    const prompt = llm.requests[0]?.systemPrompt ?? "";
+    expect(prompt).toContain("discovery, focused changes, and available verification");
+    expect(prompt).toContain("Only use tools that are actually supplied for this run.");
+    expect(prompt).toContain("Never claim a command, edit, or test succeeded unless its tool result confirms it.");
+    expect(prompt).toContain(WRITE_SYSTEM_PROMPT);
+    expect(prompt).toContain("You can also run shell commands with bash");
+  });
+
   it("ignores restored compaction when --no-compaction is set", async () => {
     const llm = new FakeLLMClient([assistant("Done")]);
     const session = createLocalSession({
