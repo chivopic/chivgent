@@ -26,6 +26,20 @@ AssistantMessage <- normalized result
 This prevents the Agent, tools, and CLI from depending on one vendor's message
 format.
 
+### Agent instructions
+
+`src/prompts.ts` defines the same baseline instructions for interactive runs and
+evals. The baseline separates identity, task workflow, and evidence requirements.
+`createLocalSession` in `src/cli-runtime.ts` adds write/shell instructions
+only when those tools are registered, plus process-local permission policy and
+extension contributions. This is inspired by Codex's layered instructions, but
+tool access remains enforced by chivgent's runtime, not by text.
+
+The agent identifies itself as **chivgent**, not as an unverifiable underlying
+provider model. A provider/model selection shown by the CLI is configuration,
+not proof of which backend implementation served a request. Model-specific
+wire formats remain the responsibility of the Provider adapter.
+
 ### Context management
 
 A session records everything that happened. The context manager decides what
