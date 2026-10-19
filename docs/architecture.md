@@ -100,6 +100,8 @@ chivgent --provider openai-compatible "What does src/agent.ts do?"
 
 `OPENAI_BASE_URL` must point to the Provider's OpenAI-compatible API root. The
 Provider must implement `POST /chat/completions` and function tool calling.
+The adapter omits the optional `tools` field when no tools are available
+(e.g. context-compaction requests); registered tool definitions are unchanged.
 
 When adding a named Provider in source code, use the same adapter:
 
