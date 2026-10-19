@@ -120,7 +120,7 @@ chivgent --continue                                  # 这个目录里的上一�
 | 供应商 | `--provider` | Key | 模型 |
 | --- | --- | --- | --- |
 | OpenAI，Responses API | `openai`（默认） | `OPENAI_API_KEY` | `gpt-5.6` |
-| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-v4-flash` |
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-flash` |
 | 任何兼容端点 | `openai-compatible` | `OPENAI_API_KEY` 和 `OPENAI_BASE_URL` | 设置 `OPENAI_MODEL` |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | 设置 `OPENROUTER_MODEL` |
 | Groq | `groq` | `GROQ_API_KEY` | 设置 `GROQ_MODEL` |

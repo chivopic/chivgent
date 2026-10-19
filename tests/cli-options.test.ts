@@ -22,8 +22,17 @@ describe("CLI options", () => {
       parseCliArgs(["--provider", "deepseek", "Question"], {}),
     ).toMatchObject({
       provider: "deepseek",
-      model: "deepseek-v4-flash",
+      model: "deepseek-flash",
       prompt: "Question",
+    });
+  });
+
+  it("does not rewrite an explicitly selected DeepSeek legacy alias", () => {
+    expect(
+      parseCliArgs(["--provider", "deepseek", "--model", "deepseek-v4-flash", "Question"], {}),
+    ).toMatchObject({
+      provider: "deepseek",
+      model: "deepseek-v4-flash",
     });
   });
 
