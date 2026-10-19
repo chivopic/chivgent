@@ -1,5 +1,7 @@
 <p align="center">
-  <img src="docs/assets/chivgent-leaf-mark.png" width="88" alt="">
+  <a href="https://chivgent-web.vercel.app/">
+    <img src="docs/assets/chivgent-leaf-mark.png" width="88" alt="chivgent website">
+  </a>
 </p>
 
 <div align="center">
