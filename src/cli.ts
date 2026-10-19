@@ -406,7 +406,7 @@ export async function main(argv: readonly string[]): Promise<number> {
         banner: richTui ? welcome({
           version: VERSION,
           provider: options.provider,
-          model: options.model ?? "unknown model",
+          ...(options.model === undefined ? {} : { model: options.model }),
           cwd,
           resumed: restored.resumed,
           signedOut: signedOutMessage !== undefined,

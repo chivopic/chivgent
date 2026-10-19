@@ -808,12 +808,21 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       .map(message => message.content)
       .filter(message => message.length > 0)
       .slice(-100);
+    const footerIdentity = (): string | undefined => {
+      const provider = options.providers?.provider ?? options.providerName;
+      // A live Provider wins. Do not fall back to the startup model, and do
+      // not invent a name when the model or provider is still unset.
+      const model = options.providers === undefined ? options.modelName : options.providers.model;
+      if (provider === undefined || provider.length === 0 || model === undefined || model.length === 0) return undefined;
+      return `${provider} · ${model}`;
+    };
     const editor = new EditorController(output, resolveDraft, {
       submitOnEnter: isDefault,
       history: recent,
       slashCommands: commands.map(item => ({ value: item.value, label: item.label })),
       mouse: isDefault && options.tui === true && (output as typeof output & { isTTY?: boolean }).isTTY === true,
       color: isDefault && terminalColorEnabled((output as { isTTY?: boolean }).isTTY === true, process.env),
+      ...(isDefault && options.tui ? { footerIdentity } : {}),
       ...(isDefault && options.tui && options.permissionPolicy !== undefined ? {
         footerStatus: () => {
           if (activeSession.planMode) return "Plan · Shift+Tab Auto mode · /help";

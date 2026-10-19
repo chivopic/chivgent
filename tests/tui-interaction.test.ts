@@ -1,13 +1,18 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LLMAbortError, type LLMRequest } from "../src/llm.js";
-import { BUILT_IN_COMMANDS, runRepl } from "../src/repl.js";
+import { PermissionPolicy } from "../src/permissions.js";
+import { BUILT_IN_COMMANDS, runRepl, type ProviderControl } from "../src/repl.js";
 import { AgentSession } from "../src/session.js";
 import { LocalWorkspace } from "../src/workspace.js";
 import { createLiveRegion } from "../src/tui/live.js";
 import { TuiInput } from "../src/tui/input.js";
 import { displayWidth, fitLine, fitLineTail, terminalText } from "../src/tui/text.js";
 import { welcome } from "../src/tui/welcome.js";
+import { terminalHarness } from "./helpers/terminal.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -37,30 +42,154 @@ it("keeps the welcome panel within very narrow and Unicode terminal widths", () 
   }
 });
 
-it("shows a compact wordmark without a session id", () => {
+it("shows a compact wordmark without a session id, provider, or model", () => {
   const banner = welcome({ version: "test", provider: "openai", model: "gpt-test", cwd: "/project", resumed: false, signedOut: true, width: 80 });
+  const lines = banner.split("\n").filter(Boolean);
+  expect(lines[0]).toContain("◆ chivgent vtest");
+  expect(lines[1]).toBe("/project");
   expect(banner).toContain("Set up a Provider with /provider");
   expect(banner).not.toContain("╭");
-  expect(banner).not.toContain("demo");
-  expect(banner).toContain("openai · gpt-test · /project");
+  expect(banner).not.toContain("openai");
+  expect(banner).not.toContain("gpt-test");
+  expect(banner).not.toContain("unknown model");
   expect(banner).not.toContain("session-");
-  expect(banner.split("\n").filter(Boolean)).toHaveLength(3);
+  expect(lines).toHaveLength(3);
   expect(welcome({ version: "test", provider: "openai", model: "gpt-test", cwd: "/project", resumed: false, signedOut: true, width: 80, color: true }))
     .toContain("\u001b[1;36m");
 });
 
+it("keeps one setup hint and leaves the provider and model off the welcome", () => {
+  const base = { version: "test", provider: "openai", model: "gpt-test", cwd: "/project", resumed: false, width: 80 };
+  const banners = [
+    welcome({ ...base, signedOut: true }),
+    welcome({ ...base, signedOut: false, setupIssue: "model" }),
+    welcome({ ...base, signedOut: false, setupIssue: "base-url" }),
+  ];
+  expect(banners[0]).toContain("Set up a Provider with /provider");
+  expect(banners[1]).toContain("Set a model with /model MODEL");
+  expect(banners[2]).toContain("Set the API URL with /endpoint URL");
+  for (const banner of banners) {
+    expect(banner.split("\n").filter(Boolean)).toHaveLength(3);
+    expect(banner.split("\n").filter(Boolean)[1]).toBe("/project");
+    expect(banner).not.toContain("gpt-test");
+    expect(banner).not.toContain("unknown model");
+  }
+  const ready = welcome({ ...base, signedOut: false });
+  expect(ready.split("\n").filter(Boolean)).toEqual(["◆ chivgent vtest", "/project"]);
+});
+
 it("keeps the workspace name visible when the welcome path is long", () => {
-  const banner = welcome({ version: "test", provider: "demo", model: "model", cwd: "/very/long/parent/directory/chivgent", resumed: false, signedOut: false, width: 40 });
-  expect(banner).toContain("chivgent");
-  expect(banner).toContain("…");
+  const cwd = `/very/long/parent/directory/${"nested/".repeat(8)}chivgent`;
+  const banner = welcome({ version: "test", provider: "demo", model: "model", cwd, resumed: false, signedOut: false, width: 40 });
+  const pathLine = banner.split("\n").filter(Boolean)[1] ?? "";
+  expect(pathLine).toContain("chivgent");
+  expect(pathLine).toContain("…");
+  expect(pathLine).not.toContain("/very/long");
+  expect(pathLine).not.toContain("demo");
+  expect(pathLine).not.toContain("~");
+  expect(displayWidth(pathLine)).toBeLessThan(40);
   const narrow = welcome({ version: "test", provider: "a-very-long-provider", model: "a-very-long-model", cwd: "/parent/chivgent", resumed: false, signedOut: false, width: 24 });
-  expect(narrow).toContain("chivgent");
+  const narrowLines = narrow.split("\n").filter(Boolean);
+  expect(narrowLines).toHaveLength(2);
+  expect(narrowLines[1]).toBe("/parent/chivgent");
+  expect(narrow).not.toContain("a-very-long-provider");
+});
+
+it("leaves a home path absolute on the welcome line", () => {
+  const cwd = "/home/chiv/developer/chivgent";
+  const banner = welcome({ version: "test", provider: "openai", model: "gpt-test", cwd, resumed: false, signedOut: false, width: 80 });
+  expect(banner.split("\n").filter(Boolean)[1]).toBe(cwd);
+  expect(banner).not.toContain("~");
+  expect(banner).not.toContain("gpt-test");
 });
 
 it("sanitizes workspace control characters before displaying the welcome", () => {
   const banner = welcome({ version: "test", provider: "demo", model: "model", cwd: "/safe/\u001b[2Jworkspace", resumed: false, signedOut: false, width: 60 });
   expect(banner).toContain("workspace");
   expect(banner).not.toContain("\u001b[2J");
+});
+
+describe("idle composer footer", () => {
+  const roots: string[] = [];
+  afterEach(async () => {
+    await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+  });
+
+  function session(cwd: string): AgentSession {
+    return new AgentSession({ cwd, agent: {
+      systemPrompt: "demo", maxTurns: 1, tools: [], workspace: new LocalWorkspace(cwd),
+      llm: { async complete() { throw new Error("No provider call expected"); } },
+    } });
+  }
+
+  function providers(model: string | undefined): ProviderControl {
+    return {
+      provider: "openai",
+      get model() { return model; },
+      describe: () => "openai\n",
+      providerIds: () => ["openai"],
+      select: async () => ({ ok: true, message: "" }),
+      changeModel: async () => ({ ok: true, message: "" }),
+      changeEndpoint: async () => ({ ok: true, message: "" }),
+    };
+  }
+
+  it("shows the live provider and model under the composer and still cycles modes", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const cwd = await mkdtemp(path.join(tmpdir(), "chivgent-footer-"));
+    roots.push(cwd);
+    const screen = terminalHarness(80, 24);
+    const repl = runRepl({
+      session: session(cwd), ...screen, stderr: screen.output, tui: true, inlineComposer: true,
+      permissionPolicy: new PermissionPolicy("ask-first"),
+      providerName: "startup-provider", modelName: "startup-model",
+      providers: providers("gpt-test"),
+    });
+    try {
+      await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("openai · gpt-test"));
+      const idle = screen.visible().join("\n");
+      expect(idle).toContain("Ask for me · Shift+Tab Plan · /help");
+      expect(idle).toContain("Ask chivgent to do anything");
+      expect(idle).not.toContain("startup-model");
+      expect(idle).not.toContain("unknown model");
+      screen.input.write("\u001b[Z");
+      await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("Plan · Shift+Tab Auto mode · /help"));
+      expect(screen.visible().join("\n")).toContain("openai · gpt-test");
+      expect(screen.visible().join("\n")).toContain("Ask chivgent to do anything");
+      screen.input.write("\u0004");
+      await expect(repl).resolves.toBe(0);
+    } finally {
+      screen.input.end();
+      await repl;
+      screen.dispose();
+    }
+  });
+
+  it("does not invent a footer model when the live provider has none", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const cwd = await mkdtemp(path.join(tmpdir(), "chivgent-footer-"));
+    roots.push(cwd);
+    const screen = terminalHarness(80, 24);
+    const repl = runRepl({
+      session: session(cwd), ...screen, stderr: screen.output, tui: true, inlineComposer: true,
+      permissionPolicy: new PermissionPolicy("ask-first"),
+      providerName: "startup-provider", modelName: "startup-model",
+      providers: providers(undefined),
+    });
+    try {
+      await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("Ask for me · Shift+Tab Plan · /help"));
+      const idle = screen.visible().join("\n");
+      expect(idle).not.toContain("startup-model");
+      expect(idle).not.toContain("unknown model");
+      expect(idle).not.toContain("openai ·");
+      screen.input.write("\u0004");
+      await expect(repl).resolves.toBe(0);
+    } finally {
+      screen.input.end();
+      await repl;
+      screen.dispose();
+    }
+  });
 });
 
 it("keeps reading Ctrl+C while dropping busy input and restores raw mode", async () => {

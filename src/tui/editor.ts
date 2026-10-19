@@ -219,8 +219,28 @@ function closeBox(left: string, inner: string, innerWidth: number, right: string
   return `${left}${inner}${" ".repeat(Math.max(0, innerWidth - displayWidth(inner)))}${right}`;
 }
 
+/**
+ * Provider and model sit on the left. When the line is tight, the mode hint
+ * stays whole and the model name is the side that shrinks.
+ */
+function composeFooter(identity: string | undefined, status: string, columns: number): string {
+  const width = Math.max(0, Math.floor(columns));
+  if (width === 0) return "";
+  const cleanStatus = terminalText(status).replace(/\n/g, " ");
+  const cleanIdentity = identity === undefined ? "" : terminalText(identity).replace(/\n/g, " ");
+  if (cleanIdentity.length === 0) return fitLine(cleanStatus, width);
+  const statusWidth = displayWidth(cleanStatus);
+  if (statusWidth >= width) return fitLine(cleanStatus, width);
+  const identityWidth = displayWidth(cleanIdentity);
+  const gap = 2;
+  if (identityWidth + gap + statusWidth <= width) return `${cleanIdentity}${" ".repeat(gap)}${cleanStatus}`;
+  const room = width - statusWidth - gap;
+  if (room < 2) return cleanStatus;
+  return `${fitLine(cleanIdentity, room)}${" ".repeat(gap)}${cleanStatus}`;
+}
+
 /** Fixed-height viewport; keep caret in frame even on small terminals. */
-export function editorFrame(document: EditorDocument, width: number, height: number, submitOnEnter = false, suggestions: readonly { readonly value: string; readonly label: string }[] = [], selectedSuggestion = 0, footerStatus?: string, color = false): EditorFrame {
+export function editorFrame(document: EditorDocument, width: number, height: number, submitOnEnter = false, suggestions: readonly { readonly value: string; readonly label: string }[] = [], selectedSuggestion = 0, footerStatus?: string, color = false, footerIdentity?: string): EditorFrame {
   const spare = Math.max(1, width - 1);
   const cellWidth = Math.max(8, spare);
   const boxed = submitOnEnter;
@@ -307,13 +327,14 @@ export function editorFrame(document: EditorDocument, width: number, height: num
     lineWidth,
   ));
   const selection = document.selectionRange();
+  const idleStatus = footerStatus ?? (submitOnEnter
+    ? "/help for shortcuts"
+    : `└─ ${rows.length} lines · ${Buffer.byteLength(document.text, "utf8")} bytes · ↑↓←→ move`);
   const footerText = document.warning || (suggestions.length > 0
     ? "↑↓ choose · Tab/Enter complete · Esc close"
     : selection !== undefined
       ? `${submitOnEnter ? "" : "└─ "}Selected ${selection.end - selection.start} code units · type to replace`
-      : footerStatus ?? (submitOnEnter
-        ? "/help for shortcuts"
-        : `└─ ${rows.length} lines · ${Buffer.byteLength(document.text, "utf8")} bytes · ↑↓←→ move`));
+      : composeFooter(footerIdentity, idleStatus, lineWidth));
   const footer = fitLine(footerText, lineWidth);
   return {
     lines: [header, ...body.map(item => item.row), ...(bottom === undefined ? [] : [bottom]), ...popup, footer],
