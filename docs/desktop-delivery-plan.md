@@ -13,13 +13,13 @@
 | 顺序 | 用户能完成什么 | 工作内容 | 过关条件 |
 | --- | --- | --- | --- |
 | 1 · 真实只读任务 | 在选定项目里提问并继续追问 | 原生目录选择、真实 Provider、AgentSession、只读工具、配置与错误展示、停止 | 临时项目文件内容进入工具结果；追问带上下文；缺凭证可重试；停止后可继续；越界读取失败；无写入和 Shell 工具 |
-| 2 · 任务保存与恢复 | 切换任务、重启后继续 | 项目/任务元数据、版本化历史、订阅快照、草稿、标题与归档、异常恢复 | 刷新不重跑；重启不重放命令；损坏记录明确提示；权限不随历史恢复；保存失败可见 |
+| 2 · 任务保存与恢复 | 单项目会话刷新与重启后继续（首批已交付）；完整任务导航后续 | 已有版本化历史、当前项目恢复、host 快照、模型上下文检查点、运行/工具状态；后续补项目/任务列表、草稿、标题和归档 | 刷新恢复当前运行；重启恢复对话供用户主动续聊；不重放工具；损坏记录明确提示；权限不随历史恢复；保存失败可见；完整 UI 与 CLI 导入另验 |
 | 3 · 受控编码 | 请求修改、回应审批、运行验证 | 有效权限、写工具、Shell broker、逐动作审批、取消与退出清理 | 先持久记录再执行副作用；拒绝无副作用；过期回复无效；取消清理进程；新配置只影响后续运行 |
 | 4 · 检查结果 | 理解改了什么、确认验证结果 | 工作区 diff、已暂存/未暂存分组、文件预览、编辑器打开、测试结果与用量 | 工作区已有改动不冒充本轮改动；非 Git、二进制、大文件有状态；预览遵守项目边界 |
 | 5 · 日常使用与安装 | 安装后稳定完成整个修复流程 | 配置与凭证界面、主题、键盘导航、通知、面板、安装验证 | 从安装到修复、检查 diff、重启继续全程可操作；包在源码目录外运行；签名与平台支持分别验收 |
 | 6 · 多任务工作台 | 隔离推进多个任务并执行中介入 | worktree 生命周期、按目录调度、持久终端、queue/steering、结构化提问与 review | 每项先有内核语义和测试，再提供对应 UI；隔离任务可并行且工作可恢复 |
 
-第 2 项优先完成最小可恢复记录；第 3 项依赖它。完整历史界面可以继续迭代，执行副作用前的记录和保存失败门控不能后补。diff 与预览可在只读阶段提前开发，但不替代第 3 项的执行约束。
+第 2 项的最小可恢复记录已完成，第 3 项依赖它。完整历史界面与旧 CLI 导入仍未实现；执行副作用前的记录和保存失败门控仍是第 3 项的前置条件。diff 与预览可在只读阶段提前开发，但不替代第 3 项的执行约束。
 
 ## Agent 如何接入
 
@@ -52,7 +52,7 @@ Luna 负责第 1 项实现及行为测试；主代理负责检查边界、复核
 4. `npm run check`、`npm test`、`npm run build`、`npm run desktop:test`、`npm run desktop:build` 的实际结果。
 5. Electron 实际交互、打包应用和真实供应商调用分别记录；没执行的不能写成通过。
 
-按[代码规范](code-standards.md)检查；桌面测试不在根 `npm test` 或现有 CI 中。完成首批后，以第 2 项继续，避免同时堆入多个未验收功能。
+按[代码规范](code-standards.md)检查；桌面测试不在根 `npm test` 中；现有 CI 通过独立 desktop job 运行桌面测试、构建和只读 Electron 验证，新历史恢复脚本尚未接入。首批第 1 项完成后，已按计划交付第 2 项最小闭环；完整任务界面及导入继续作为后续工作。
 
 ## 本轮交付与验证记录
 
@@ -73,3 +73,33 @@ Luna 负责第 1 项实现及行为测试；主代理负责检查边界、复核
 兼容端点的凭证隔离另有先红后绿证据：新增测试先捕获 OpenAI 的启动 key 被错误继承；修正后，只有明确以 compatible 启动时继承共享环境 key，普通切换使用 compatible 自己的 auth 条目。测试全部使用假 key 和临时文件。
 
 GUI 运行和打包均在本机 macOS arm64 完成。真实供应商账号调用、签名、公证、其他平台、CLI tarball 仓库外安装、live eval 与 Docker smoke 未执行。模型接入的自动化证据来自实际 adapter 与本地模拟服务，不代表实号模型质量已验收。
+
+## #68 首批历史与恢复
+
+本次按 `Refs #68` 交付第 2 项的单项目最小闭环：新版本化 JSONL 历史、当前项目恢复、初始化时 host 原子快照、Renderer 水位去重/缺口重新同步、多轮模型上下文恢复、损坏与写失败提示，以及异常运行/工具结果未知状态。新记录在应用 userData 的 `desktop-history-v1`；自动化与 Electron 验收使用显式临时目录和 localhost fake Provider。历史不会恢复权限，也不会自动调用模型或重放工具。
+
+完整任务导航、旧 CLI 历史导入、标题/归档界面和跨 host 的 requestId 日志留在 #68 后续。当前仅验证本地 macOS Electron 路径，不表示签名、公证或其他平台支持。该批检查在 Node.js 26.9.0 上运行；Node.js 22/24 的结果待 CI/维护者验证。
+
+### #68 最终验收记录
+
+执行环境为本地 macOS arm64、Node.js 26.9.0；历史目录和测试项目均使用 `/private/tmp` 下的临时路径。检查结果如下：
+
+| 命令或检查 | 结果 |
+| --- | --- |
+| `npm run check` | 通过 |
+| `env TMPDIR=/private/tmp npm test` | 通过：63 个测试文件，787 passed、1 skipped。普通沙箱运行曾因 沙箱拒绝 Unix socket 与 Seatbelt 运行而失败；在临时目录获批运行后通过 |
+| `npm run build` | 通过 |
+| `npm run desktop:test` | 通过：4 个文件、55 项测试 |
+| `npm run desktop:build` | 通过 |
+| `npm run eval -- --dry-run --allow-writes --allow-shell` | 通过：10 项任务，无跳过项 |
+| `git diff --check` | 通过 |
+| Electron `verify-history.mjs` | 通过：`final-history-e2e.log` 为 11 项断言、4 次 localhost fake 请求；覆盖刷新、重启续聊、Provider 选择保留、崩溃后 unknown 状态及不自动重放 |
+| Electron `verify-readonly.mjs` | 通过：`final-readonly-e2e.log` 为 9 项断言、5 次 localhost fake 请求；覆盖缺凭证、取消及最小窗口路径 |
+
+先红证据均针对可观察行为，而非编译失败：原 main 的 Electron 刷新会丢失流式文本（`/private/tmp/chivgent-issue68-evidence/refresh-red.log`）；重新同步曾把显式 DeepSeek Provider 覆盖为 `openai-compatible`（`provider-resync-red.log`）；损坏的模型上下文结构曾被接受为有效恢复点（`malformed-context-red.log`）；非法负数 snapshot 水位曾被协议校验接受（`snapshot-schema-red.log`）。另外，达到 requestId 保留上限后旧 ID 曾被静默淘汰；对应测试确认旧代码对该 ID 返回 `replayed: false`，新实现改为到限拒绝。最终上述 Electron 与测试检查均通过。证据日志位于 `/private/tmp/chivgent-issue68-evidence/`。
+
+未执行 Node.js 22/24、本机真实供应商账号调用、签名/公证、其他平台验收、CLI 历史导入、完整任务导航和跨 host requestId 日志；它们不属于本批首发闭环。没有使用真实凭证或写入真实 `~/.chivgent`，没有调用外部真实模型。
+
+主代理还在最终构建副本上分别移除初始化快照和模型上下文保存：前者使 `verify-history.mjs` 在刷新后找不到原流式文本（`snapshot-removed.log`），后者使重启后的模型请求缺少最初用户输入（`checkpoint-removed.log` 中 `resumed conversation must contain the original prompt once` 断言失败）。两项均退出 1；随后恢复原构建并重跑同一 Electron 脚本通过。
+
+本批未重新执行 Desktop `.app` 打包及仓库外 packaged 验收、CLI tarball 安装验收、Docker smoke、live eval 或 release candidate 检查；沿用历史记录不能替代本批验证。

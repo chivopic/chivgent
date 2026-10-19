@@ -1,9 +1,11 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
+import { realpathSync, statSync } from "node:fs";
 import type { Agent } from "@chivgent/agent.ts";
 import type { AgentEvent } from "@chivgent/events.ts";
 import type { Message } from "@chivgent/messages.ts";
 import type { AppliedCompaction } from "@chivgent/context/context-manager.ts";
+import { DesktopHistory, readLastProject, saveLastProject, type HistoryEvent, type LoadedHistory } from "./history.js";
 import {
   acceptedRequestLimit,
   DESKTOP_PROTOCOL_VERSION,
@@ -29,6 +31,7 @@ export interface HostServiceOptions {
   readonly compatibleBaseURL?: string;
   readonly createSession?: SessionFactory;
   readonly createId?: () => string;
+  readonly historyDirectory?: string;
 }
 
 export interface RuntimeSession {
@@ -72,12 +75,18 @@ export class HostService {
   private projectPath: string | undefined;
   private session: RuntimeSessionResult | undefined;
   private sessionConfigKey: string | undefined;
+  private readonly historyDirectory: string | undefined;
+  private history: DesktopHistory | undefined;
+  private loadedHistory: LoadedHistory | undefined;
+  private timelineEvents: HistoryEvent[] = [];
+  private historyNotice: string | undefined;
 
   constructor(options: HostServiceOptions) {
     this.send = options.send;
     this.createAgent = options.createAgent;
     this.createSession = options.createSession;
     this.createId = options.createId ?? (() => randomBytes(8).toString("hex"));
+    this.historyDirectory = options.historyDirectory;
     this.defaultProvider = options.defaultProvider || "openai";
     this.compatibleBaseURL = safeEndpoint(options.compatibleBaseURL);
     this.instanceId = `host-${this.createId()}`;
@@ -100,6 +109,7 @@ export class HostService {
     }
     switch (request.type) {
       case "initialize":
+        this.restoreLastProject();
         this.send({
           type: "initialized",
           requestId: request.requestId,
@@ -108,6 +118,8 @@ export class HostService {
           capabilities: [...HOST_CAPABILITIES, this.createSession === undefined ? "demo-agent" : "real-agent"],
           defaultProvider: this.defaultProvider,
           ...(this.compatibleBaseURL === undefined ? {} : { compatibleBaseURL: this.compatibleBaseURL }),
+          ...(this.historyNotice === undefined ? {} : { historyNotice: this.historyNotice }),
+          ...(this.snapshot() === undefined ? {} : { snapshot: this.snapshot() }),
         });
         return;
       case "start":
@@ -135,6 +147,7 @@ export class HostService {
         wait(1_500),
       ]);
     }
+    this.history?.close();
     this.send({ type: "shutdown_ack", requestId });
   }
 
@@ -157,11 +170,6 @@ export class HostService {
         replayed: true,
       });
       return;
-    }
-    if (this.createSession !== undefined && this.accepted.size >= acceptedRequestLimit()) {
-      // Real conversations are long-lived: retain only the recent idempotency window.
-      const oldest = this.accepted.keys().next().value;
-      if (oldest !== undefined) this.accepted.delete(oldest);
     }
     if (this.accepted.size >= acceptedRequestLimit()) {
       this.send({
@@ -196,12 +204,19 @@ export class HostService {
       ...(request.model === undefined ? {} : { model: request.model }),
     };
     this.accepted.set(request.requestId, accepted);
+    try {
+      this.history?.saveRun({ type: "run", runId, prompt: request.prompt, status: "started" });
+    } catch (error: unknown) {
+      this.accepted.delete(request.requestId);
+      this.send({ type: "error", requestId: request.requestId, runId, code: "history_write_failed", message: `历史保存失败，未开始运行：${error instanceof Error ? error.message : "未知错误"}` });
+      return;
+    }
     const controller = new AbortController();
     let resolveDone: () => void = () => {};
     const done = new Promise<void>((resolve) => {
       resolveDone = resolve;
     });
-    this.active = { runId, controller, done };
+    this.active = { runId, requestId: request.requestId, prompt: request.prompt, controller, done };
     this.send({
       type: "started",
       requestId: request.requestId,
@@ -211,8 +226,18 @@ export class HostService {
 
     const onEvent = (event: AgentEvent): void => {
       this.sequence += 1;
+      const stored: HistoryEvent = { type: "event", sequence: this.sequence, runId, event };
+      this.timelineEvents.push(stored);
+      try {
+        // Streaming text stays in host memory for refresh snapshots; terminal and tool state is journaled.
+        if (event.type !== "message_update") this.history?.appendEvent(stored);
+      } catch (error: unknown) {
+        this.send({ type: "error", runId, code: "history_write_failed", message: `历史保存失败：${error instanceof Error ? error.message : "未知错误"}` });
+      }
       this.send({
         type: "event",
+        hostInstanceId: this.instanceId,
+        sessionId: this.sessionId(),
         runId,
         sequence: this.sequence,
         event,
@@ -223,8 +248,8 @@ export class HostService {
       if (this.createSession !== undefined) {
         const configKey = JSON.stringify([request.provider ?? null, request.model ?? null]);
         if (this.session === undefined || this.sessionConfigKey !== configKey) {
-          const messages = this.session?.session.messages;
-          const compaction = this.session?.session.compactionCheckpoint;
+          const messages = this.session?.session.messages ?? this.loadedHistory?.messages;
+          const compaction = this.session?.session.compactionCheckpoint ?? this.loadedHistory?.compaction;
           const pendingSession = this.createSession(this.projectPath!, request.provider, request.model, messages, compaction);
           const initialized = await awaitWithAbort(pendingSession, controller.signal);
           if (initialized.aborted) {
@@ -243,14 +268,20 @@ export class HostService {
           return;
         }
         const unsubscribe = this.session.session.subscribe(onEvent);
-        try { await this.session.session.prompt(request.prompt, { signal: controller.signal }); }
-        finally { unsubscribe(); }
+        try {
+          await this.session.session.prompt(request.prompt, { signal: controller.signal });
+          this.history?.saveContext(this.session.session.messages, this.session.session.compactionCheckpoint);
+          const terminal = [...this.timelineEvents].reverse().find((item) => item.runId === runId && item.event.type === "agent_end");
+          const status = terminal?.event.type === "agent_end" && terminal.event.status === "completed" ? "completed" : "interrupted";
+          this.history?.saveRun({ type: "run", runId, prompt: request.prompt, status });
+        } finally { unsubscribe(); }
       } else {
         await this.createAgent(onEvent, this.projectPath).run(request.prompt, { signal: controller.signal });
       }
     };
     void run()
       .catch((error: unknown) => {
+        try { this.history?.saveRun({ type: "run", runId, prompt: request.prompt, status: "unknown" }); } catch { /* The error message below keeps the failure visible. */ }
         this.send({
           type: "error",
           requestId: request.requestId,
@@ -276,13 +307,80 @@ export class HostService {
       const canonical = await realpath(requestedPath);
       if (!(await stat(canonical)).isDirectory()) throw new Error("所选路径不是目录。");
       if (this.active !== undefined || this.closed) throw new Error("项目状态已改变，请重新选择目录。");
+      if (canonical === this.projectPath) {
+        this.send({ type: "project-selected", requestId, path: canonical });
+        return;
+      }
+      const nextHistory = this.historyDirectory === undefined ? undefined : DesktopHistory.open(this.historyDirectory, canonical);
+      try {
+        if (this.historyDirectory !== undefined) saveLastProject(this.historyDirectory, canonical);
+      } catch (error: unknown) {
+        nextHistory?.close();
+        throw error;
+      }
+      this.history?.close();
+      this.history = nextHistory;
       this.projectPath = canonical;
+      this.historyNotice = undefined;
+      this.loadedHistory = this.history?.snapshot();
+      this.timelineEvents = [...(this.loadedHistory?.events ?? [])];
+      this.sequence = Math.max(this.sequence, ...this.timelineEvents.map((event) => event.sequence), 0);
       this.session = undefined;
       this.sessionConfigKey = undefined;
       this.send({ type: "project-selected", requestId, path: canonical });
     } catch (error: unknown) {
       this.send({ type: "error", requestId, code: "invalid_project", message: error instanceof Error ? error.message : "无法打开项目目录。" });
     }
+  }
+
+  private restoreLastProject(): void {
+    if (this.historyDirectory === undefined || this.projectPath !== undefined || this.closed) return;
+    try {
+      const lastProject = readLastProject(this.historyDirectory);
+      if (lastProject === undefined) return;
+      const canonical = realpathSync(lastProject);
+      if (!statSync(canonical).isDirectory()) return;
+      const history = DesktopHistory.open(this.historyDirectory, canonical);
+      this.history = history;
+      this.projectPath = canonical;
+      this.loadedHistory = history.snapshot();
+      this.timelineEvents = [...this.loadedHistory.events];
+      this.sequence = Math.max(0, ...this.timelineEvents.map((event) => event.sequence));
+    } catch (error: unknown) {
+      this.historyNotice = `无法恢复上次项目历史：${error instanceof Error ? error.message : "未知错误"}`;
+    }
+  }
+
+  private snapshot() {
+    if (this.projectPath === undefined) return undefined;
+    const history = this.history?.snapshot() ?? this.loadedHistory;
+    if (history === undefined) return undefined;
+    const events = this.timelineEvents;
+    const currentRun = this.active === undefined
+      ? history.activeRun
+      : { runId: this.active.runId, prompt: this.active.prompt, status: "running" as const };
+    const runs: Array<{ runId: string; prompt: string; status: "started" | "running" | "completed" | "interrupted" | "unknown" }> = history.runs.map(({ runId, prompt, status }) => ({ runId, prompt, status }));
+    if (this.active !== undefined) {
+      const previousIndex = runs.findIndex((run) => run.runId === this.active?.runId);
+      const activeRun = { runId: this.active.runId, prompt: this.active.prompt, status: "running" as const };
+      if (previousIndex === -1) runs.push(activeRun);
+      else runs[previousIndex] = activeRun;
+    }
+    return {
+      hostInstanceId: this.instanceId,
+      sessionId: history.sessionId,
+      projectPath: history.projectPath,
+      sequence: this.sequence,
+      events: events.map(({ sequence, runId, event }) => ({ sequence, runId, event })),
+      ...(currentRun === undefined ? {} : { run: currentRun }),
+      runs,
+      incomplete: history.incomplete,
+      corruption: history.corruption,
+    };
+  }
+
+  private sessionId(): string {
+    return this.history?.sessionId ?? `session-${createHash("sha256").update(this.projectPath ?? "no-project").digest("hex").slice(0, 24)}`;
   }
 
   private interrupt(requestId: string, runId: string): void {
@@ -302,6 +400,8 @@ export class HostService {
 
 interface ActiveRun {
   readonly runId: string;
+  readonly requestId: string;
+  readonly prompt: string;
   readonly controller: AbortController;
   readonly done: Promise<void>;
 }

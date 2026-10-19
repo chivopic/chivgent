@@ -152,6 +152,43 @@ describe("composer and scroll", () => {
     expect(reduceDesk(active, { type: "run-error", runId: "run-new", message: "current failed" } as Parameters<typeof reduceDesk>[1]).phase).toBe("error");
   });
 
+  it("discards a duplicate sequence without appending its delta twice", () => {
+    const active = { ...initialDeskState, phase: "running" as const, runId: "run-duplicate" };
+    const first = reduceDesk(active, { type: "agent", runId: "run-duplicate", sequence: 1, event: { type: "message_update", turn: 1, delta: "once" } });
+    const duplicate = reduceDesk(first, { type: "agent", runId: "run-duplicate", sequence: 1, event: { type: "message_update", turn: 1, delta: "once" } });
+    expect(duplicate.items).toEqual([{ kind: "assistant", id: "assistant-run-duplicate-1", runId: "run-duplicate", turn: 1, text: "once", streaming: true }]);
+    expect(duplicate).toBe(first);
+  });
+
+  it("hydrates an interrupted tool as unknown and never treats it as completed", () => {
+    const restored = reduceDesk(initialDeskState, { type: "hydrate", snapshot: {
+      hostInstanceId: "host-restored", sessionId: "session-restored", projectPath: "/tmp/project", sequence: 1,
+      runs: [{ runId: "run-restored", prompt: "inspect", status: "interrupted" }],
+      run: { runId: "run-restored", prompt: "inspect", status: "interrupted" },
+      events: [{ runId: "run-restored", sequence: 1, event: { type: "tool_execution_start", toolCallId: "tool-1", toolName: "read_file" } }],
+      incomplete: false, corruption: null,
+    } });
+    expect(restored.phase).toBe("error");
+    expect(restored.items).toContainEqual(expect.objectContaining({ kind: "tool", status: "error", output: "执行结果未知，需要检查工作区。" }));
+    expect(restored.notice).toContain("没有自动重放工具");
+  });
+
+  it("keeps tool cards from separate runs when the provider reuses a tool call id", () => {
+    let state = reduceDesk(initialDeskState, { type: "submit", text: "first" });
+    state = reduceDesk(state, { type: "started", runId: "run-1" });
+    state = reduceDesk(state, { type: "agent", runId: "run-1", sequence: 1, event: { type: "tool_execution_start", toolCallId: "call-1", toolName: "read_file" } });
+    state = reduceDesk(state, { type: "agent", runId: "run-1", sequence: 2, event: { type: "tool_execution_end", toolCallId: "call-1", content: "first result" } });
+    state = reduceDesk(state, { type: "agent", runId: "run-1", sequence: 3, event: { type: "agent_end", status: "completed" } });
+    state = reduceDesk(state, { type: "submit", text: "second" });
+    state = reduceDesk(state, { type: "started", runId: "run-2" });
+    state = reduceDesk(state, { type: "agent", runId: "run-2", sequence: 4, event: { type: "tool_execution_start", toolCallId: "call-1", toolName: "read_file" } });
+    state = reduceDesk(state, { type: "agent", runId: "run-2", sequence: 5, event: { type: "tool_execution_end", toolCallId: "call-1", content: "second result" } });
+    expect(state.items.filter((item) => item.kind === "tool")).toMatchObject([
+      { runId: "run-1", toolCallId: "call-1", output: "first result" },
+      { runId: "run-2", toolCallId: "call-1", output: "second result" },
+    ]);
+  });
+
   it("does not submit while an IME composition is confirming", () => {
     expect(shouldSubmitOnEnter({
       key: "Enter",

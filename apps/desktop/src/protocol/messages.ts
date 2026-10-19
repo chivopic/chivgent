@@ -68,6 +68,20 @@ export interface InitializedMessage {
   readonly capabilities: readonly string[];
   readonly defaultProvider: string;
   readonly compatibleBaseURL?: string;
+  readonly snapshot?: SessionSnapshot;
+  readonly historyNotice?: string;
+}
+
+export interface SessionSnapshot {
+  readonly hostInstanceId: string;
+  readonly sessionId: string;
+  readonly projectPath: string;
+  readonly sequence: number;
+  readonly events: readonly { readonly sequence: number; readonly runId: string; readonly event: AgentEventPayload }[];
+  readonly run?: { readonly runId: string; readonly status: "started" | "running" | "completed" | "interrupted" | "unknown"; readonly prompt: string };
+  readonly runs?: readonly { readonly runId: string; readonly status: "started" | "running" | "completed" | "interrupted" | "unknown"; readonly prompt: string }[];
+  readonly incomplete: boolean;
+  readonly corruption: "tail" | "middle" | null;
 }
 
 export interface StartedMessage {
@@ -116,6 +130,8 @@ export interface HostErrorMessage {
  */
 export interface DesktopEventMessage {
   readonly type: "event";
+  readonly hostInstanceId?: string;
+  readonly sessionId?: string;
   readonly runId: string;
   readonly sequence: number;
   readonly event: AgentEventPayload;
@@ -242,7 +258,9 @@ export function isHostToMain(value: unknown): value is HostToMain {
         Array.isArray(record.capabilities) &&
         record.capabilities.every((capability) => typeof capability === "string") &&
         typeof record.defaultProvider === "string" &&
-        (record.compatibleBaseURL === undefined || typeof record.compatibleBaseURL === "string")
+        (record.compatibleBaseURL === undefined || typeof record.compatibleBaseURL === "string") &&
+        (record.historyNotice === undefined || typeof record.historyNotice === "string") &&
+        (record.snapshot === undefined || isSessionSnapshot(record.snapshot))
       );
     case "project-selected":
       return isRequestId(record.requestId) && typeof record.path === "string" && record.path.length > 0;
@@ -266,6 +284,8 @@ export function isHostToMain(value: unknown): value is HostToMain {
       return typeof record.code === "string" && typeof record.message === "string";
     case "event":
       return (
+        isRequestId(record.hostInstanceId) &&
+        isRequestId(record.sessionId) &&
         isRequestId(record.runId) &&
         typeof record.sequence === "number" &&
         Number.isSafeInteger(record.sequence) &&
@@ -281,4 +301,17 @@ export function isHostToMain(value: unknown): value is HostToMain {
 
 export function acceptedRequestLimit(): number {
   return MAX_ACCEPTED_REQUESTS;
+}
+
+function isSessionSnapshot(value: unknown): value is SessionSnapshot {
+  if (typeof value !== "object" || value === null) return false;
+  const item = value as Record<string, unknown>;
+  const validRun = (run: unknown): boolean => typeof run === "object" && run !== null && isRequestId((run as { runId?: unknown }).runId) &&
+    typeof (run as { prompt?: unknown }).prompt === "string" && ["started", "running", "completed", "interrupted", "unknown"].includes(String((run as { status?: unknown }).status));
+  return isRequestId(item.hostInstanceId) && isRequestId(item.sessionId) && typeof item.projectPath === "string" &&
+    Number.isSafeInteger(item.sequence) && (item.sequence as number) >= 0 && Array.isArray(item.events) && item.events.every((event) => typeof event === "object" && event !== null &&
+      Number.isSafeInteger((event as { sequence?: unknown }).sequence) && ((event as { sequence: number }).sequence > 0) && isRequestId((event as { runId?: unknown }).runId) &&
+      typeof (event as { event?: unknown }).event === "object" && (event as { event?: { type?: unknown } }).event !== null && typeof (event as { event: { type?: unknown } }).event.type === "string") &&
+    (item.run === undefined || validRun(item.run)) && (item.runs === undefined || (Array.isArray(item.runs) && item.runs.every(validRun))) &&
+    typeof item.incomplete === "boolean" && (item.corruption === null || item.corruption === "tail" || item.corruption === "middle");
 }
