@@ -120,7 +120,7 @@ You pay the provider you picked, at their prices. chivgent shows token counts; i
 | Provider | `--provider` | Key | Model |
 | --- | --- | --- | --- |
 | OpenAI, Responses API | `openai` (default) | `OPENAI_API_KEY` | `gpt-5.6` |
-| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-v4-flash` |
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-flash` |
 | Any compatible endpoint | `openai-compatible` | `OPENAI_API_KEY` and `OPENAI_BASE_URL` | set `OPENAI_MODEL` |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | set `OPENROUTER_MODEL` |
 | Groq | `groq` | `GROQ_API_KEY` | set `GROQ_MODEL` |

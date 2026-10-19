@@ -11,7 +11,9 @@ The model is selected in this order:
 
 1. `--model`
 2. `DEEPSEEK_MODEL`
-3. `deepseek-v4-flash`
+3. `deepseek-flash`
+
+DeepSeek's [official API quick start](https://api-docs.deepseek.com/quick_start/pricing-details-cny/) lists `deepseek-flash` as the current Flash API model ID. The previous `deepseek-v4-flash` identifier remains accepted as a legacy alias, but the current model is served under the new ID. An explicit `--model` or `DEEPSEEK_MODEL` value still wins; chivgent never silently rewrites the user's selection.
 
 OpenAI remains the default Provider. Select it explicitly with
 `--provider openai`; it uses `OPENAI_API_KEY` and `OPENAI_MODEL`.
