@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { AgentEvent } from "../src/events.js";
 import { Agent, AgentProtocolError } from "../src/agent.js";
 import { ListFilesTool } from "../src/tools/list-files.js";
 import { ReadFileTool } from "../src/tools/read-file.js";
@@ -84,6 +85,33 @@ describe("Agent", () => {
       expect(result.finalMessage.content).toBe("Final answer");
       expect(result.turnCount).toBe(1);
     }
+  });
+
+  it("surfaces Provider-reported model IDs in events without changing the transcript", async () => {
+    const events: AgentEvent[] = [];
+    const agent = new Agent({
+      systemPrompt: "test",
+      maxTurns: 2,
+      llm: {
+        async complete() {
+          return {
+            message: { role: "assistant" as const, content: "OK", toolCalls: [] },
+            reportedModel: "server-model-id",
+          };
+        },
+      },
+      tools: [],
+      workspace,
+      onEvent: (event) => events.push(event),
+    });
+
+    const result = await agent.run("Which model handled this?");
+    expect(events.find((event) => event.type === "message_end"))
+      .toMatchObject({ type: "message_end", reportedModel: "server-model-id" });
+    expect(result.messages).toEqual([
+      { role: "user", content: "Which model handled this?" },
+      { role: "assistant", content: "OK", toolCalls: [] },
+    ]);
   });
 
   it("executes a tool and sends its result into the next LLM call", async () => {
