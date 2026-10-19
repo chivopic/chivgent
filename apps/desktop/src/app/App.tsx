@@ -38,6 +38,8 @@ export function App(): JSX.Element {
   const ignoreEnter = useRef(false);
   const runIdRef = useRef<string | null>(null);
   const pendingStartRef = useRef<string | null>(null);
+  const eventCursorRef = useRef({ hostInstanceId: "", sessionId: "", sequence: 0, refreshing: false });
+  const providerDefaultAppliedRef = useRef(false);
   runIdRef.current = state.runId;
 
   useEffect(() => {
@@ -51,9 +53,23 @@ export function App(): JSX.Element {
     }
     const stopEvents = api.onEvent((message) => {
       if (message.type === "initialized") {
-        setProvider(message.defaultProvider);
+        if (!providerDefaultAppliedRef.current) {
+          setProvider(message.defaultProvider);
+          providerDefaultAppliedRef.current = true;
+        }
         setCompatibleEndpoint(message.compatibleBaseURL ?? "");
         setDemoMode(message.capabilities.includes("demo-agent"));
+        if (message.historyNotice !== undefined) {
+          setProjectError(message.historyNotice);
+          dispatch({ type: "fail", message: message.historyNotice });
+        }
+        if (message.snapshot !== undefined) {
+          const cursor = eventCursorRef.current;
+          if (cursor.hostInstanceId === message.snapshot.hostInstanceId && cursor.sessionId === message.snapshot.sessionId && message.snapshot.sequence < cursor.sequence) return;
+          setProjectPath(message.snapshot.projectPath);
+          eventCursorRef.current = { hostInstanceId: message.snapshot.hostInstanceId, sessionId: message.snapshot.sessionId, sequence: message.snapshot.sequence, refreshing: false };
+          dispatch({ type: "hydrate", snapshot: message.snapshot });
+        }
       } else if (message.type === "runtime-config") {
         setRuntimeConfig(`${message.provider} · ${message.model}${message.baseURL ? ` · ${message.baseURL}` : ""}`);
       } else if (message.type === "started") {
@@ -63,8 +79,31 @@ export function App(): JSX.Element {
           dispatch({ type: "started", runId: message.runId });
         }
       } else if (message.type === "event") {
+        const cursor = eventCursorRef.current;
+        if (cursor.hostInstanceId !== "" && (message.hostInstanceId !== cursor.hostInstanceId || message.sessionId !== cursor.sessionId)) {
+          if (!cursor.refreshing) {
+            cursor.refreshing = true;
+            void api.initialize().then((result) => {
+              if (!result.ok) dispatch({ type: "fail", message: `无法重新同步会话：${result.message}` });
+            }).finally(() => { eventCursorRef.current.refreshing = false; });
+          }
+          return;
+        }
+        if (message.sequence <= cursor.sequence) return;
+        if (cursor.sequence > 0 && message.sequence !== cursor.sequence + 1) {
+          if (!cursor.refreshing) {
+            cursor.refreshing = true;
+            void api.initialize().then((result) => {
+              if (!result.ok) dispatch({ type: "fail", message: `事件缺口后无法重新同步：${result.message}` });
+            }).finally(() => { eventCursorRef.current.refreshing = false; });
+          }
+          return;
+        }
+        eventCursorRef.current = { ...cursor, sequence: message.sequence };
         dispatch({
           type: "agent",
+          hostInstanceId: message.hostInstanceId,
+          sessionId: message.sessionId,
           runId: message.runId,
           sequence: message.sequence,
           event: message.event,
@@ -163,9 +202,11 @@ export function App(): JSX.Element {
     if (result.value.type === "project-selected") {
       pendingStartRef.current = null;
       setProjectPath(result.value.path);
+      eventCursorRef.current = { hostInstanceId: "", sessionId: "", sequence: 0, refreshing: false };
       setRuntimeConfig("");
       setProjectError("");
       dispatch({ type: "reset" });
+      void api.initialize();
     }
   }
 
