@@ -6,53 +6,64 @@ import { highlightCodeLine } from "./syntax.js";
  * no third-party ANSI, and no regex-based mutation of displayed source code.
  * This deliberately handles only headings, quotes, lists and fenced code.
  */
-export function formatTerminalMarkdown(markdown: string, columns = 80, color = false): string {
-  const width = Math.max(1, columns - 1);
-  const lines = terminalText(markdown).split("\n");
-  let fenced: string | undefined;
-  const rendered: string[] = [];
+export class StreamingMarkdownFormatter {
+  private fenced?: string;
 
-  for (const line of lines) {
+  constructor(
+    private readonly columns: () => number,
+    private readonly color = false,
+  ) {}
+
+  formatLine(rawLine: string): string {
+    const width = Math.max(1, this.columns() - 1);
+    const line = terminalText(rawLine);
     const fence = /^\s*```([^\s`]*)\s*$/.exec(line);
     if (fence !== null) {
-      if (fenced === undefined) {
+      if (this.fenced === undefined) {
         const lang = fence[1] ?? "";
-        fenced = lang;
+        this.fenced = lang;
         const header = fitLine(`  ┌─ ${lang || "code"}`, width);
-        rendered.push(color ? `\u001b[2m${header}\u001b[0m` : header);
-      } else {
-        fenced = undefined;
-        const footer = fitLine("  └─", width);
-        rendered.push(color ? `\u001b[2m${footer}\u001b[0m` : footer);
+        return this.color ? `\u001b[2m${header}\u001b[0m` : header;
       }
-      continue;
+      this.fenced = undefined;
+      const footer = fitLine("  └─", width);
+      return this.color ? `\u001b[2m${footer}\u001b[0m` : footer;
     }
 
-    if (fenced !== undefined) {
+    if (this.fenced !== undefined) {
       const body = fitLine(line, Math.max(1, width - 4));
-      rendered.push(color ? `\u001b[36m  │ \u001b[0m${highlightCodeLine(body, fenced)}` : `  │ ${body}`);
-      continue;
+      return this.color ? `\u001b[36m  │ \u001b[0m${highlightCodeLine(body, this.fenced)}` : `  │ ${body}`;
     }
 
     const heading = /^(#{1,4})\s+(.+)$/.exec(line);
     if (heading !== null) {
       const title = fitLine(`${" ".repeat(Math.max(0, heading[1]!.length - 1))}${heading[2]}`, width);
-      rendered.push(color ? `\u001b[1m${title}\u001b[0m` : title);
-      continue;
+      return this.color ? `\u001b[1m${title}\u001b[0m` : title;
     }
     const bullet = /^(\s*)[-*+]\s+(.+)$/.exec(line);
     if (bullet !== null) {
-      rendered.push(fitLine(`${bullet[1]}• ${bullet[2]}`, width));
-      continue;
+      return fitLine(`${bullet[1]}• ${bullet[2]}`, width);
     }
     const quote = /^>\s?(.*)$/.exec(line);
     if (quote !== null) {
       const content = fitLine(`┃ ${quote[1]}`, width);
-      rendered.push(color ? `\u001b[2m${content}\u001b[0m` : content);
-      continue;
+      return this.color ? `\u001b[2m${content}\u001b[0m` : content;
     }
 
-    rendered.push(fitLine(line, width));
+    return fitLine(line, width);
   }
-  return rendered.join("\n");
+
+  reset(): void {
+    this.fenced = undefined;
+  }
+}
+
+/**
+ * Small terminal-focused renderer. No HTML, no remote resource fetching,
+ * no third-party ANSI, and no regex-based mutation of displayed source code.
+ * This deliberately handles only headings, quotes, lists and fenced code.
+ */
+export function formatTerminalMarkdown(markdown: string, columns = 80, color = false): string {
+  const formatter = new StreamingMarkdownFormatter(() => columns, color);
+  return terminalText(markdown).split("\n").map(line => formatter.formatLine(line)).join("\n");
 }
