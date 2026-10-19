@@ -142,10 +142,12 @@ export class OpenAICompatibleChatClient implements LLMClient {
     request: LLMRequest,
     history: readonly CompatibleHistoryMessage[],
   ): Omit<ChatCompletionCreateParamsNonStreaming, "stream"> {
+    const tools = request.tools.map(toCompatibleTool);
     return {
       model: this.model,
       messages: [...history],
-      tools: request.tools.map(toCompatibleTool),
+      // "tools" is optional. Some compatible gateways reject an empty array.
+      ...(tools.length === 0 ? {} : { tools }),
     };
   }
 

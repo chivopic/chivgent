@@ -283,6 +283,32 @@ describe("DeepSeekChatClient", () => {
     ).rejects.toThrow("incompatible continuation");
   });
 
+  it("omits optional tools when no functions are registered", async () => {
+    const create = vi.fn().mockResolvedValue({
+      choices: [{ message: { role: "assistant", content: "Summary" } }],
+    });
+    const client = new DeepSeekChatClient({
+      apiKey: "test-key",
+      model: "deepseek-test",
+      client: { chat: { completions: { create } } } as unknown as OpenAI,
+    });
+
+    await client.complete({
+      systemPrompt: "Summarise",
+      messages: [{ role: "user", content: "Summarise this" }],
+      tools: [],
+    });
+
+    expect(create).toHaveBeenCalledWith({
+      model: "deepseek-test",
+      messages: [
+        { role: "system", content: "Summarise" },
+        { role: "user", content: "Summarise this" },
+      ],
+      stream: false,
+    });
+  });
+
   it("maps every discovery tool through the compatible function boundary", async () => {
     const create = vi.fn().mockResolvedValue({
       choices: [{ message: { role: "assistant", content: "Done" } }],
