@@ -3,6 +3,7 @@ import { parseCliArgs } from "../src/cli-options.js";
 import { createLocalSession } from "../src/cli-runtime.js";
 import { WRITE_SYSTEM_PROMPT } from "../src/prompts.js";
 import { assistant, FakeLLMClient } from "./fakes.js";
+import { PermissionPolicy } from "../src/permissions.js";
 
 describe("local CLI session setup", () => {
   it("exposes read tools and the permission-free plan control by default", () => {
@@ -39,6 +40,23 @@ describe("local CLI session setup", () => {
     await session.prompt("Edit a file");
     expect(llm.requests[0]?.systemPrompt).toContain(WRITE_SYSTEM_PROMPT);
     expect(llm.requests[0]?.systemPrompt).not.toContain("You can also run shell commands");
+  });
+  it("passes modern permission instructions without contradictory legacy flags", async () => {
+    const llm = new FakeLLMClient([assistant("Done")]);
+    const session = createLocalSession({
+      options: parseCliArgs(["--permission-mode", "workspace"], {}),
+      cwd: "/workspace",
+      llm,
+      permissionPolicy: new PermissionPolicy("workspace"),
+      restored: { resumed: false },
+    });
+
+    await session.prompt("Run a test");
+    const prompt = llm.requests[0]?.systemPrompt ?? "";
+    expect(prompt).not.toContain("--allow-writes");
+    expect(prompt).not.toContain("--shell-network");
+    expect(prompt).toContain('scope "network"');
+    expect(prompt).toContain('scope "host"');
   });
 
   it("ignores restored compaction when --no-compaction is set", async () => {

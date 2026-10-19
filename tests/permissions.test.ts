@@ -121,6 +121,111 @@ describe("permission policy", () => {
     expect(scopes).toEqual(["host"]);
     expect(exec).toHaveBeenCalledOnce();
   });
+  it("authorizes network-only scope in workspace mode without host file access", async () => {
+    const cwd = await root();
+    const askedContexts: (string | undefined)[] = [];
+    const policy = new PermissionPolicy("workspace", async (_cmd, _sig, ctx) => {
+      askedContexts.push(ctx);
+      return true;
+    });
+    const scopes: string[] = [];
+    const exec = vi.fn(async (_cmd: string, _cwd: string, options: { onData: (chunk: Buffer) => void }) => {
+      options.onData(Buffer.from("downloaded"));
+      return { exitCode: 0 };
+    });
+    const operations: ShellOperations = { backend: "Docker (network enabled, workspace writes enabled)", exec };
+    const tool = new BashTool({
+      cwd,
+      operationsForCall: (scope) => { scopes.push(scope ?? "workspace"); return operations; },
+      authorize: (req) => policy.authorizeShell(req.command, req.scope, req.signal, req.justification ? `Reason requested by model: ${req.justification}` : undefined),
+    });
+    const output = await tool.execute({ command: "npm install", scope: "network", justification: "Download dependencies" }, {
+      workspace: new PermissionWorkspace(cwd, policy),
+    });
+    expect(output.isError).toBe(false);
+    expect(scopes).toEqual(["network"]);
+    expect(exec).toHaveBeenCalledOnce();
+    expect(askedContexts[0]).toContain("Network access for this command only");
+    expect(askedContexts[0]).not.toContain("Expanded host access");
+  });
+
+  it("executes normal workspace commands in workspace mode with zero prompts", async () => {
+    const cwd = await root();
+    const approve = vi.fn(async () => true);
+    const policy = new PermissionPolicy("workspace", approve);
+    const exec = vi.fn(async (_cmd: string, _cwd: string, options: { onData: (chunk: Buffer) => void }) => {
+      options.onData(Buffer.from("clean workspace run"));
+      return { exitCode: 0 };
+    });
+    const tool = new BashTool({
+      cwd,
+      operationsForCall: () => ({ backend: "Docker (network denied, workspace writes enabled)", exec }),
+      authorize: (req) => policy.authorizeShell(req.command, req.scope, req.signal),
+    });
+    const output = await tool.execute({ command: "pwd" }, {
+      workspace: new PermissionWorkspace(cwd, policy),
+    });
+    expect(output.isError).toBe(false);
+    expect(exec).toHaveBeenCalledOnce();
+    expect(approve).not.toHaveBeenCalled();
+  });
+
+  it("prompts before workspace commands in ask-first mode and denies on rejection", async () => {
+    const cwd = await root();
+    const approve = vi.fn().mockResolvedValueOnce(false);
+    const policy = new PermissionPolicy("ask-first", approve);
+    const exec = vi.fn(async () => ({ exitCode: 0 }));
+    const tool = new BashTool({
+      cwd,
+      operationsForCall: () => ({ backend: "Docker (network denied, workspace writes enabled)", exec }),
+      authorize: (req) => policy.authorizeShell(req.command, req.scope, req.signal),
+    });
+    const output = await tool.execute({ command: "pwd" }, {
+      workspace: new PermissionWorkspace(cwd, policy),
+    });
+    expect(output.isError).toBe(true);
+    expect(output.content).toBe("Shell command denied by user.");
+    expect(approve).toHaveBeenCalledOnce();
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("rejects network scope without justification before invoking approval", async () => {
+    const cwd = await root();
+    const approve = vi.fn(async () => true);
+    const policy = new PermissionPolicy("workspace", approve);
+    const exec = vi.fn(async () => ({ exitCode: 0 }));
+    const tool = new BashTool({
+      cwd,
+      operationsForCall: () => ({ backend: "Docker (network enabled, workspace writes enabled)", exec }),
+      authorize: (req) => policy.authorizeShell(req.command, req.scope, req.signal),
+    });
+    const output = await tool.execute({ command: "npm install", scope: "network" }, {
+      workspace: new PermissionWorkspace(cwd, policy),
+    });
+    expect(output.isError).toBe(true);
+    expect(approve).not.toHaveBeenCalled();
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("diagnoses network failure when network is disabled in the active sandbox", async () => {
+    const cwd = await root();
+    const policy = new PermissionPolicy("workspace");
+    const exec = vi.fn(async (_cmd: string, _cwd: string, options: { onData: (chunk: Buffer) => void }) => {
+      options.onData(Buffer.from("curl: (6) Could not resolve host: example.com\n"));
+      return { exitCode: 6 };
+    });
+    const tool = new BashTool({
+      cwd,
+      operationsForCall: () => ({ backend: "Docker (network denied, workspace writes enabled)", exec }),
+      authorize: (req) => policy.authorizeShell(req.command, req.scope, req.signal),
+    });
+    const output = await tool.execute({ command: "curl https://example.com" }, {
+      workspace: new PermissionWorkspace(cwd, policy),
+    });
+    expect(output.isError).toBe(true);
+    expect(output.content).toContain("network access is disabled in the active sandbox");
+    expect(output.content).toContain('request bash with scope "network"');
+  });
 
   it("does not run a host command when approval is rejected", async () => {
     const cwd = await root();

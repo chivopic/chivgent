@@ -28,8 +28,8 @@ const inputSchema = {
       description:
         "Optional timeout in seconds. There is no default; set one for commands that may hang.",
     },
-    scope: { type: "string", enum: ["workspace", "host"], description: "Set host for an explicit one-command request to access host files or network outside the workspace." },
-    justification: { type: "string", description: "Required explanation when explicitly setting scope to host." },
+    scope: { type: "string", enum: ["workspace", "network", "host"], description: "Permission scope: 'workspace' (default, sandboxed with network disabled), 'network' (sandboxed within workspace with outbound network access), or 'host' (broad host file and network access)." },
+    justification: { type: "string", description: "Required explanation when explicitly setting scope to 'network' or 'host'." },
   },
   required: ["command"],
   additionalProperties: false,
@@ -42,6 +42,15 @@ interface BashArguments {
   readonly justification?: string;
 }
 
+export interface ShellAuthorizeRequest {
+  readonly command: string;
+  readonly scope: ShellScope;
+  readonly justification?: string;
+  readonly backend?: string;
+  readonly signal?: AbortSignal;
+}
+export type ShellAuthorize = (request: ShellAuthorizeRequest) => Promise<boolean>;
+
 export interface BashToolOptions {
   readonly cwd: string;
   readonly allowWrites?: boolean;
@@ -52,6 +61,8 @@ export interface BashToolOptions {
   /** Rebuild the sandbox from the active permission mode for each call. */
   readonly operationsForCall?: (scope?: ShellScope) => ShellOperations;
   readonly defaultScopeForCall?: () => ShellScope;
+  /** Direct typed authorization callback. */
+  readonly authorize?: ShellAuthorize;
   /** A human decision (or explicit session-wide approval). Absent means deny. */
   readonly approve?: ShellApproval;
   readonly maxLines?: number;
@@ -70,6 +81,7 @@ export class BashTool implements Tool {
   private readonly operations: ShellOperations;
   private readonly operationsForCall: ((scope?: ShellScope) => ShellOperations) | undefined;
   private readonly defaultScopeForCall: (() => ShellScope) | undefined;
+  private readonly authorize: ShellAuthorize | undefined;
   private readonly approve: ShellApproval | undefined;
   private readonly maxLines?: number;
   private readonly maxBytes?: number;
@@ -81,6 +93,7 @@ export class BashTool implements Tool {
     this.operations = options.operations ?? createShellOperations({ backend: options.backend, allowWrites: options.allowWrites, allowNetwork: options.allowNetwork });
     this.operationsForCall = options.operationsForCall;
     this.defaultScopeForCall = options.defaultScopeForCall;
+    this.authorize = options.authorize;
     this.approve = options.approve;
     if (options.maxLines !== undefined) {
       this.maxLines = options.maxLines;
@@ -122,19 +135,35 @@ export class BashTool implements Tool {
     if (parsed.scope === "host" && !parsed.justification?.trim()) {
       return { content: 'Host scope requires a non-empty "justification".', isError: true };
     }
-    const operations = this.operationsForCall?.(scope) ?? this.operations;
-    // Approval is required even if the caller already exposed the bash tool.
-    // Non-interactive/remote callers have no implicit approval channel.
-    if (this.approve === undefined) {
-      return { content: "Shell command denied: explicit approval is required.", isError: true };
+    if (parsed.scope === "network" && !parsed.justification?.trim()) {
+      return { content: 'Network scope requires a non-empty "justification".', isError: true };
     }
+    let operations: ShellOperations;
+    try {
+      operations = this.operationsForCall?.(scope) ?? this.operations;
+    } catch (error: unknown) {
+      if (error instanceof ShellUnavailableError) {
+        return { content: error.message, isError: true };
+      }
+      throw error;
+    }
+
     let approved: boolean;
     try {
-      const approvalText = scope === "host" && parsed.scope === "host" ? `${parsed.command}\n\nReason requested by model: ${parsed.justification}` : parsed.command;
-      const approvalContext = scope === "host"
-        ? `Expanded host access for this command only: may read/write outside workspace and use network. ${operations.backend ?? "sandbox policy unknown"}`
-        : `Shell context: ${operations.backend ?? "custom backend; network policy unknown"}`;
-      approved = await this.approve(approvalText, context.signal, approvalContext);
+      if (this.authorize !== undefined) {
+        approved = await this.authorize({
+          command: parsed.command,
+          scope,
+          justification: parsed.justification,
+          backend: operations.backend,
+          signal: context.signal,
+        });
+      } else if (this.approve !== undefined) {
+        const approvalContext = formatApprovalContext(scope, operations.backend, parsed.justification);
+        approved = await this.approve(parsed.command, context.signal, approvalContext);
+      } else {
+        return { content: "Shell command denied: explicit approval is required.", isError: true };
+      }
     } catch (error: unknown) {
       if (isAbortError(error) || context.signal?.aborted) throw new ShellAbortError();
       return { content: "Shell command denied: approval failed.", isError: true };
@@ -196,8 +225,12 @@ export class BashTool implements Tool {
 
       const text = await this.finish(output, publish, "(no output)");
       if (exitCode !== 0 && exitCode !== null) {
+        const isNetworkBlocked = scope === "workspace" && !operations.backend?.includes("network enabled") && NETWORK_FAILURE_PATTERN.test(text);
+        const status = isNetworkBlocked
+          ? `Command exited with code ${exitCode} (network access is disabled in the active sandbox; if network is needed, request bash with scope "network" and justification)`
+          : `Command exited with code ${exitCode}`;
         return {
-          content: appendStatus(text, `Command exited with code ${exitCode}`),
+          content: appendStatus(text, status),
           isError: true,
         };
       }
@@ -339,9 +372,9 @@ function parseArguments(value: unknown): BashArguments | undefined {
   if (typeof record.command !== "string" || record.command.trim().length === 0) {
     return undefined;
   }
-  if (record.scope !== undefined && record.scope !== "workspace" && record.scope !== "host") return undefined;
+  if (record.scope !== undefined && record.scope !== "workspace" && record.scope !== "network" && record.scope !== "host") return undefined;
   if (record.justification !== undefined && (typeof record.justification !== "string" || record.justification.length > 500 || /[\x00-\x1f\x7f]/.test(record.justification))) return undefined;
-  if (record.scope === "host" && (typeof record.justification !== "string" || record.justification.trim().length === 0)) return undefined;
+  if ((record.scope === "host" || record.scope === "network") && (typeof record.justification !== "string" || record.justification.trim().length === 0)) return undefined;
   if (record.timeout !== undefined && typeof record.timeout !== "number") return undefined;
   return {
     command: record.command,
@@ -350,3 +383,17 @@ function parseArguments(value: unknown): BashArguments | undefined {
     ...(record.justification === undefined ? {} : { justification: record.justification }),
   };
 }
+
+function formatApprovalContext(scope: ShellScope, backend?: string, justification?: string): string {
+  const reason = justification ? ` Reason: ${justification}` : "";
+  const backendNote = backend ? ` (${backend})` : "";
+  if (scope === "host") {
+    return `Expanded host access for this command only: shell may read/write outside workspace and use network.${reason}${backendNote}`;
+  }
+  if (scope === "network") {
+    return `Network access for this command only: outbound network enabled within workspace sandbox.${reason}${backendNote}`;
+  }
+  return `Shell context: ${backend ?? "sandboxed workspace; network disabled"}`;
+}
+
+export const NETWORK_FAILURE_PATTERN = /(?:ENETUNREACH|Network is unreachable|Could not resolve host|Temporary failure in name resolution|getaddrinfo ENOTFOUND|getaddrinfo EAI_AGAIN|Operation not permitted|npm error code (?:ENOTFOUND|EAI_AGAIN|ECONNREFUSED))/i;

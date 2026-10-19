@@ -31,6 +31,24 @@ describe("native Seatbelt shell", () => {
     expect(readOnly.args.join(" ")).not.toContain("(allow network*)");
     expect(nativeShellConfig(root, { allowWrites: true, allowNetwork: true, temporaryDirectory: temp, sandboxExecutable: "/bin/echo" }).args.join(" ")).toContain("(allow network*)");
   });
+  it("confines filesystem reads and writes even when network is enabled", async () => {
+    const root = await fixture();
+    const temp = await mkdtemp(path.join(tmpdir(), "chivgent-native-private-"));
+    roots.push(temp);
+    const netOnly = nativeShellConfig(root, { allowWrites: true, allowNetwork: true, allowHostAccess: false, temporaryDirectory: temp, sandboxExecutable: "/bin/echo" });
+    const netRules = netOnly.args.join(" ");
+    expect(netRules).toContain("(allow network*)");
+    expect(netRules).toContain(`(deny file-read* (subpath ${JSON.stringify(await realpath(homedir()))}))`);
+    expect(netRules).toContain(`(deny file-read* (subpath ${JSON.stringify(await realpath(tmpdir()))}))`);
+    expect(netRules).toContain(`(allow file-write* (subpath ${JSON.stringify(await realpath(root))}))`);
+    expect(netRules).not.toContain('(allow file-write* (subpath "/dev/null")) (allow file-write*)');
+
+    const hostAccess = nativeShellConfig(root, { allowWrites: true, allowNetwork: true, allowHostAccess: true, temporaryDirectory: temp, sandboxExecutable: "/bin/echo" });
+    const hostRules = hostAccess.args.join(" ");
+    expect(hostRules).toContain("(allow file-read*)");
+    expect(hostRules).toContain("(allow file-write*)");
+    expect(hostRules).not.toContain(`(deny file-read* (subpath ${JSON.stringify(await realpath(homedir()))}))`);
+  });
 
   it.skipIf(process.platform !== "darwin")("enforces workspace writes, protected paths, env and network at runtime", async () => {
     const root = await fixture();

@@ -4,7 +4,7 @@ New sessions can choose a permission mode with `--permission-mode ask-first|work
 
 `ask-first` asks before every file change and shell command. A local interactive rich-TUI launch without legacy capability flags selects this mode; Shift+Tab cycles Plan → Auto mode (`workspace`) → Ask for me (`ask-first`) at the idle inline composer. This selection lasts for the process and is not restored by resuming a saved session. Headless, simple, and remote starts retain the existing read-only default unless a mode or legacy capability flag is selected. See [the in-session behavior](../README.md#a-session-you-can-come-back-to).
 
-`workspace` automatically allows workspace file changes and shell commands within the sandbox, with network disabled. A shell request that needs host file access must explicitly set `scope: "host"` and give a justification; the approval describes broad host file and network access and applies to that command only. Declining, cancellation, or unavailable interactive approval prevents execution. `unrestricted` is an explicit opt-in that runs shell commands automatically with broad host file access and network, within the OS sandbox; direct file tools remain workspace-bound.
+`workspace` automatically allows workspace file changes and shell commands within the sandbox, with network disabled. A shell request that needs outbound network access can request `scope: "network"` with a justification; when approved, outbound network is enabled within the workspace sandbox without host filesystem access. A shell request that needs host file access must explicitly set `scope: "host"` and give a justification; the approval describes broad host file and network access and applies to that command only (host access is unavailable and fails closed on the Docker backend). Declining, cancellation, or unavailable interactive approval prevents execution. `unrestricted` is an explicit opt-in that runs shell commands automatically with broad host file access and network, within the OS sandbox; direct file tools remain workspace-bound.
 
 `--permission-mode` cannot be combined with legacy capability switches such as `--allow-writes` or `--allow-shell`. Existing legacy behavior remains available when no permission mode is selected.
 
@@ -40,9 +40,7 @@ deny-then-allow policy is a practical boundary, not a complete filesystem
 allowlist; system paths explicitly reopened remain readable. Workspace `.aws`,
 `.ssh`, `.codex`, and selected root `.env` filenames (`.env`, `.env.local`,
 `.env.development`, `.env.test`, `.env.production`, and `.env.staging`) remain
-denied, including through symlinks. Host scope removes workspace read/write boundaries for one command
-but still retains protected OS write paths. macOS Seatbelt behavior depends on OS policy support;
-an unavailable sandbox executable or failed sandbox launch is an error.
+Network scope (`scope: "network"`) enables outbound network access while preserving full filesystem confinement: user home directories, `/tmp`, and secrets remain denied. Host scope removes workspace read/write boundaries for one command but still retains protected OS write paths. macOS Seatbelt behavior depends on OS policy support; an unavailable sandbox executable or failed sandbox launch is an error.
 The private home is deleted after each command, so package caches and shell
 configuration do not persist between commands.
 
@@ -55,6 +53,7 @@ already present at launch are mounted read-only; absent paths are masked with a
 small read-only temporary filesystem. This prevents shell commands from
 creating protected paths during the run. Docker mode fails closed when a
 protected entry is a symlink or `.git` pointer file.
+Network scope (`scope: "network"`) enables container bridge networking while maintaining strict workspace isolation and path protections. Docker does not support host filesystem access; requests for `scope: "host"` fail closed with an explicit explanation without executing commands on the host.
 Docker is a separate development environment, so host-only tools may not be
 present. Docker daemon or image errors fail the command without running it on
 the host.
