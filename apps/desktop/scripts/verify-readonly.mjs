@@ -120,10 +120,9 @@ try {
   const electronMainPid = await activeApp.evaluate(() => process.pid);
   const hostPid = Number((await readFile(hostPidFile, "utf8")).trim());
   console.log(JSON.stringify({ e2eShutdownOwner: { playwrightPid: electronPid, electronMainPid, hostPid } }));
+  activeApp.on("console", message => console.log(`Electron lifecycle: ${message.text()}`));
   await activeApp.evaluate(({ app }) => {
-    const fs = require("node:fs");
-    const path = process.env.CHIVGENT_DESKTOP_E2E_SHUTDOWN_TRACE_FILE;
-    const trace = (stage) => fs.appendFileSync(path, `${JSON.stringify({ stage, pid: process.pid, at: Date.now() })}\n`);
+    const trace = (stage) => console.log(`[E2E-SHUTDOWN] ${JSON.stringify({ stage, pid: process.pid, at: Date.now() })}`);
     trace("electron-ready");
     app.on("before-quit", () => trace("electron.before-quit"));
     app.on("will-quit", () => trace("electron.will-quit"));
