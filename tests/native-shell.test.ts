@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
+import { createServer } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { createNativeShellOperations, nativeShellConfig } from "../src/shell/native.js";
 
@@ -30,6 +31,26 @@ describe("native Seatbelt shell", () => {
     expect(readOnly.args.join(" ")).toContain("(deny file-write*");
     expect(readOnly.args.join(" ")).not.toContain("(allow network*)");
     expect(nativeShellConfig(root, { allowWrites: true, allowNetwork: true, temporaryDirectory: temp, sandboxExecutable: "/bin/echo" }).args.join(" ")).toContain("(allow network*)");
+    expect(createNativeShellOperations({ allowNetwork: true }).networkAccess).toBe(true);
+    expect(createNativeShellOperations({ allowNetwork: false }).networkAccess).toBe(false);
+  });
+  it("confines filesystem reads and writes even when network is enabled", async () => {
+    const root = await fixture();
+    const temp = await mkdtemp(path.join(tmpdir(), "chivgent-native-private-"));
+    roots.push(temp);
+    const netOnly = nativeShellConfig(root, { allowWrites: true, allowNetwork: true, allowHostAccess: false, temporaryDirectory: temp, sandboxExecutable: "/bin/echo" });
+    const netRules = netOnly.args.join(" ");
+    expect(netRules).toContain("(allow network*)");
+    expect(netRules).toContain(`(deny file-read* (subpath ${JSON.stringify(await realpath(homedir()))}))`);
+    expect(netRules).toContain(`(deny file-read* (subpath ${JSON.stringify(await realpath(tmpdir()))}))`);
+    expect(netRules).toContain(`(allow file-write* (subpath ${JSON.stringify(await realpath(root))}))`);
+    expect(netRules).not.toContain('(allow file-write* (subpath "/dev/null")) (allow file-write*)');
+
+    const hostAccess = nativeShellConfig(root, { allowWrites: true, allowNetwork: true, allowHostAccess: true, temporaryDirectory: temp, sandboxExecutable: "/bin/echo" });
+    const hostRules = hostAccess.args.join(" ");
+    expect(hostRules).toContain("(allow file-read*)");
+    expect(hostRules).toContain("(allow file-write*)");
+    expect(hostRules).not.toContain(`(deny file-read* (subpath ${JSON.stringify(await realpath(homedir()))}))`);
   });
 
   it.skipIf(process.platform !== "darwin")("enforces workspace writes, protected paths, env and network at runtime", async () => {
@@ -40,12 +61,23 @@ describe("native Seatbelt shell", () => {
     await mkdir(path.join(root, ".aws"));
     await writeFile(path.join(root, ".aws", "credentials"), "workspace-aws-secret");
     const ops = createNativeShellOperations({ allowWrites: true });
-    const run = async (command: string) => {
+    const run = async (command: string, shell = ops) => {
       let out = "";
-      const result = await ops.exec(command, root, { onData: (chunk) => { out += chunk.toString(); } });
+      const result = await shell.exec(command, root, { onData: (chunk) => { out += chunk.toString(); } });
       return { ...result, out };
     };
+    const server = createServer(socket => {
+      socket.on("error", () => undefined);
+      socket.end("loopback");
+    });
     try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const address = server.address();
+      if (address === null || typeof address === "string") throw new Error("Loopback fixture did not bind a TCP port.");
+      const networkCommand = `node -e 'const s=require("node:net").connect(${address.port},"127.0.0.1"); s.on("connect",()=>process.exit(0)); s.on("error",()=>process.exit(1)); setTimeout(()=>process.exit(2),1000)'`;
       expect((await run("echo ok > allowed.txt")).exitCode).toBe(0);
       expect(await readFile(path.join(root, "allowed.txt"), "utf8")).toBe("ok\n");
       expect((await run("cat allowed.txt")).out).toContain("ok");
@@ -88,10 +120,16 @@ describe("native Seatbelt shell", () => {
       expect((await run("echo bad > git-meta/should-not-exist")).exitCode).not.toBe(0);
       await expect(readFile(path.join(outsideGit, "should-not-exist"), "utf8")).rejects.toThrow();
       expect((await run(`node -e 'process.stdout.write(process.env.CHIVGENT_TEST_SECRET || "")'`)).out).not.toContain(secret);
-      const network = await run("node -e 'require(\"node:net\").connect(443,\"1.1.1.1\").on(\"connect\",()=>process.exit(1)).on(\"error\",()=>process.exit(0)); setTimeout(()=>process.exit(1),1000)'");
-      expect(network.exitCode).toBe(0);
+      const network = await run(networkCommand);
+      expect(network.exitCode).not.toBe(0);
+      const networkEnabled = createNativeShellOperations({ allowWrites: true, allowNetwork: true });
+      expect((await run(networkCommand, networkEnabled)).exitCode).toBe(0);
+      const isolatedRead = await run(`cat ${JSON.stringify(path.join(outside, "private.txt"))}`, networkEnabled);
+      expect(isolatedRead.exitCode).not.toBe(0);
+      expect(isolatedRead.out).not.toContain("outside-workspace-secret");
     } finally {
       delete process.env.CHIVGENT_TEST_SECRET;
+      await new Promise<void>(resolve => server.close(() => resolve()));
     }
   });
 

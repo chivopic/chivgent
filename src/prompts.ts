@@ -47,3 +47,15 @@ Use bash for what only a shell can do: running tests, builds, linters, package m
 Commands get no stdin, so never run anything interactive, and never start background or long-lived processes.
 Pass a timeout for commands that could hang.
 When a command fails, read its output before changing anything.`;
+
+export const MODERN_SHELL_SYSTEM_PROMPT = `You can also run shell commands with bash.
+The shell runs in an OS sandbox on macOS or Docker elsewhere. Shell commands can read files available to your user, so do not print sensitive file contents.
+Prefer list_files, search_text and read_file over ls, grep and cat: they are bounded and their output is easier to work with.
+Use bash for what only a shell can do: running tests, builds, linters, package managers and git.
+Commands get no stdin, so never run anything interactive, and never start background or long-lived processes.
+Pass a timeout for commands that could hang.
+When a command fails, read its output before changing anything.`;
+
+export function modernPermissionPrompt(): string {
+  return `A process-local permission policy governs file changes, shell commands, and extension tools; its mode can change during the conversation and is not restored from a saved session. In workspace mode, workspace file changes and sandboxed shell commands run automatically with network disabled. For commands needing outbound network access, request bash with scope "network" and explain why in justification. For broad host file access, request bash with scope "host" with justification (host access is unavailable on Docker). Never retry denied actions using another tool.`;
+}

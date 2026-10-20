@@ -14,7 +14,7 @@ function short(value: string, width: number): string {
 function briefFailure(result: ToolResultMessage): string {
   const lines = result.content.split("\n").filter(line => line.trim().length > 0);
   const status = result.toolName === "bash"
-    ? [...lines].reverse().find(line => /(?:Command exited with code|timed out|unavailable)/i.test(line))
+    ? [...lines].reverse().find(line => /(?:Command exited with code|timed out|unavailable|denied|network access is disabled)/i.test(line))
     : undefined;
   return short(status ?? lines[0] ?? "failed", 100);
 }

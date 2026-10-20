@@ -23,7 +23,7 @@
 
 chivgent 是跑在你打开的目录里的本地 agent。它要做的，是 [Claude Code](https://code.claude.com) 和 [Codex](https://github.com/openai/codex) 那一类事：读这个项目，改它，跑它，会话还能回来。模型是你的。一把 API key，或者 ChatGPT、xAI 订阅。
 
-这一类现在的默认是 auto mode。工作区内的读取、编辑，以及沙箱里的命令，直接进行。动作离开工作区，或者命令要用宿主机，就停。这里这个策略叫 `workspace`。它不是另一个模型在逐条审查，也不是跳过所有边界。本地交互式 rich TUI 在没有指定权限模式或旧权限开关时默认使用 Ask for me：文件修改和命令都要确认；在空闲输入框按 Shift+Tab 可在 Plan、Auto mode 和 Ask for me 之间循环。headless、simple 和远程启动保留原有默认值。
+这一类现在的默认是 auto mode。工作区内的读取、编辑，以及沙箱里的命令，直接进行。命令需要出站网络或宽泛的宿主机文件访问时会请求确认。这里这个策略叫 `workspace`。它不是另一个模型在逐条审查，也不是跳过所有边界。本地交互式 rich TUI 在没有指定权限模式或旧权限开关时默认使用 Ask for me：文件修改和命令都要确认；在空闲输入框按 Shift+Tab 可在 Plan、Auto mode 和 Ask for me 之间循环。headless、simple 和远程启动保留原有默认值。
 
 ## 桌面版 — 开发中 / Coming soon
 
@@ -84,7 +84,7 @@ chivgent --continue                                  # 这个目录里的上一�
 
 | 模式 | 能直接进行的 | 这一版 |
 | --- | --- | --- |
-| `workspace` | 工作区内的修改和沙箱命令。网络关着。命令要用宿主机时，只为这一条问一次。 | TUI 循环中的 Auto mode，或 `--permission-mode workspace`。 |
+| `workspace` | 工作区内的修改和沙箱命令。网络默认关闭；命令可用 `scope: "network"` 申请一次出站网络权限。访问宿主机文件需用 `scope: "host"` 单独申请。 | TUI 循环中的 Auto mode，或 `--permission-mode workspace`。 |
 | `ask-first` | 读取。每次改文件、每条命令都要确认。没有答复就没有动作。 | 普通本地 rich TUI 启动，或 `--permission-mode ask-first`。 |
 | `unrestricted` | shell 命令带着宽宿主机文件访问和网络运行，仍在操作系统沙箱里。文件工具不出工作区。 | 显式选择。 |
 | 无 | 读取。写入和 shell 等开关。需要交互式确认或显式全批准。 | `--simple`、headless 和远程启动，除非指定模式或旧权限开关。 |
@@ -145,7 +145,7 @@ chivgent --continue                                  # 这个目录里的上一�
 
 - 工作区以外的路径会被拒绝，包括 `..` 和符号链接逃逸。常见凭据路径会被拒绝。工具输出有上限。
 - 没有选模式或旧权限开关时，`--simple`、headless 和远程启动仍为只读。本地 rich TUI 启动会为当前进程选择 `ask-first`，除非指定了旧权限开关。`--allow-shell` 需要交互式确认；非交互式命令除非指定 `--approve-all-shell`，否则会被拒绝。`--serve` 会话除非同时加上 `--approve-all-shell`，否则拒绝命令。沙箱起不来，命令不会改到无沙箱运行。
-- `workspace` 自动执行工作区内的修改和沙箱命令，命令要访问宿主机文件和网络时问一次。`unrestricted` 是显式选择的宽宿主机访问和网络。这些都不随会话保存。[Shell 安全](docs/shell-sandbox.md)。
+- `workspace` 自动执行工作区内的修改和沙箱命令。命令可单独申请一次出站网络权限或宽泛的宿主机文件访问。`unrestricted` 是显式选择的宽宿主机访问和网络。这些都不随会话保存。[Shell 安全](docs/shell-sandbox.md)。
 - macOS 沙箱仍然能读当前用户能读的文件。它限制的是写入和网络，不是机密隔离。
 - 还没有按命令的允许列表，也没有原生 Windows shell。`workspace` 不是这一版的启动模式。
 - 扩展是跑在 chivgent 进程里的 JavaScript。信任一个项目，就是允许它的作者以你的身份执行代码。每个目录问一次；没有终端可问时，不加载。

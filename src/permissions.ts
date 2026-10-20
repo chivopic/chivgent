@@ -5,7 +5,8 @@ import { WorkspaceError } from "./workspace/types.js";
 
 export const PERMISSION_MODES = ["ask-first", "workspace", "unrestricted"] as const;
 export type PermissionMode = typeof PERMISSION_MODES[number];
-export type ShellScope = "workspace" | "host";
+export const SHELL_SCOPES = ["workspace", "network", "host"] as const;
+export type ShellScope = typeof SHELL_SCOPES[number];
 export type PermissionApproval = (action: string, signal?: AbortSignal, context?: string) => Promise<boolean>;
 
 /** Selects the policy for one interactive process; saved sessions never supply it. */
@@ -48,7 +49,12 @@ export class PermissionPolicy {
     if (signal?.aborted) return false;
     if (this.modeValue === "unrestricted") return true;
     if (this.modeValue === "workspace" && scope === "workspace") return true;
-    const scopeContext = scope === "host" ? "Expanded host access for this command only: shell may read/write outside the workspace and use network (protected OS write paths still apply)" : context;
+    const detail = context ? `. ${context}` : "";
+    const scopeContext = scope === "host"
+      ? `Expanded host access for this command only: shell may read/write outside the workspace and use network (protected OS write paths still apply)${detail}`
+      : scope === "network"
+        ? `Network access for this command only: outbound network enabled within the workspace sandbox${detail}`
+        : `Sandboxed workspace shell command${detail}`;
     const approved = await (this.approval?.(command, signal, scopeContext) ?? Promise.resolve(false));
     return approved && signal?.aborted !== true;
   }
@@ -106,7 +112,7 @@ export function parsePermissionMode(value: string): PermissionMode {
 export function describePermissionMode(mode: PermissionMode): string {
   switch (mode) {
     case "ask-first": return "File changes and every shell command require approval; no approval means no action.";
-    case "workspace": return "Workspace file changes and sandboxed shell commands run automatically; network is denied unless a host-scope command is approved once.";
+    case "workspace": return "Workspace file changes and sandboxed shell commands run automatically with network disabled; commands needing network or host access require per-command approval.";
     case "unrestricted": return "Shell commands run automatically with broad host file access and network inside the OS sandbox; workspace file tools remain workspace-bound.";
   }
 }

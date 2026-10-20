@@ -46,6 +46,8 @@ export interface ShellExecResult {
  */
 export interface ShellOperations {
   readonly backend?: string;
+  /** Explicit capability metadata; absent means the network policy is unknown. */
+  readonly networkAccess?: boolean;
   exec(
     command: string,
     cwd: string,
