@@ -11,7 +11,7 @@ import { hostEntryError, hostEntryPath } from "./paths.js";
 const HOST_SERVICE_NAME = "chivgent-agent-host";
 const REQUEST_TIMEOUT_MS = 8_000;
 
-function traceE2EShutdown(stage: string, details: Record<string, unknown> = {}): void {
+export function traceE2EShutdown(stage: string, details: Record<string, unknown> = {}): void {
   const path = process.env["CHIVGENT_DESKTOP_E2E_SHUTDOWN_TRACE_FILE"];
   if (path === undefined) return;
   try {

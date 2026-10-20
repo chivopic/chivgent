@@ -138,8 +138,10 @@ export async function shutdownElectron({ app, hostPidFile, diagnosticsFile, time
   let ownerCloseObserved = Boolean(owner?.closed);
   let ownerExitAt;
   let ownerCloseAt = ownerCloseObserved ? Date.now() : undefined;
+  let ownerStderrTail = "";
   owner?.once("exit", () => { ownerExitAt = Date.now(); });
   if (owner && !owner.closed) owner.once("close", () => { ownerCloseObserved = true; ownerCloseAt = Date.now(); });
+  owner?.stderr?.on("data", chunk => { ownerStderrTail = `${ownerStderrTail}${chunk.toString()}`.slice(-8_192); });
   const failures = [];
   let descendants = [];
   let descendantSnapshotError;
@@ -156,7 +158,10 @@ export async function shutdownElectron({ app, hostPidFile, diagnosticsFile, time
         const quit = electronApp.quit.bind(electronApp);
         electronApp.quit = () => {
           electronApp.quit = quit;
-          setImmediate(quit);
+          setImmediate(() => {
+            process.getBuiltinModule("inspector").close();
+            quit();
+          });
         };
       }), timeoutMs);
       closePromise = Promise.resolve().then(() => app.close());
@@ -183,6 +188,7 @@ export async function shutdownElectron({ app, hostPidFile, diagnosticsFile, time
     if (failures.length === 0) return { ownerPid: owner?.pid, exitCode: owner?.exitCode, signalCode: owner?.signalCode,
       exitAfterMs: ownerExitAt === undefined ? undefined : ownerExitAt - ownerStartedAt,
       closeAfterMs: ownerCloseAt === undefined ? undefined : ownerCloseAt - ownerStartedAt,
+      inspectorWaitSeen: ownerStderrTail.includes("Waiting for the debugger to disconnect"),
       hostPid, descendants };
   } catch (error) {
     failures.push(error);
@@ -208,6 +214,7 @@ export async function shutdownElectron({ app, hostPidFile, diagnosticsFile, time
   if (primary) {
     if (failures.length > 1) primary.message += `; cleanup errors: ${failures.slice(1).map(error => error.message).join("; ")}`;
     primary.message += `; owner process state: pid=${owner?.pid ?? "unknown"}, exitCode=${owner?.exitCode}, signalCode=${owner?.signalCode}, exitAfterMs=${ownerExitAt === undefined ? "pending" : ownerExitAt - ownerStartedAt}, closeObserved=${ownerCloseObserved}, closeAfterMs=${ownerCloseAt === undefined ? "pending" : ownerCloseAt - ownerStartedAt}`;
+    if (ownerStderrTail) primary.message += `; Electron stderr tail: ${ownerStderrTail.trim()}`;
     if (diagnosticsFile) {
       try {
         const trace = await boundedStage("shutdown diagnostic read", () => readFile(diagnosticsFile, "utf8"), 500);

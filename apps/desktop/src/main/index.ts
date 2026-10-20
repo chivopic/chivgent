@@ -8,7 +8,7 @@ import {
   type HostToMain,
   type IpcResult,
 } from "../protocol/messages.js";
-import { createHostBridge, type HostBridge } from "./host-bridge.js";
+import { createHostBridge, traceE2EShutdown, type HostBridge } from "./host-bridge.js";
 
 let mainWindow: BrowserWindow | undefined;
 let quitting = false;
@@ -194,13 +194,20 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", (event) => {
+  traceE2EShutdown("electron.before-quit", { quitting });
   if (quitting) {
+    traceE2EShutdown("electron.before-quit-allowed");
     return;
   }
   event.preventDefault();
   quitting = true;
+  traceE2EShutdown("electron.before-quit-prevented");
   void bridge.shutdown().finally(() => {
+    traceE2EShutdown("electron.host-shutdown-finished");
     app.quit();
   });
 });
+
+app.on("will-quit", () => traceE2EShutdown("electron.will-quit"));
+app.on("quit", (event, exitCode) => traceE2EShutdown("electron.quit", { exitCode }));
 
