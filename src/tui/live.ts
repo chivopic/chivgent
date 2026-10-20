@@ -6,7 +6,7 @@ import { Painter } from "./paint.js";
 import { EMPTY_STATE, reduce, type ViewState } from "./state.js";
 import { transcriptLines, view } from "./view.js";
 import { colorizeActivity } from "./activity.js";
-import { formatTerminalMarkdown } from "./markdown.js";
+import { formatTerminalMarkdown, StreamingMarkdownFormatter } from "./markdown.js";
 
 /** How often the region redraws on its own, so elapsed time advances. */
 const TICK_MS = 1000;
@@ -54,17 +54,25 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
   let state: ViewState = EMPTY_STATE;
   let timer: NodeJS.Timeout | undefined;
   let paused = false;
+  const formatter = new StreamingMarkdownFormatter(options.width, options.color === true);
+  let pendingStreamBuffer = "";
+  let streamedInThisTurn = false;
 
   const paint = (): void => {
     if (paused) return;
-    painter.render(view(state, {
+    const viewState = (options.answerStream !== undefined && streamedInThisTurn)
+      ? {
+          ...state,
+          run: state.run ? { ...state.run, text: pendingStreamBuffer } : undefined,
+        }
+      : state;
+    painter.render(view(viewState, {
       // Leave one cell spare to avoid a terminal's pending autowrap state.
       width: Math.max(1, options.width() - 1),
       height: Math.max(1, (options.height?.() ?? 24) - 2),
       now: clock(),
     }));
   };
-
   const startClock = (): void => {
     if (timer !== undefined) {
       return;
@@ -93,11 +101,33 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
           options.stream.write(`${fitLine(`  ${symbol} ${terminalText(item.step)}`, Math.max(1, options.width() - 1))}\n`);
         }
       }
+      if (event.type === "message_update") {
+        pendingStreamBuffer += event.delta;
+        if (options.answerStream !== undefined && pendingStreamBuffer.includes("\n")) {
+          const lastNewline = pendingStreamBuffer.lastIndexOf("\n");
+          const completedChunk = pendingStreamBuffer.slice(0, lastNewline);
+          pendingStreamBuffer = pendingStreamBuffer.slice(lastNewline + 1);
+          painter.clear();
+          const lines = completedChunk.split("\n");
+          for (const line of lines) {
+            const formatted = options.markdown ? formatter.formatLine(line) : line;
+            options.answerStream.write(`${formatted}\n`);
+          }
+          streamedInThisTurn = true;
+        }
+      }
       if (event.type === "turn_end") {
         // The finished turn moves into the terminal's own scrollback: the
         // region is erased first so the transcript lands where it was, then
         // the region is drawn again below it.
         painter.clear();
+        if (options.answerStream !== undefined && streamedInThisTurn) {
+          if (pendingStreamBuffer.length > 0) {
+            const formatted = options.markdown ? formatter.formatLine(pendingStreamBuffer) : pendingStreamBuffer;
+            options.answerStream.write(`${formatted}\n`);
+            pendingStreamBuffer = "";
+          }
+        }
         const lines = transcriptLines(options.answerStream === undefined ? event : {
           ...event,
           message: { ...event.message, content: "" },
@@ -105,25 +135,38 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
         if (lines.length > 0) {
           options.stream.write(`${colorizeActivity(lines, options.color === true)}\n`);
         }
-        if (options.answerStream !== undefined && event.message.content.trim().length > 0) {
+        if (options.answerStream !== undefined && !streamedInThisTurn && event.message.content.trim().length > 0) {
           options.answerStream.write(`${options.markdown ? formatTerminalMarkdown(event.message.content, options.width(), options.color === true) : event.message.content}\n`);
         }
+        pendingStreamBuffer = "";
+        streamedInThisTurn = false;
+        formatter.reset();
       }
 
       const previous = state;
       state = reduce(state, event, clock());
 
       if (event.type === "agent_start") {
+        pendingStreamBuffer = "";
+        streamedInThisTurn = false;
+        formatter.reset();
         startClock();
       }
       if (event.type === "agent_end") {
         stopClock();
         painter.clear();
         // Cancellation can end a streamed turn before turn_end arrives.
-        if (previous.run?.text) {
+        if (streamedInThisTurn && pendingStreamBuffer.length > 0) {
+          const partial = terminalText(pendingStreamBuffer);
+          (options.answerStream ?? options.stream).write(`${options.markdown ? formatter.formatLine(partial) : partial}\n`);
+          pendingStreamBuffer = "";
+        } else if (!streamedInThisTurn && previous.run?.text) {
           const partial = terminalText(previous.run.text);
           (options.answerStream ?? options.stream).write(`${options.markdown ? formatTerminalMarkdown(partial, options.width(), options.color === true) : partial}\n`);
         }
+        pendingStreamBuffer = "";
+        streamedInThisTurn = false;
+        formatter.reset();
         const label = event.status === "completed" ? "Completed"
           : event.status === "aborted" ? "Stopped"
           : event.status === "max_turns" ? "Turn limit reached" : "Failed";
@@ -164,6 +207,9 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
       stopClock();
       painter.clear();
       state = EMPTY_STATE;
+      pendingStreamBuffer = "";
+      streamedInThisTurn = false;
+      formatter.reset();
     },
 
     resized: (): void => {
@@ -176,6 +222,9 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
       stopClock();
       painter.clear();
       state = EMPTY_STATE;
+      pendingStreamBuffer = "";
+      streamedInThisTurn = false;
+      formatter.reset();
     },
   };
 }

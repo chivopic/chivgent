@@ -78,7 +78,7 @@ export const BUILTIN_PROVIDERS: readonly ProviderDefinition[] = [
     id: "deepseek",
     envKeys: ["DEEPSEEK_API_KEY"],
     modelEnvKeys: ["DEEPSEEK_MODEL"],
-    defaultModel: "deepseek-v4-flash",
+    defaultModel: "deepseek-flash",
     baseUrlEnvKeys: [],
     requiresModel: false,
     requiresBaseURL: false,

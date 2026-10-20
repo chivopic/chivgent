@@ -121,7 +121,7 @@ describe("OpenAI-compatible streaming", () => {
   it("rebuilds one assistant message from chunks", async () => {
     const create = vi.fn().mockResolvedValue(
       iterate([
-        { choices: [{ delta: { role: "assistant", content: "Hel" } }] },
+        { model: "provider-stream-model", choices: [{ delta: { role: "assistant", content: "Hel" } }] },
         { choices: [{ delta: { content: "lo" } }] },
         { choices: [{ delta: {}, finish_reason: "stop" }] },
       ]),
@@ -136,6 +136,7 @@ describe("OpenAI-compatible streaming", () => {
     const result = await client.stream(request, handlers);
 
     expect(deltas).toEqual(["Hel", "lo"]);
+    expect(result.reportedModel).toBe("provider-stream-model");
     expect(result.message).toEqual({
       role: "assistant",
       content: "Hello",

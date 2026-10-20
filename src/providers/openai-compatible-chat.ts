@@ -90,6 +90,7 @@ export class OpenAICompatibleChatClient implements LLMClient {
       history,
       getProviderMessage(response),
       fromChatCompletionsUsage((response as { usage?: unknown }).usage),
+      response.model,
     );
   }
 
@@ -115,7 +116,11 @@ export class OpenAICompatibleChatClient implements LLMClient {
 
     const accumulator = new ChatCompletionAccumulator();
     let usage: ReturnType<typeof fromChatCompletionsUsage>;
+    let reportedModel: string | undefined;
     for await (const chunk of chunks as AsyncIterable<ChatCompletionChunk>) {
+      if (typeof chunk.model === "string" && chunk.model.length > 0) {
+        reportedModel = chunk.model;
+      }
       // The usage chunk arrives last and carries no choices; the accumulator
       // already ignores a chunk without one.
       usage = fromChatCompletionsUsage((chunk as { usage?: unknown }).usage) ?? usage;
@@ -125,7 +130,7 @@ export class OpenAICompatibleChatClient implements LLMClient {
       }
     }
 
-    return this.toLLMResponse(request, history, accumulator.toMessage(), usage);
+    return this.toLLMResponse(request, history, accumulator.toMessage(), usage, reportedModel);
   }
 
   private createHistory(request: LLMRequest): CompatibleHistoryMessage[] {
@@ -156,9 +161,11 @@ export class OpenAICompatibleChatClient implements LLMClient {
     history: readonly CompatibleHistoryMessage[],
     providerMessage: CompatibleAssistantMessage,
     usage?: ReturnType<typeof fromChatCompletionsUsage>,
+    reportedModel?: string,
   ): LLMResponse {
     return {
       message: toInternalMessage(providerMessage),
+      ...(typeof reportedModel === "string" && reportedModel.length > 0 ? { reportedModel } : {}),
       ...(usage === undefined ? {} : { usage }),
       continuation: {
         provider: this.continuationTag,

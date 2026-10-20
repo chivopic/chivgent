@@ -225,6 +225,7 @@ export class Agent {
         type: "message_end",
         turn,
         message: assistant,
+        ...(response.reportedModel === undefined ? {} : { reportedModel: response.reportedModel }),
         ...(response.usage === undefined ? {} : { usage: response.usage }),
       });
 

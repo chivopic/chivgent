@@ -26,6 +26,20 @@ AssistantMessage <- normalized result
 This prevents the Agent, tools, and CLI from depending on one vendor's message
 format.
 
+### Agent instructions
+
+`src/prompts.ts` defines the same baseline instructions for interactive runs and
+evals. The baseline separates identity, task workflow, and evidence requirements.
+`createLocalSession` in `src/cli-runtime.ts` adds write/shell instructions
+only when those tools are registered, plus process-local permission policy and
+extension contributions. This is inspired by Codex's layered instructions, but
+tool access remains enforced by chivgent's runtime, not by text.
+
+The agent identifies itself as **chivgent**, not as an unverifiable underlying
+provider model. A provider/model selection shown by the CLI is configuration,
+not proof of which backend implementation served a request. Model-specific
+wire formats remain the responsibility of the Provider adapter.
+
 ### Context management
 
 A session records everything that happened. The context manager decides what
@@ -117,6 +131,8 @@ const client = new OpenAICompatibleChatClient({
 `DeepSeekChatClient` is a small configuration wrapper around this shared client.
 The compatibility layer also preserves optional Provider-only fields such as
 DeepSeek's `reasoning_content` inside opaque continuation state.
+
+Provider adapters also expose an optional `reportedModel` on `LLMResponse` when the API supplies a model ID. The Agent forwards it to `message_end` events (including JSON event streams), but deliberately does not place it in conversation history: server-provided model IDs are diagnostics, may be aliases, and are not proof of underlying model weights. Missing metadata stays missing, never guessed from the requested model. This mirrors OpenCode's distinction between selected catalog identity and provider API identity.
 
 Changing only `baseURL` is not a promise of complete compatibility. Providers
 can differ in model names, authentication, tool-schema support, strict mode,

@@ -144,6 +144,22 @@ describe("interactive TUI editor", () => {
     } finally { screen.input.end(); await run; screen.dispose(); }
   });
 
+  it("commits submitted prompt to transcript with › prefix when submitted from inline composer", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const screen = terminalHarness(60, 16);
+    const prompts: string[] = [];
+    const session = fixture(prompts);
+    const run = runRepl({ session, ...screen, stderr: screen.output, tui: true, inlineComposer: true });
+    try {
+      await vi.waitFor(() => expect(screen.bytes()).toContain("/help for shortcuts"));
+      screen.input.write("hello world\r");
+      await vi.waitFor(() => expect(prompts).toEqual(["hello world"]));
+      await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("› hello world"));
+      screen.input.write("\u0004");
+      expect(await run).toBe(0);
+    } finally { screen.input.end(); await run; screen.dispose(); }
+  });
+
   it("Escape cancels only the editor, not the outer REPL", async () => {
     vi.stubEnv("TERM", "xterm-256color");
     const screen = terminalHarness(40, 12);

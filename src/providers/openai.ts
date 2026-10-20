@@ -130,6 +130,7 @@ function toLLMResponse(response: OpenAIResponse): LLMResponse {
   const usage = fromResponsesUsage((response as { usage?: unknown }).usage);
   return {
     message: fromOpenAIResponse(response),
+    ...(typeof response.model === "string" && response.model.length > 0 ? { reportedModel: response.model } : {}),
     ...(usage === undefined ? {} : { usage }),
     continuation: {
       provider: "openai-responses",
@@ -142,6 +143,7 @@ function toOAuthLLMResponse(response: OpenAIResponse, messageCount: number, prio
   const usage = fromResponsesUsage((response as { usage?: unknown }).usage);
   return {
     message: fromOpenAIResponse(response),
+    ...(typeof response.model === "string" && response.model.length > 0 ? { reportedModel: response.model } : {}),
     ...(usage === undefined ? {} : { usage }),
     continuation: {
       provider: "openai-oauth-stateless",
