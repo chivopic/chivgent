@@ -101,7 +101,7 @@ async function readPid(path) {
   }
 }
 
-export async function shutdownElectron({ app, hostPidFile, timeoutMs = 5_000, listDescendants = listOwnedDescendants }) {
+export async function shutdownElectron({ app, hostPidFile, diagnosticsFile, timeoutMs = 5_000, listDescendants = listOwnedDescendants }) {
   if (!app) return;
   const owner = app.process();
   const ownerLabel = `Electron PID ${owner?.pid ?? "unknown"}`;
@@ -112,13 +112,17 @@ export async function shutdownElectron({ app, hostPidFile, timeoutMs = 5_000, li
   catch (error) { descendantSnapshotError = error; }
   try {
     try {
-      // Playwright's ElectronApplication.close() issues the single app.quit()
-      // request and waits for the owned Electron process to exit.
-      await boundedStage(`Electron app.quit / Playwright close (${ownerLabel})`, () => app.close(), timeoutMs);
+      // Let the CDP evaluation reply before requesting shutdown: destroying the
+      // execution context during app.quit() can strand the evaluate response.
+      // ElectronApplication.close() also calls app.quit() and waits on a close
+      // event, so keep this to exactly one explicit quit request.
+      await boundedStage(`Electron app.quit request (${ownerLabel})`, () => app.evaluate(({ app: electronApp }) => {
+        setImmediate(() => electronApp.quit());
+      }), timeoutMs);
     } catch (error) {
       const targetClosed = /Target (?:page|context|browser).*has been closed|Electron application has been closed/i.test(error.message);
       if (!targetClosed || !await waitForChildExit(owner, 100)) {
-        failures.push(error instanceof E2EStageError ? error : new Error(`Electron app.quit / Playwright close (${ownerLabel}) failed: ${error.message}`, { cause: error }));
+        failures.push(error instanceof E2EStageError ? error : new Error(`Electron app.quit request (${ownerLabel}) failed: ${error.message}`, { cause: error }));
       }
     }
     if (!await waitForChildExit(owner, timeoutMs)) failures.push(new E2EStageError(`Electron process exit (${ownerLabel})`, timeoutMs));
@@ -152,6 +156,14 @@ export async function shutdownElectron({ app, hostPidFile, timeoutMs = 5_000, li
   const primary = failures[0];
   if (primary) {
     if (failures.length > 1) primary.message += `; cleanup errors: ${failures.slice(1).map(error => error.message).join("; ")}`;
+    if (diagnosticsFile) {
+      try {
+        const trace = await boundedStage("shutdown diagnostic read", () => readFile(diagnosticsFile, "utf8"), 500);
+        primary.message += `; lifecycle trace: ${trace.trim() || "(empty)"}`;
+      } catch (error) {
+        if (error.code !== "ENOENT") primary.message += `; lifecycle trace unavailable: ${error.message}`;
+      }
+    }
     throw primary;
   }
 }

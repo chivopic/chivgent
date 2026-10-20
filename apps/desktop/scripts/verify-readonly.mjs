@@ -18,6 +18,7 @@ const root = await mkdtemp(join(tmpdir(), "chivgent desktop 中文-"));
 const project = join(root, "chivopic");
 const auth = join(root, "auth");
 const hostPidFile = join(root, "host.pid");
+const shutdownTraceFile = join(root, "shutdown-trace.jsonl");
 await mkdir(project);
 await mkdir(auth);
 const canonicalProject = await realpath(project);
@@ -108,13 +109,27 @@ try {
     executablePath: createRequire(import.meta.url)("electron"),
     args: [resolve(desktop), `--user-data-dir=${join(root, "profile")}`],
     cwd: root,
-    env: { ...environment, CHIVGENT_DESKTOP_HOST_PID_FILE: hostPidFile, CHIVGENT_HOME: auth, CHIVGENT_PROVIDER: "openai-compatible",
+    env: { ...environment, CHIVGENT_DESKTOP_HOST_PID_FILE: hostPidFile, CHIVGENT_DESKTOP_E2E_SHUTDOWN_TRACE_FILE: shutdownTraceFile, CHIVGENT_HOME: auth, CHIVGENT_PROVIDER: "openai-compatible",
       OPENAI_API_KEY: "fixture-key", OPENAI_MODEL: "desktop-fixture", OPENAI_BASE_URL: endpoint },
   });
   progress("Electron launched; waiting for host readiness");
   const page = await activeApp.firstWindow();
   progress("checking default information hierarchy");
   await page.locator(".dot.ready").first().waitFor({ timeout: 20_000 });
+  const electronPid = activeApp.process().pid;
+  const electronMainPid = await activeApp.evaluate(() => process.pid);
+  const hostPid = Number((await readFile(hostPidFile, "utf8")).trim());
+  console.log(JSON.stringify({ e2eShutdownOwner: { playwrightPid: electronPid, electronMainPid, hostPid } }));
+  await activeApp.evaluate(({ app }) => {
+    const fs = require("node:fs");
+    const path = process.env.CHIVGENT_DESKTOP_E2E_SHUTDOWN_TRACE_FILE;
+    const trace = (stage) => fs.appendFileSync(path, `${JSON.stringify({ stage, pid: process.pid, at: Date.now() })}\n`);
+    trace("electron-ready");
+    app.on("before-quit", () => trace("electron.before-quit"));
+    app.on("will-quit", () => trace("electron.will-quit"));
+    app.on("quit", () => trace("electron.quit"));
+    process.on("exit", (code) => trace(`electron.process-exit:${code}`));
+  });
   assert.equal(await page.getByTestId("provider-select").isVisible().catch(() => false), false,
     "provider controls must stay hidden until the user opens settings");
   assert.equal(await page.getByTestId("compatible-endpoint").isVisible().catch(() => false), false,
@@ -342,7 +357,7 @@ try {
         console.log(JSON.stringify({ e2eFaultInjection: "prevent-before-quit", root, hostPid, electronPid, descendants }));
         await closing.evaluate(({ app }) => app.on("before-quit", event => event.preventDefault()));
       }
-      await shutdownElectron({ app: closing, hostPidFile });
+      await shutdownElectron({ app: closing, hostPidFile, diagnosticsFile: shutdownTraceFile });
       activeApp = undefined;
     }
   } catch (error) {

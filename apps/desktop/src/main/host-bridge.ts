@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { utilityProcess, type UtilityProcess } from "electron";
 import {
   isHostToMain,
@@ -10,6 +10,16 @@ import { hostEntryError, hostEntryPath } from "./paths.js";
 
 const HOST_SERVICE_NAME = "chivgent-agent-host";
 const REQUEST_TIMEOUT_MS = 8_000;
+
+function traceE2EShutdown(stage: string, details: Record<string, unknown> = {}): void {
+  const path = process.env["CHIVGENT_DESKTOP_E2E_SHUTDOWN_TRACE_FILE"];
+  if (path === undefined) return;
+  try {
+    appendFileSync(path, `${JSON.stringify({ stage, pid: process.pid, at: Date.now(), ...details })}\n`);
+  } catch {
+    // Optional E2E diagnostics must never affect application shutdown.
+  }
+}
 
 export interface HostBridge {
   readonly start: () => HostStatus;
@@ -119,6 +129,7 @@ export function createHostBridge(): HostBridge {
       }
     });
     started.on("exit", (code) => {
+      traceE2EShutdown("host-process.exit", { hostPid: started.pid, code, shuttingDown });
       child = undefined;
       const detail = stderr.trim();
       const message = shuttingDown
@@ -191,23 +202,29 @@ export function createHostBridge(): HostBridge {
     async shutdown() {
       shuttingDown = true;
       const target = child;
+      traceE2EShutdown("host-bridge.shutdown.begin", { hostPid: target?.pid });
       if (target === undefined) {
+        traceE2EShutdown("host-bridge.shutdown.no-host");
         publish({ phase: "exited", message: "Agent host 已停止。" });
         return;
       }
       try {
         target.postMessage({ type: "shutdown", requestId: "shutdown" });
+        traceE2EShutdown("host-bridge.shutdown-message-sent", { hostPid: target.pid });
       } catch {
+        traceE2EShutdown("host-bridge.shutdown-message-failed", { hostPid: target.pid });
         target.kill();
         return;
       }
       await new Promise<void>((resolve) => {
         const timer = setTimeout(() => {
+          traceE2EShutdown("host-bridge.shutdown-timeout-kill", { hostPid: target.pid });
           target.kill();
           resolve();
         }, 2_000);
         target.once("exit", () => {
           clearTimeout(timer);
+          traceE2EShutdown("host-bridge.shutdown-exit", { hostPid: target.pid });
           resolve();
         });
       });
