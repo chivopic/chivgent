@@ -2,11 +2,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameS
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { _electron as electron } from "playwright-core";
+import { requireUiEntry } from "./e2e-ui-guard.mjs";
+
+requireUiEntry();
+const { _electron: electron } = await import("playwright-core");
 
 const sourceApp = process.argv[2];
 if (sourceApp === undefined || !existsSync(sourceApp)) {
-  console.error("Usage: node scripts/verify-packaged.mjs <path-to-chivgent.app>");
+  console.error("Usage: node scripts/verify-packaged.mjs <path-to-chivgent.app> [--allow-ui]");
   process.exit(2);
 }
 

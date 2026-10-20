@@ -266,7 +266,7 @@ worktree 首批只做创建、选择、任务绑定与可恢复清理；搬移�
 | P4 本地可用版 / M1 | 待实现，UI 后续跟踪 [#69](https://github.com/chivopic/chivgent/issues/69) | 侧栏、设置、凭证、diff、预览、草稿、主题、安装完善 | 完成修复→审批→测试→检查 diff→重启继续；无源码依赖；CLI 回归通过 |
 | P5 工作台 / M2 | 待实现 | 运行中介入、持久终端、review、worktree、并行任务 | 按上一节逐项关卡交付；共用能力进入 CLI 回归 |
 
-Desktop 凭证只读复用 CLI 的环境变量和 `auth.json` 解析；不写 `~/.chivgent`，不自动刷新 OAuth。切换 Provider 会清空手工填写的模型覆盖；切换模型或 Provider 时复用当前对话和 ContextManager 压缩检查点，避免长对话重新压缩丢失摘要。与运行关联的终态事件必须匹配当前 runId，迟到的确认不得重新打开已完成运行。离线真实-adapter E2E 使用 localhost fake Provider 与临时项目，不使用外部服务或模型额度：先 `npm run desktop:build`，再运行 `node apps/desktop/scripts/verify-readonly.mjs [normal.png] [narrow.png]`；脚本验证真实配置请求、路径复制、重要提示、键盘行为，并可保存真实渲染截图。`npm run desktop:test` 使用临时目录与 fake LLM。单项目历史恢复首批已实现；完整项目/任务导航和旧 CLI 历史导入仍未实现。
+Desktop 凭证只读复用 CLI 的环境变量和 `auth.json` 解析；不写 `~/.chivgent`，不自动刷新 OAuth。切换 Provider 会清空手工填写的模型覆盖；切换模型或 Provider 时复用当前对话和 ContextManager 压缩检查点，避免长对话重新压缩丢失摘要。与运行关联的终态事件必须匹配当前 runId，迟到的确认不得重新打开已完成运行。离线真实-adapter E2E 使用 localhost fake Provider 与临时项目，不使用外部服务或模型额度。本地的 `verify-readonly.mjs`、`verify-history.mjs` 和 `verify-packaged.mjs` 会启动可见 Electron 窗口，默认拒绝运行；用户主动在本机验收时须显式传入 `--allow-ui`，例如 `node apps/desktop/scripts/verify-readonly.mjs --allow-ui [normal.png] [narrow.png]`。CI 只在 Linux Xvfb job 中自动运行，其他 `CI` 或 `DISPLAY` 环境不会单独解除拒绝。CI 的只读 E2E 连续运行 20 次以覆盖 teardown 稳定性。先 `npm run desktop:build`，再执行相应验收脚本；`npm run desktop:test` 使用临时目录与 fake LLM，不启动 Electron 窗口。单项目历史恢复首批已实现；完整项目/任务导航和旧 CLI 历史导入仍未实现。
 
 有副作用的 P2 依赖最小持久运行记录与保存失败门控，随 P2 先落地；P3 再完成历史界面、CLI 导入与剩余恢复能力。不能等到 P3 才知道 P2 的工具执行是否留有记录。
 

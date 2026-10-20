@@ -71,5 +71,10 @@ jobs:
       - name: Build Electron app
         run: npm run desktop:build
 
-      - name: Electron read-only end-to-end verification (offline fixture)
-        run: xvfb-run -a node apps/desktop/scripts/verify-readonly.mjs
+      - name: Electron read-only end-to-end verification (offline fixture, 20 runs under Xvfb)
+        run: |
+          set -e
+          for run in $(seq 1 20); do
+            echo "Electron read-only E2E run ${run}/20"
+            xvfb-run -a env CHIVGENT_E2E_XVFB=1 TMPDIR=/tmp node apps/desktop/scripts/verify-readonly.mjs
+          done
