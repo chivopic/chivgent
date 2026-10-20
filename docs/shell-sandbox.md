@@ -8,6 +8,8 @@ New sessions can choose a permission mode with `--permission-mode ask-first|work
 
 `--permission-mode` cannot be combined with legacy capability switches such as `--allow-writes` or `--allow-shell`. Existing legacy behavior remains available when no permission mode is selected.
 
+Scope availability follows the session configuration. Legacy flag sessions expose only `workspace`; `--shell-network` controls network access for every command in that session. Per-command `network` and `host` scopes are available only with a modern `--permission-mode` policy.
+
 `--allow-shell` exposes a command runner, but commands still require approval.
 Interactive runs ask before every command; headless and socket-server runs deny
 commands unless `--approve-all-shell` was explicitly supplied.
@@ -40,7 +42,7 @@ deny-then-allow policy is a practical boundary, not a complete filesystem
 allowlist; system paths explicitly reopened remain readable. Workspace `.aws`,
 `.ssh`, `.codex`, and selected root `.env` filenames (`.env`, `.env.local`,
 `.env.development`, `.env.test`, `.env.production`, and `.env.staging`) remain
-Network scope (`scope: "network"`) enables outbound network access while preserving full filesystem confinement: user home directories, `/tmp`, and secrets remain denied. Host scope removes workspace read/write boundaries for one command but still retains protected OS write paths. macOS Seatbelt behavior depends on OS policy support; an unavailable sandbox executable or failed sandbox launch is an error.
+denied, including through symlinks. Network scope (`scope: "network"`) enables outbound network access while retaining the same practical filesystem restrictions: user home directories, `/tmp`, and secrets remain denied. Host scope removes workspace read/write boundaries for one command but still retains protected OS write paths. macOS Seatbelt behavior depends on OS policy support; an unavailable sandbox executable or failed sandbox launch is an error.
 The private home is deleted after each command, so package caches and shell
 configuration do not persist between commands.
 
@@ -53,7 +55,7 @@ already present at launch are mounted read-only; absent paths are masked with a
 small read-only temporary filesystem. This prevents shell commands from
 creating protected paths during the run. Docker mode fails closed when a
 protected entry is a symlink or `.git` pointer file.
-Network scope (`scope: "network"`) enables container bridge networking while maintaining strict workspace isolation and path protections. Docker does not support host filesystem access; requests for `scope: "host"` fail closed with an explicit explanation without executing commands on the host.
+Network scope (`scope: "network"`) enables container bridge networking while retaining workspace mounts and path protections. Docker does not support host filesystem access; requests for `scope: "host"` fail closed with an explicit explanation without executing commands on the host.
 Docker is a separate development environment, so host-only tools may not be
 present. Docker daemon or image errors fail the command without running it on
 the host.

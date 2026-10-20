@@ -57,5 +57,5 @@ Pass a timeout for commands that could hang.
 When a command fails, read its output before changing anything.`;
 
 export function modernPermissionPrompt(): string {
-  return `A process-local permission policy governs file changes, shell commands, and extension tools; its mode can change during the conversation and is not restored from a saved session. In workspace mode, workspace file changes and sandboxed shell commands run automatically with network disabled. For commands needing outbound network access, request bash with scope "network" and explain why in justification. For broad host file access or host execution outside the workspace, request bash with scope "host" with justification (host access is unavailable on Docker). Never retry denied actions using another tool.`;
+  return `A process-local permission policy governs file changes, shell commands, and extension tools; its mode can change during the conversation and is not restored from a saved session. In workspace mode, workspace file changes and sandboxed shell commands run automatically with network disabled. For commands needing outbound network access, request bash with scope "network" and explain why in justification. For broad host file access, request bash with scope "host" with justification (host access is unavailable on Docker). Never retry denied actions using another tool.`;
 }

@@ -90,6 +90,7 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
             allowNetwork: scope === "network" || scope === "host" || config.permissionPolicy!.shellNetwork,
             allowHostAccess: scope === "host",
           }),
+          supportedScopes: ["workspace", "network", "host"],
           defaultScopeForCall: () => config.permissionPolicy!.mode === "unrestricted" ? "host" as const : "workspace" as const,
           authorize: (request) => config.permissionPolicy!.authorizeShell(
             request.command,

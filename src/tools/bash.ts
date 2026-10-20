@@ -15,25 +15,42 @@ import {
 /** How often a running command may push an output snapshot. */
 export const OUTPUT_UPDATE_THROTTLE_MS = 100;
 
-const inputSchema = {
-  type: "object",
-  properties: {
-    command: {
-      type: "string",
-      description:
-        "Shell command to run in the workspace root. Not interactive: it has no stdin.",
+function createInputSchema(scopes: readonly ShellScope[]): Readonly<Record<string, unknown>> {
+  const scopeDescriptions: Record<ShellScope, string> = {
+    workspace: "Sandboxed workspace command (network disabled unless enabled by the active policy).",
+    network: "Sandboxed workspace command with outbound network access.",
+    host: "Command with broad host file and network access.",
+  };
+  const elevatedScopes = scopes.filter(scope => scope !== "workspace");
+  return {
+    type: "object",
+    properties: {
+      command: {
+        type: "string",
+        description:
+          "Shell command to run in the workspace root. Not interactive: it has no stdin.",
+      },
+      timeout: {
+        type: "number",
+        description:
+          "Optional timeout in seconds. There is no default; set one for commands that may hang.",
+      },
+      scope: {
+        type: "string",
+        enum: [...scopes],
+        description: `Permission scope: ${scopes.map(scope => `'${scope}' (${scopeDescriptions[scope]})`).join(", ")}.`,
+      },
+      justification: {
+        type: "string",
+        description: elevatedScopes.length === 0
+          ? "This shell does not support elevated scopes."
+          : `Required explanation when explicitly setting scope to ${elevatedScopes.map(scope => `'${scope}'`).join(" or ")}.`,
+      },
     },
-    timeout: {
-      type: "number",
-      description:
-        "Optional timeout in seconds. There is no default; set one for commands that may hang.",
-    },
-    scope: { type: "string", enum: ["workspace", "network", "host"], description: "Permission scope: 'workspace' (default, sandboxed with network disabled), 'network' (sandboxed within workspace with outbound network access), or 'host' (broad host file and network access)." },
-    justification: { type: "string", description: "Required explanation when explicitly setting scope to 'network' or 'host'." },
-  },
-  required: ["command"],
-  additionalProperties: false,
-} as const;
+    required: ["command"],
+    additionalProperties: false,
+  };
+}
 
 interface BashArguments {
   readonly command: string;
@@ -60,6 +77,8 @@ export interface BashToolOptions {
   readonly operations?: ShellOperations;
   /** Rebuild the sandbox from the active permission mode for each call. */
   readonly operationsForCall?: (scope?: ShellScope) => ShellOperations;
+  /** Scopes the configured executor can honor. Defaults to workspace only. */
+  readonly supportedScopes?: readonly ShellScope[];
   readonly defaultScopeForCall?: () => ShellScope;
   /** Direct typed authorization callback. */
   readonly authorize?: ShellAuthorize;
@@ -75,11 +94,12 @@ export class BashTool implements Tool {
   readonly name = "bash";
   readonly description =
     "Run a shell command in the workspace root and return its combined stdout and stderr. Output is truncated to the last part of the run; the full output is written to a temp file when that happens. Not interactive: commands get no stdin.";
-  readonly inputSchema = inputSchema;
+  readonly inputSchema: Readonly<Record<string, unknown>>;
 
   private readonly cwd: string;
   private readonly operations: ShellOperations;
   private readonly operationsForCall: ((scope?: ShellScope) => ShellOperations) | undefined;
+  private readonly supportedScopes: readonly ShellScope[];
   private readonly defaultScopeForCall: (() => ShellScope) | undefined;
   private readonly authorize: ShellAuthorize | undefined;
   private readonly approve: ShellApproval | undefined;
@@ -92,6 +112,8 @@ export class BashTool implements Tool {
     this.cwd = options.cwd;
     this.operations = options.operations ?? createShellOperations({ backend: options.backend, allowWrites: options.allowWrites, allowNetwork: options.allowNetwork });
     this.operationsForCall = options.operationsForCall;
+    this.supportedScopes = options.supportedScopes ?? ["workspace"];
+    this.inputSchema = createInputSchema(this.supportedScopes);
     this.defaultScopeForCall = options.defaultScopeForCall;
     this.authorize = options.authorize;
     this.approve = options.approve;
@@ -132,6 +154,9 @@ export class BashTool implements Tool {
       throw new ShellAbortError();
     }
     const scope = parsed.scope ?? this.defaultScopeForCall?.() ?? "workspace";
+    if (!this.supportedScopes.includes(scope)) {
+      return { content: `Shell scope "${scope}" is unavailable for this shell configuration.`, isError: true };
+    }
     if (parsed.scope === "host" && !parsed.justification?.trim()) {
       return { content: 'Host scope requires a non-empty "justification".', isError: true };
     }
@@ -225,9 +250,9 @@ export class BashTool implements Tool {
 
       const text = await this.finish(output, publish, "(no output)");
       if (exitCode !== 0 && exitCode !== null) {
-        const isNetworkBlocked = scope === "workspace" && !operations.backend?.includes("network enabled") && NETWORK_FAILURE_PATTERN.test(text);
+        const isNetworkBlocked = scope === "workspace" && operations.networkAccess === false && NETWORK_FAILURE_PATTERN.test(text);
         const status = isNetworkBlocked
-          ? `Command exited with code ${exitCode} (network access is disabled in the active sandbox; if network is needed, request bash with scope "network" and justification)`
+          ? `Command exited with code ${exitCode} (${networkDisabledHint(this.supportedScopes.includes("network"))})`
           : `Command exited with code ${exitCode}`;
         return {
           content: appendStatus(text, status),
@@ -396,4 +421,10 @@ function formatApprovalContext(scope: ShellScope, backend?: string, justificatio
   return `Shell context: ${backend ?? "sandboxed workspace; network disabled"}`;
 }
 
-export const NETWORK_FAILURE_PATTERN = /(?:ENETUNREACH|Network is unreachable|Could not resolve host|Temporary failure in name resolution|getaddrinfo ENOTFOUND|getaddrinfo EAI_AGAIN|Operation not permitted|npm error code (?:ENOTFOUND|EAI_AGAIN|ECONNREFUSED))/i;
+function networkDisabledHint(canRequestNetworkScope: boolean): string {
+  return canRequestNetworkScope
+    ? 'network access is disabled in the active sandbox; if network is needed, request bash with scope "network" and justification'
+    : "network access is disabled in the active sandbox; enable shell network access with --shell-network before retrying";
+}
+
+export const NETWORK_FAILURE_PATTERN = /(?:ENETUNREACH|Network is unreachable|Could not resolve host|Temporary failure in name resolution|getaddrinfo ENOTFOUND|getaddrinfo EAI_AGAIN|npm error code (?:ENOTFOUND|EAI_AGAIN|ECONNREFUSED))/i;

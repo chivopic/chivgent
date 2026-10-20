@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseCliArgs } from "../src/cli-options.js";
 import { createLocalSession } from "../src/cli-runtime.js";
 import { WRITE_SYSTEM_PROMPT } from "../src/prompts.js";
 import { assistant, FakeLLMClient } from "./fakes.js";
 import { PermissionPolicy } from "../src/permissions.js";
+import { ShellApprovalGate } from "../src/shell/approval.js";
 
 describe("local CLI session setup", () => {
   it("exposes read tools and the permission-free plan control by default", () => {
@@ -57,6 +58,54 @@ describe("local CLI session setup", () => {
     expect(prompt).not.toContain("--shell-network");
     expect(prompt).toContain('scope "network"');
     expect(prompt).toContain('scope "host"');
+  });
+
+  it("keeps network scope out of the legacy tool and rejects a direct network request", async () => {
+    const llm = new FakeLLMClient([
+      assistant("", [{ id: "network", name: "bash", arguments: { command: "printf should-not-run", scope: "network", justification: "Check the scope" } }]),
+      assistant("Done"),
+    ]);
+    const approval = vi.fn(async () => true);
+    const gate = new ShellApprovalGate();
+    gate.setHandler(approval);
+    const session = createLocalSession({
+      options: parseCliArgs(["--allow-shell"], {}),
+      cwd: process.cwd(),
+      llm,
+      shellApproval: gate,
+      restored: { resumed: false },
+    });
+
+    await session.prompt("Run a harmless shell command");
+
+    const bash = llm.requests[0]?.tools.find(tool => tool.name === "bash");
+    expect(bash?.inputSchema).toMatchObject({ properties: { scope: { enum: ["workspace"] } } });
+    expect(session.messages.some(message => message.role === "tool" && message.toolName === "bash" && message.content.includes('scope "network" is unavailable'))).toBe(true);
+    expect(approval).not.toHaveBeenCalled();
+  });
+
+  it("routes a modern network request through the one-command network approval", async () => {
+    const llm = new FakeLLMClient([
+      assistant("", [{ id: "network", name: "bash", arguments: { command: "printf should-not-run", scope: "network", justification: "Check network access" } }]),
+      assistant("Done"),
+    ]);
+    const approval = vi.fn(async (_command: string, _signal?: AbortSignal, _context?: string) => false);
+    const session = createLocalSession({
+      options: parseCliArgs(["--permission-mode", "workspace", "--shell-backend", "docker"], {}),
+      cwd: process.cwd(),
+      llm,
+      permissionPolicy: new PermissionPolicy("workspace", approval),
+      restored: { resumed: false },
+    });
+
+    await session.prompt("Run a harmless network-scoped command");
+
+    expect(approval).toHaveBeenCalledOnce();
+    expect(approval.mock.calls[0]?.[2]).toContain("Network access for this command only");
+    expect(approval.mock.calls[0]?.[2]).not.toContain("Expanded host access");
+    expect(session.messages.find(message => message.role === "tool" && message.toolName === "bash")?.content).toBe("Shell command denied by user.");
+    expect(llm.requests[0]?.tools.find(tool => tool.name === "bash")?.inputSchema)
+      .toMatchObject({ properties: { scope: { enum: ["workspace", "network", "host"] } } });
   });
 
   it("identifies the agent without inventing a backend model", async () => {

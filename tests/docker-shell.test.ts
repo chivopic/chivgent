@@ -40,6 +40,8 @@ describe("Docker shell isolation", () => {
     expect(flags).not.toContain("--privileged");
     expect(flags).not.toContain("--network host");
     expect(cfg.args.filter(arg => arg === "--mount")).toHaveLength(1);
+    expect(createShellOperations({ backend: "docker", allowNetwork: true }).networkAccess).toBe(true);
+    expect(createShellOperations({ backend: "docker", allowNetwork: false }).networkAccess).toBe(false);
     const writeEnabled = dockerShellConfig(root, { allowWrites: true });
     const writeFlags = writeEnabled.args.join(" ");
     expect(writeFlags).not.toContain(`source=${realpathSync(root)},target=/workspace,readonly`);
@@ -121,6 +123,7 @@ describe("Docker shell isolation", () => {
     const root = await cwd();
     const tool = new BashTool({
       cwd: root,
+      supportedScopes: ["workspace", "host"],
       operationsForCall: () => createShellOperations({ backend: "docker", allowHostAccess: true }),
       approve: async () => true,
     });

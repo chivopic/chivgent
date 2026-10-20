@@ -111,6 +111,7 @@ describe("permission policy", () => {
     const operations: ShellOperations = { backend: "native (test sandbox)", exec };
     const tool = new BashTool({
       cwd,
+      supportedScopes: ["workspace", "host"],
       operationsForCall: (scope) => { scopes.push(scope ?? "workspace"); return operations; },
       approve: (command, signal, context) => policy.authorizeShell(command, context?.startsWith("Expanded host access") ? "host" : "workspace", signal, context),
     });
@@ -136,6 +137,7 @@ describe("permission policy", () => {
     const operations: ShellOperations = { backend: "Docker (network enabled, workspace writes enabled)", exec };
     const tool = new BashTool({
       cwd,
+      supportedScopes: ["workspace", "network"],
       operationsForCall: (scope) => { scopes.push(scope ?? "workspace"); return operations; },
       authorize: (req) => policy.authorizeShell(req.command, req.scope, req.signal, req.justification ? `Reason requested by model: ${req.justification}` : undefined),
     });
@@ -159,7 +161,7 @@ describe("permission policy", () => {
     });
     const tool = new BashTool({
       cwd,
-      operationsForCall: () => ({ backend: "Docker (network denied, workspace writes enabled)", exec }),
+      operationsForCall: () => ({ backend: "Docker (network denied, workspace writes enabled)", networkAccess: false, exec }),
       authorize: (req) => policy.authorizeShell(req.command, req.scope, req.signal),
     });
     const output = await tool.execute({ command: "pwd" }, {
@@ -177,7 +179,7 @@ describe("permission policy", () => {
     const exec = vi.fn(async () => ({ exitCode: 0 }));
     const tool = new BashTool({
       cwd,
-      operationsForCall: () => ({ backend: "Docker (network denied, workspace writes enabled)", exec }),
+      operationsForCall: () => ({ backend: "Docker (network denied, workspace writes enabled)", networkAccess: false, exec }),
       authorize: (req) => policy.authorizeShell(req.command, req.scope, req.signal),
     });
     const output = await tool.execute({ command: "pwd" }, {
@@ -196,6 +198,7 @@ describe("permission policy", () => {
     const exec = vi.fn(async () => ({ exitCode: 0 }));
     const tool = new BashTool({
       cwd,
+      supportedScopes: ["workspace", "network"],
       operationsForCall: () => ({ backend: "Docker (network enabled, workspace writes enabled)", exec }),
       authorize: (req) => policy.authorizeShell(req.command, req.scope, req.signal),
     });
@@ -216,7 +219,8 @@ describe("permission policy", () => {
     });
     const tool = new BashTool({
       cwd,
-      operationsForCall: () => ({ backend: "Docker (network denied, workspace writes enabled)", exec }),
+      supportedScopes: ["workspace", "network"],
+      operationsForCall: () => ({ backend: "Docker (network denied, workspace writes enabled)", networkAccess: false, exec }),
       authorize: (req) => policy.authorizeShell(req.command, req.scope, req.signal),
     });
     const output = await tool.execute({ command: "curl https://example.com" }, {
@@ -227,6 +231,54 @@ describe("permission policy", () => {
     expect(output.content).toContain('request bash with scope "network"');
   });
 
+  it.each([
+    ["Operation not permitted", "native (Seatbelt, workspace file access), network denied", false],
+    ["Could not resolve host: example.com", undefined, undefined],
+    ["Could not resolve host: example.com", "Docker (network denied)", true],
+  ])("uses explicit network capability metadata for failure hints", async (message, backend, networkAccess) => {
+    const cwd = await root();
+    const exec = vi.fn(async (_cmd: string, _cwd: string, options: { onData: (chunk: Buffer) => void }) => {
+      options.onData(Buffer.from(`${message}\n`));
+      return { exitCode: 1 };
+    });
+    const tool = new BashTool({
+      cwd,
+      operations: { ...(backend === undefined ? {} : { backend }), ...(networkAccess === undefined ? {} : { networkAccess }), exec },
+      approve: async () => true,
+    });
+    const output = await tool.execute({ command: "curl https://example.com" }, {
+      workspace: new PermissionWorkspace(cwd, new PermissionPolicy("workspace")),
+    });
+    expect(output.content).toContain("Command exited with code 1");
+    expect(output.content).not.toContain("network access is disabled");
+    expect(output.content).not.toContain('scope "network"');
+  });
+
+  it("does not carry one-command network access into the next workspace call", async () => {
+    const cwd = await root();
+    const policy = new PermissionPolicy("workspace", async () => true);
+    const scopes: string[] = [];
+    const networkExec = vi.fn(async () => ({ exitCode: 0 }));
+    const workspaceExec = vi.fn(async () => ({ exitCode: 0 }));
+    const tool = new BashTool({
+      cwd,
+      supportedScopes: ["workspace", "network", "host"],
+      operationsForCall: scope => {
+        scopes.push(scope ?? "workspace");
+        return scope === "network"
+          ? { networkAccess: true, exec: networkExec }
+          : { networkAccess: false, exec: workspaceExec };
+      },
+      authorize: request => policy.authorizeShell(request.command, request.scope, request.signal),
+    });
+    const context = { workspace: new PermissionWorkspace(cwd, policy) };
+    expect((await tool.execute({ command: "curl https://example.com", scope: "network", justification: "Fetch an asset" }, context)).isError).toBe(false);
+    expect((await tool.execute({ command: "pwd" }, context)).isError).toBe(false);
+    expect(scopes).toEqual(["network", "workspace"]);
+    expect(networkExec).toHaveBeenCalledOnce();
+    expect(workspaceExec).toHaveBeenCalledOnce();
+  });
+
   it("does not run a host command when approval is rejected", async () => {
     const cwd = await root();
     const policy = new PermissionPolicy("workspace", async () => false);
@@ -234,6 +286,7 @@ describe("permission policy", () => {
     const operations: ShellOperations = { backend: "native (test sandbox)", exec };
     const tool = new BashTool({
       cwd,
+      supportedScopes: ["workspace", "host"],
       operationsForCall: () => operations,
       approve: (command, signal, context) => policy.authorizeShell(command, context?.startsWith("Expanded host access") ? "host" : "workspace", signal, context),
     });
@@ -254,6 +307,7 @@ describe("permission policy", () => {
     });
     const tool = new BashTool({
       cwd,
+      supportedScopes: ["workspace", "host"],
       operationsForCall: (scope) => { scopes.push(scope ?? "workspace"); return { backend: "native (test sandbox)", exec }; },
       defaultScopeForCall: () => "host",
       approve: (command, signal, context) => policy.authorizeShell(command, context?.startsWith("Expanded host access") ? "host" : "workspace", signal, context),
@@ -264,12 +318,32 @@ describe("permission policy", () => {
     expect(exec).toHaveBeenCalledOnce();
   });
 
+  it("rejects a default scope the executor does not support", async () => {
+    const cwd = await root();
+    const exec = vi.fn(async () => ({ exitCode: 0 }));
+    const approve = vi.fn(async () => true);
+    const tool = new BashTool({
+      cwd,
+      operations: { exec },
+      supportedScopes: ["workspace"],
+      defaultScopeForCall: () => "host",
+      approve,
+    });
+    const output = await tool.execute({ command: "printf safe" }, {
+      workspace: new PermissionWorkspace(cwd, new PermissionPolicy("unrestricted")),
+    });
+    expect(output.isError).toBe(true);
+    expect(output.content).toContain('scope "host" is unavailable');
+    expect(approve).not.toHaveBeenCalled();
+    expect(exec).not.toHaveBeenCalled();
+  });
+
   it("does not cache a one-command host approval for the next command", async () => {
     const cwd = await root();
     const policy = new PermissionPolicy("workspace");
     const exec = vi.fn(async () => ({ exitCode: 0 }));
     const approve = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
-    const tool = new BashTool({ cwd, operations: { backend: "native (test sandbox)", exec }, approve });
+    const tool = new BashTool({ cwd, supportedScopes: ["workspace", "host"], operations: { backend: "native (test sandbox)", exec }, approve });
     const context = { workspace: new PermissionWorkspace(cwd, policy) };
     expect((await tool.execute({ command: "first", scope: "host", justification: "First request" }, context)).isError).toBe(false);
     expect((await tool.execute({ command: "second", scope: "host", justification: "Second request" }, context)).isError).toBe(true);

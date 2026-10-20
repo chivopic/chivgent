@@ -23,7 +23,7 @@ The same category as Claude Code and Codex. You bring the model.
 
 chivgent is a local agent for the directory you have open. The category is the one [Claude Code](https://code.claude.com) and [Codex](https://github.com/openai/codex) occupy: read the project, change it, run it, and come back to the session. The model is yours. An API key, or a ChatGPT or xAI subscription.
 
-The default that category expects is auto mode. Ordinary reads, workspace edits, and sandboxed commands proceed. The agent stops when an action leaves the workspace, or when a command needs the host. Here that policy is `workspace`. It is not a second model reviewing each action, and it is not a bypass. Local interactive rich-TUI sessions start in Ask for me unless a permission mode or legacy capability flag was selected; file changes and commands require approval. Shift+Tab cycles through Plan, Auto mode, and Ask for me. Headless, simple, and remote starts keep their existing defaults.
+The default that category expects is auto mode. Ordinary reads, workspace edits, and sandboxed commands proceed. The agent asks when a command needs outbound network access or broad host file access. Here that policy is `workspace`. It is not a second model reviewing each action, and it is not a bypass. Local interactive rich-TUI sessions start in Ask for me unless a permission mode or legacy capability flag was selected; file changes and commands require approval. Shift+Tab cycles through Plan, Auto mode, and Ask for me. Headless, simple, and remote starts keep their existing defaults.
 
 ## Desktop — Coming soon
 
@@ -84,7 +84,7 @@ chivgent --continue                                      # last session in this 
 
 | Mode | What proceeds | This build |
 | --- | --- | --- |
-| `workspace` | Workspace edits and sandboxed commands. Network stays off. A command that needs the host asks once, for that command only. | Auto mode in the TUI cycle, or `--permission-mode workspace`. |
+| `workspace` | Workspace edits and sandboxed commands. Network stays off unless a command requests `scope: "network"` and gets one-command approval. Broad host file access uses `scope: "host"` and its own approval. | Auto mode in the TUI cycle, or `--permission-mode workspace`. |
 | `ask-first` | Reads. Each file change and each command asks. No answer means no action. | Ordinary local rich-TUI start, or `--permission-mode ask-first`. |
 | `unrestricted` | Shell commands run with broad host file access and network, inside the OS sandbox. File tools stay in the workspace. | Explicit opt-in. |
 | none | Reads. Writes and shell wait for a flag. Commands need interactive approval or explicit approval-all. | `--simple`, headless, and remote starts unless a mode or legacy flag is selected. |
@@ -145,7 +145,7 @@ In its inline editor, type `/` to browse registered commands or keep typing to f
 
 - Paths outside the workspace are rejected, including `..` and symlink escapes. Common credential paths are denied. Tool output is capped.
 - Without a mode or legacy flag, `--simple`, headless, and remote starts retain the read-only default. A local rich-TUI start selects `ask-first` for that process unless a legacy capability flag was given. `--allow-shell` needs interactive approval; non-interactive commands are denied unless `--approve-all-shell` was set. A served session denies commands unless you also pass `--approve-all-shell`. If the sandbox cannot start, the command does not run unsandboxed.
-- `workspace` runs workspace edits and sandboxed commands on its own, and asks once when a command wants host file and network access. `unrestricted` is the explicit opt-in for broad host access and network. Neither is saved with the session. [Shell safety](docs/shell-sandbox.md).
+- `workspace` runs workspace edits and sandboxed commands on its own. A command can request one-time approval for outbound network access or broad host file access. `unrestricted` is the explicit opt-in for broad host access and network. Neither is saved with the session. [Shell safety](docs/shell-sandbox.md).
 - The macOS sandbox can still read files your user can read. It restricts writes and network access. It is not confidentiality isolation.
 - There is no per-command allowlist, and no native Windows shell. `workspace` is not the start mode of this build.
 - Extensions are JavaScript in the chivgent process. Trusting a project means letting its authors run code as you. chivgent prompts once per directory, and does not load extensions when there is no terminal to prompt.

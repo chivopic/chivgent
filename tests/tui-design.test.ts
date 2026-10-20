@@ -68,6 +68,11 @@ describe("TUI activity presentation", () => {
     }])).toEqual([
       "  ! Shell npm test — Command exited with code 1",
     ]);
+    expect(toolTranscript(calls, [{
+      ...result[0]!, content: "connection details\nretrying\nShell command denied by user.", isError: true,
+    }])).toEqual([
+      "  ! Shell npm test — Shell command denied by user.",
+    ]);
   });
 
   it("groups consecutive successful reads but exposes failures individually", () => {
