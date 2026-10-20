@@ -87,6 +87,7 @@ export function createDockerShellOperations(options: DockerShellOptions = {}): S
   const docker = options.dockerExecutable ?? "docker";
   return {
     backend: `Docker (network ${options.allowNetwork ? "enabled" : "denied"}${options.allowWrites ? ", workspace writes enabled" : ", read-only workspace"})`,
+    networkAccess: options.allowNetwork === true,
     async exec(command, cwd, execOptions) {
       const containerName = `chivgent-${randomUUID()}`;
       activeContainers.add(containerName);

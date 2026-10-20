@@ -54,6 +54,24 @@ describe("createLiveRegion", () => {
     expect(terminal.written()).not.toContain("the answer");
   });
 
+  it("progressively streams completed lines to answerStream during message_update", () => {
+    const terminal = recorder();
+    const answers = recorder();
+    const region = createLiveRegion({ stream: terminal.stream, answerStream: answers.stream, width: () => 80, markdown: true });
+    region.listener(start);
+    region.listener({ type: "message_update", turn: 1, delta: "First line\nSecond line" });
+    expect(answers.written()).toBe("First line\n");
+    region.listener({ type: "message_update", turn: 1, delta: " completed\n" });
+    expect(answers.written()).toBe("First line\nSecond line completed\n");
+    region.listener({
+      type: "turn_end",
+      turn: 1,
+      message: { role: "assistant", content: "First line\nSecond line completed\n", toolCalls: [] },
+      toolResults: [],
+    });
+    expect(answers.written()).toBe("First line\nSecond line completed\n");
+  });
+
   it("retains unfinished streamed text after cancellation and reports failures", () => {
     const output = recorder();
     const region = live(output);

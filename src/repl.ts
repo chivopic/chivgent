@@ -1036,6 +1036,14 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         }
         line = draft;
       }
+      if (options.inlineComposer && tuiInput !== undefined) {
+        const isOutputTTY = typeof options.output === "object" && options.output !== null && "isTTY" in options.output && options.output.isTTY === true;
+        const useColor = options.tui === true && terminalColorEnabled(isOutputTTY, process.env);
+        const prefix = useColor ? "\u001b[1m\u001b[2m›\u001b[0m " : "› ";
+        const lines = line.split("\n");
+        const formattedPrompt = lines.map((l, i) => `${i === 0 ? prefix : "  "}${terminalText(l)}`).join("\n");
+        write(`\n${formattedPrompt}\n\n`);
+      }
       const outcome = fromComposer || fromEditor ? "not-a-command" : handleSlashCommand(line, {
         session: activeSession,
         write,

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { dockerShellConfig } from "../src/shell/docker.js";
+import { createShellOperations } from "../src/shell/factory.js";
 import { ShellApprovalGate } from "../src/shell/approval.js";
 import { BashTool } from "../src/tools/bash.js";
 import type { ShellOperations } from "../src/shell/types.js";
@@ -39,6 +40,8 @@ describe("Docker shell isolation", () => {
     expect(flags).not.toContain("--privileged");
     expect(flags).not.toContain("--network host");
     expect(cfg.args.filter(arg => arg === "--mount")).toHaveLength(1);
+    expect(createShellOperations({ backend: "docker", allowNetwork: true }).networkAccess).toBe(true);
+    expect(createShellOperations({ backend: "docker", allowNetwork: false }).networkAccess).toBe(false);
     const writeEnabled = dockerShellConfig(root, { allowWrites: true });
     const writeFlags = writeEnabled.args.join(" ");
     expect(writeFlags).not.toContain(`source=${realpathSync(root)},target=/workspace,readonly`);
@@ -105,5 +108,27 @@ describe("Docker shell isolation", () => {
   it("headless sessions deny by default and approve-all is explicit", async () => {
     expect(await new ShellApprovalGate().approve("rm file")).toBe(false);
     expect(await new ShellApprovalGate(true).approve("echo ok")).toBe(true);
+  });
+  it("supports network escalation without host file mounts", async () => {
+    const root = await cwd();
+    const cfg = dockerShellConfig(root, { allowWrites: true, allowNetwork: true });
+    const flags = cfg.args.join(" ");
+    expect(flags).toContain("--network bridge");
+    expect(flags).not.toContain("--network none");
+    expect(flags).toContain(`type=bind,source=${realpathSync(root)},target=/workspace`);
+    expect(cfg.args.filter(arg => arg === "--mount")).toHaveLength(1);
+  });
+
+  it("fails closed with a clear diagnostic when host access is requested in Docker", async () => {
+    const root = await cwd();
+    const tool = new BashTool({
+      cwd: root,
+      supportedScopes: ["workspace", "host"],
+      operationsForCall: () => createShellOperations({ backend: "docker", allowHostAccess: true }),
+      approve: async () => true,
+    });
+    const output = await tool.execute({ command: "cat /etc/shadow", scope: "host", justification: "Test host access" }, { workspace });
+    expect(output.isError).toBe(true);
+    expect(output.content).toContain("Host access is unavailable in the Docker shell backend; no command was run.");
   });
 });

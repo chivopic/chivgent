@@ -72,6 +72,7 @@ export function createNativeShellOperations(options: NativeShellOptions = {}): S
   }
   return {
     backend: `native (Seatbelt${options.allowHostAccess ? ", host file access" : ", workspace file access"}, network ${options.allowNetwork ? "enabled" : "denied"})`,
+    networkAccess: options.allowNetwork === true,
     async exec(command: string, cwd: string, execOptions: ShellExecOptions) {
       const deniedPaths = [".git", ".agents", ".codex", ".aws", ".ssh"];
       for (const name of deniedPaths) {

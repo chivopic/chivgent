@@ -8,10 +8,10 @@ import type { LLMClient } from "./llm.js";
 import type { Message } from "./messages.js";
 import type { AppliedCompaction } from "./context/context-manager.js";
 import type { UsageTotal } from "./providers/usage.js";
-import { SHELL_SYSTEM_PROMPT, SYSTEM_PROMPT, WEB_SEARCH_SYSTEM_PROMPT, WRITE_SYSTEM_PROMPT } from "./prompts.js";
+import { MODERN_SHELL_SYSTEM_PROMPT, modernPermissionPrompt, SHELL_SYSTEM_PROMPT, SYSTEM_PROMPT, WEB_SEARCH_SYSTEM_PROMPT, WRITE_SYSTEM_PROMPT } from "./prompts.js";
 import { AgentSession } from "./session.js";
 import { ShellApprovalGate } from "./shell/approval.js";
-import { PermissionWorkspace, type PermissionPolicy } from "./permissions.js";
+import { PermissionWorkspace, type PermissionPolicy, type ShellScope } from "./permissions.js";
 import { createShellOperations } from "./shell/factory.js";
 import type { SessionStore } from "./session-store.js";
 import { BashTool } from "./tools/bash.js";
@@ -60,9 +60,9 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
         ...(options.webSearch.token === undefined ? {} : { token: options.webSearch.token }),
       });
   if (allowWrites) prompt.push(WRITE_SYSTEM_PROMPT);
-  if (allowShell) prompt.push(SHELL_SYSTEM_PROMPT);
+  if (allowShell) prompt.push(modernPolicy ? MODERN_SHELL_SYSTEM_PROMPT : SHELL_SYSTEM_PROMPT);
   if (webSearchBackend !== undefined) prompt.push(WEB_SEARCH_SYSTEM_PROMPT);
-  if (modernPolicy) prompt.push(`A process-local permission policy governs file changes, shell commands, web search, and extension tools; its mode can change during the conversation and is not restored from a saved session. For files or network outside the workspace, request bash with scope "host" and explain why in justification; this asks for one-command broad host access. Never retry denied actions using another tool.`);
+  if (modernPolicy) prompt.push(modernPermissionPrompt());
   prompt.push(...(extensions?.systemPromptContributions ?? []));
 
   const contextManager = new ContextManager({
@@ -100,12 +100,23 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
         allowNetwork: modernPolicy ? config.permissionPolicy!.shellNetwork : options.shellNetwork,
         backend: options.shellBackend,
         ...(modernPolicy ? {
-          operationsForCall: (scope: "workspace" | "host" = "workspace") => createShellOperations({ backend: options.shellBackend, allowWrites: true, allowNetwork: scope === "host" || config.permissionPolicy!.shellNetwork, allowHostAccess: scope === "host" }),
+          operationsForCall: (scope: ShellScope = "workspace") => createShellOperations({
+            backend: options.shellBackend,
+            allowWrites: true,
+            allowNetwork: scope === "network" || scope === "host" || config.permissionPolicy!.shellNetwork,
+            allowHostAccess: scope === "host",
+          }),
+          supportedScopes: ["workspace", "network", "host"],
           defaultScopeForCall: () => config.permissionPolicy!.mode === "unrestricted" ? "host" as const : "workspace" as const,
-        } : {}),
-        approve: modernPolicy
-          ? (command, signal, context) => config.permissionPolicy!.authorizeShell(command, context?.startsWith("Expanded host access") ? "host" : "workspace", signal, context)
-          : (command, signal, context) => config.shellApproval?.approve(command, signal, context) ?? Promise.resolve(false),
+          authorize: (request) => config.permissionPolicy!.authorizeShell(
+            request.command,
+            request.scope,
+            request.signal,
+            request.justification ? `Reason requested by model: ${request.justification}` : undefined,
+          ),
+        } : {
+          approve: (command, signal, context) => config.shellApproval?.approve(command, signal, context) ?? Promise.resolve(false),
+        }),
       })] : []),
       ...(extensions?.registeredTools ?? []).map((entry) => entry.tool),
     ],

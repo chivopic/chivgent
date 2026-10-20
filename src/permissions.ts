@@ -5,7 +5,8 @@ import { WorkspaceError } from "./workspace/types.js";
 
 export const PERMISSION_MODES = ["ask-first", "workspace", "unrestricted"] as const;
 export type PermissionMode = typeof PERMISSION_MODES[number];
-export type ShellScope = "workspace" | "host";
+export const SHELL_SCOPES = ["workspace", "network", "host"] as const;
+export type ShellScope = typeof SHELL_SCOPES[number];
 export type PermissionApproval = (action: string, signal?: AbortSignal, context?: string) => Promise<boolean>;
 
 /** Approval context prefix the REPL uses to render a full-query web prompt. */
@@ -51,7 +52,12 @@ export class PermissionPolicy {
     if (signal?.aborted) return false;
     if (this.modeValue === "unrestricted") return true;
     if (this.modeValue === "workspace" && scope === "workspace") return true;
-    const scopeContext = scope === "host" ? "Expanded host access for this command only: shell may read/write outside the workspace and use network (protected OS write paths still apply)" : context;
+    const detail = context ? `. ${context}` : "";
+    const scopeContext = scope === "host"
+      ? `Expanded host access for this command only: shell may read/write outside the workspace and use network (protected OS write paths still apply)${detail}`
+      : scope === "network"
+        ? `Network access for this command only: outbound network enabled within the workspace sandbox${detail}`
+        : `Sandboxed workspace shell command${detail}`;
     const approved = await (this.approval?.(command, signal, scopeContext) ?? Promise.resolve(false));
     return approved && signal?.aborted !== true;
   }
@@ -121,7 +127,7 @@ export function parsePermissionMode(value: string): PermissionMode {
 export function describePermissionMode(mode: PermissionMode): string {
   switch (mode) {
     case "ask-first": return "File changes, every shell command, and every configured web search require approval; no approval means no action.";
-    case "workspace": return "Workspace file changes and sandboxed shell commands run automatically; network, expanded host access, and configured web search require approval.";
+    case "workspace": return "Workspace file changes and sandboxed shell commands run automatically with network disabled; commands needing network or host access require per-command approval, and configured web search requires per-query approval.";
     case "unrestricted": return "Shell commands run automatically with broad host file access and network inside the OS sandbox; configured web search runs without a prompt; workspace file tools remain workspace-bound.";
   }
 }
