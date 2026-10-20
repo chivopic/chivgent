@@ -209,5 +209,11 @@ app.on("before-quit", (event) => {
 });
 
 app.on("will-quit", () => traceE2EShutdown("electron.will-quit"));
-app.on("quit", (event, exitCode) => traceE2EShutdown("electron.quit", { exitCode }));
+app.on("quit", (event, exitCode) => {
+  traceE2EShutdown("electron.quit", { exitCode });
+  if (process.env["CHIVGENT_DESKTOP_E2E_SHUTDOWN_TRACE_FILE"] !== undefined) {
+    setTimeout(() => traceE2EShutdown("electron.post-quit-resources", { resources: process.getActiveResourcesInfo() }), 250);
+  }
+});
+process.on("exit", code => traceE2EShutdown("electron.process-exit", { code }));
 

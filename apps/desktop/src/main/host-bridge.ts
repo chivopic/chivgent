@@ -98,9 +98,13 @@ export function createHostBridge(): HostBridge {
       }
     });
     let stderr = "";
+    let stdoutEnded = false;
+    let stderrEnded = false;
     started.stderr?.on("data", (chunk: Buffer | string) => {
       stderr = `${stderr}${chunk.toString()}`.slice(-2_000);
     });
+    started.stdout?.on("end", () => { stdoutEnded = true; });
+    started.stderr?.on("end", () => { stderrEnded = true; });
     started.stdout?.on("data", () => {
       // Drain so a piped host cannot block on a full buffer.
     });
@@ -129,7 +133,10 @@ export function createHostBridge(): HostBridge {
       }
     });
     started.on("exit", (code) => {
-      traceE2EShutdown("host-process.exit", { hostPid: started.pid, code, shuttingDown });
+      traceE2EShutdown("host-process.exit", { hostPid: started.pid, code, shuttingDown,
+        stdoutEnded, stderrEnded,
+        stdoutReadableEnded: (started.stdout as unknown as { readableEnded?: boolean } | undefined)?.readableEnded,
+        stderrReadableEnded: (started.stderr as unknown as { readableEnded?: boolean } | undefined)?.readableEnded });
       child = undefined;
       const detail = stderr.trim();
       const message = shuttingDown

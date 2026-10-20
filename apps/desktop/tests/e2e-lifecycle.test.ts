@@ -37,21 +37,23 @@ describe("Electron E2E teardown", () => {
     const hostPidFile = join(root, "host.pid");
     const host = child();
     writeFileSync(hostPidFile, `${host.pid}\n`);
-    const electron = child();
+    const electron = spawn(globalThis.process.execPath, ["-e", "process.on('message', () => process.exit(0)); setInterval(() => {}, 1000)"], { stdio: ["ignore", "ignore", "ignore", "ipc"] });
+    children.push(electron);
     let quitRequests = 0;
-    const electronApp = { quit: () => { quitRequests += 1; if (quitRequests === 1) electronApp.quit(); else { host.kill("SIGTERM"); electron.kill("SIGTERM"); } } };
+    const electronApp = { quit: () => { quitRequests += 1; if (quitRequests === 1) electronApp.quit(); else { host.kill("SIGTERM"); electron.send("quit"); } } };
     const app = {
       process: () => electron,
       evaluate: async (callback: (arg: { app: typeof electronApp }) => void) => callback({ app: electronApp }),
       close: async () => { electronApp.quit(); await exited(electron); },
     };
 
-    await expect(shutdown({ app, hostPidFile, timeoutMs: 500 })).resolves.toMatchObject({ ownerPid: electron.pid, exitCode: null, signalCode: "SIGTERM" });
+    await expect(shutdown({ app, hostPidFile, timeoutMs: 500 })).resolves.toMatchObject({ ownerPid: electron.pid, exitCode: 0, signalCode: null });
     expect(quitRequests).toBe(2);
     expect(await exitedWithin(host)).toBe(true);
     expect(await exitedWithin(electron)).toBe(true);
     expect(host.signalCode).toBe("SIGTERM");
-    expect(electron.signalCode).toBe("SIGTERM");
+    expect(electron.exitCode).toBe(0);
+    expect(electron.signalCode).toBeNull();
   });
 
   it("distinguishes Electron OS exit from delayed stdio close held by an owned descendant", async () => {

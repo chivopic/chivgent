@@ -185,6 +185,9 @@ export async function shutdownElectron({ app, hostPidFile, diagnosticsFile, time
       try { await boundedStage(`Playwright app.close (${ownerLabel})`, () => closePromise, 1_000); }
       catch (error) { failures.push(error); }
     }
+    if (failures.length === 0 && (owner?.exitCode !== 0 || owner?.signalCode !== null)) {
+      failures.push(new Error(`Electron did not exit normally (${ownerLabel}): exitCode=${owner?.exitCode}, signalCode=${owner?.signalCode}`));
+    }
     if (failures.length === 0) return { ownerPid: owner?.pid, exitCode: owner?.exitCode, signalCode: owner?.signalCode,
       exitAfterMs: ownerExitAt === undefined ? undefined : ownerExitAt - ownerStartedAt,
       closeAfterMs: ownerCloseAt === undefined ? undefined : ownerCloseAt - ownerStartedAt,
