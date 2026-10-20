@@ -50,6 +50,19 @@ async function waitForPidExit(pid, timeoutMs) {
   return !await pidIsAlive(pid);
 }
 
+async function waitForPidsExit(pids, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let surviving = pids;
+  while (Date.now() < deadline) {
+    const states = await Promise.all(surviving.map(async pid => ({ pid, alive: await pidIsAlive(pid) })));
+    surviving = states.filter(state => state.alive).map(state => state.pid);
+    if (!surviving.length) return [];
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  const states = await Promise.all(surviving.map(async pid => ({ pid, alive: await pidIsAlive(pid) })));
+  return states.filter(state => state.alive).map(state => state.pid);
+}
+
 export async function listOwnedDescendants(rootPid) {
   const descendants = [];
   const pending = [rootPid];
@@ -84,9 +97,25 @@ async function terminatePid(pid) {
 async function waitForChildExit(child, timeoutMs) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return true;
   try {
-    await boundedStage("Electron process exit", () => new Promise(resolve => child.once("close", resolve)), timeoutMs);
+    // `close` waits for every inherited stdio pipe to close, including pipes
+    // held by renderer/GPU descendants. `exit` is the owned OS process exit;
+    // descendants are checked and reaped separately below.
+    await boundedStage("Electron OS process exit", () => new Promise(resolve => {
+      if (child.exitCode !== null || child.signalCode !== null) resolve();
+      else child.once("exit", resolve);
+    }), timeoutMs);
     return true;
   } catch { return false; }
+}
+
+async function ownedProcessStatus(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 1) return `PID ${pid ?? "unknown"}: unavailable`;
+  try {
+    const { stdout } = await execFileAsync("ps", ["-o", "pid=,ppid=,state=,comm=", "-p", String(pid)], { timeout: 500, maxBuffer: 1024 });
+    return `PID ${pid}: ${stdout.trim() || "exited"}`;
+  } catch (error) {
+    return `PID ${pid}: status unavailable (${error.message})`;
+  }
 }
 
 async function readPid(path) {
@@ -96,7 +125,7 @@ async function readPid(path) {
     if (!Number.isSafeInteger(value) || value <= 1) throw new Error(`invalid PID value in ${path}`);
     return value;
   } catch (error) {
-    if (error.code === "ENOENT") return undefined;
+    if (error.code === "ENOENT") throw new Error(`missing PID file ${path}`, { cause: error });
     throw error;
   }
 }
@@ -105,34 +134,56 @@ export async function shutdownElectron({ app, hostPidFile, diagnosticsFile, time
   if (!app) return;
   const owner = app.process();
   const ownerLabel = `Electron PID ${owner?.pid ?? "unknown"}`;
+  const ownerStartedAt = Date.now();
+  let ownerCloseObserved = Boolean(owner?.closed);
+  let ownerExitAt;
+  let ownerCloseAt = ownerCloseObserved ? Date.now() : undefined;
+  owner?.once("exit", () => { ownerExitAt = Date.now(); });
+  if (owner && !owner.closed) owner.once("close", () => { ownerCloseObserved = true; ownerCloseAt = Date.now(); });
   const failures = [];
   let descendants = [];
   let descendantSnapshotError;
   try { descendants = await boundedStage(`Electron child-process snapshot (${ownerLabel})`, () => listDescendants(owner?.pid), timeoutMs); }
   catch (error) { descendantSnapshotError = error; }
+  let closePromise;
   try {
     try {
       // Let the CDP evaluation reply before requesting shutdown: destroying the
       // execution context during app.quit() can strand the evaluate response.
       // ElectronApplication.close() also calls app.quit() and waits on a close
       // event, so keep this to exactly one explicit quit request.
-      await boundedStage(`Electron app.quit request (${ownerLabel})`, () => app.evaluate(({ app: electronApp }) => {
-        setImmediate(() => electronApp.quit());
+      await boundedStage(`Electron quit scheduling (${ownerLabel})`, () => app.evaluate(({ app: electronApp }) => {
+        const quit = electronApp.quit.bind(electronApp);
+        electronApp.quit = () => {
+          electronApp.quit = quit;
+          setImmediate(quit);
+        };
       }), timeoutMs);
+      closePromise = Promise.resolve().then(() => app.close());
+      closePromise.catch(() => {});
     } catch (error) {
       const targetClosed = /Target (?:page|context|browser).*has been closed|Electron application has been closed/i.test(error.message);
       if (!targetClosed || !await waitForChildExit(owner, 100)) {
         failures.push(error instanceof E2EStageError ? error : new Error(`Electron app.quit request (${ownerLabel}) failed: ${error.message}`, { cause: error }));
       }
     }
-    if (!await waitForChildExit(owner, timeoutMs)) failures.push(new E2EStageError(`Electron process exit (${ownerLabel})`, timeoutMs));
+    if (!await waitForChildExit(owner, timeoutMs)) failures.push(new E2EStageError(`Electron OS process exit (${ownerLabel})`, timeoutMs));
     const hostPid = await readPid(hostPidFile);
-    if (await pidIsAlive(hostPid)) failures.push(new E2EStageError(`Agent host shutdown (PID ${hostPid}, owner ${ownerLabel})`, timeoutMs));
-    const surviving = [];
-    for (const pid of descendants) if (await pidIsAlive(pid)) surviving.push(pid);
-    if (surviving.length) failures.push(new E2EStageError(`Electron child-process shutdown (PIDs ${surviving.join(", ")}, owner ${ownerLabel})`, timeoutMs));
+    if (await waitForPidExit(hostPid, 500) === false) failures.push(new E2EStageError(`Agent host shutdown (PID ${hostPid}, owner ${ownerLabel})`, timeoutMs));
+    const surviving = await waitForPidsExit(descendants, 1_000);
+    if (surviving.length) {
+      const statuses = await Promise.all([owner?.pid, ...surviving].map(ownedProcessStatus));
+      failures.push(new E2EStageError(`Electron child-process shutdown (PIDs ${surviving.join(", ")}; ${statuses.join("; ")}; owner exitCode=${owner?.exitCode}, signalCode=${owner?.signalCode}, closeObserved=${ownerCloseObserved})`, timeoutMs));
+    }
     if (descendantSnapshotError) failures.push(new Error(`could not snapshot Electron child processes (${ownerLabel}): ${descendantSnapshotError.message}`));
-    if (failures.length === 0) return;
+    if (failures.length === 0) {
+      try { await boundedStage(`Playwright app.close (${ownerLabel})`, () => closePromise, 1_000); }
+      catch (error) { failures.push(error); }
+    }
+    if (failures.length === 0) return { ownerPid: owner?.pid, exitCode: owner?.exitCode, signalCode: owner?.signalCode,
+      exitAfterMs: ownerExitAt === undefined ? undefined : ownerExitAt - ownerStartedAt,
+      closeAfterMs: ownerCloseAt === undefined ? undefined : ownerCloseAt - ownerStartedAt,
+      hostPid, descendants };
   } catch (error) {
     failures.push(error);
   }
@@ -156,6 +207,7 @@ export async function shutdownElectron({ app, hostPidFile, diagnosticsFile, time
   const primary = failures[0];
   if (primary) {
     if (failures.length > 1) primary.message += `; cleanup errors: ${failures.slice(1).map(error => error.message).join("; ")}`;
+    primary.message += `; owner process state: pid=${owner?.pid ?? "unknown"}, exitCode=${owner?.exitCode}, signalCode=${owner?.signalCode}, exitAfterMs=${ownerExitAt === undefined ? "pending" : ownerExitAt - ownerStartedAt}, closeObserved=${ownerCloseObserved}, closeAfterMs=${ownerCloseAt === undefined ? "pending" : ownerCloseAt - ownerStartedAt}`;
     if (diagnosticsFile) {
       try {
         const trace = await boundedStage("shutdown diagnostic read", () => readFile(diagnosticsFile, "utf8"), 500);

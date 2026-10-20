@@ -356,7 +356,8 @@ try {
         console.log(JSON.stringify({ e2eFaultInjection: "prevent-before-quit", root, hostPid, electronPid, descendants }));
         await closing.evaluate(({ app }) => app.on("before-quit", event => event.preventDefault()));
       }
-      await shutdownElectron({ app: closing, hostPidFile, diagnosticsFile: shutdownTraceFile });
+      const shutdownResult = await shutdownElectron({ app: closing, hostPidFile, diagnosticsFile: shutdownTraceFile });
+      console.log(JSON.stringify({ e2eShutdownResult: shutdownResult }));
       activeApp = undefined;
     }
   } catch (error) {
