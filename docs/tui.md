@@ -37,20 +37,20 @@ npm run demo:tui
 | Ctrl+C（运行中） | 取消当前运行，保留已收到的文字，回到提示符 |
 | Ctrl+C（空闲） | 清除当前草稿并回到输入框；空草稿时 Ctrl+D 退出会话，退出码 0 |
 | Ctrl+A / Ctrl+E | 移动到行首 / 行尾 |
-| `/editor` 中 Enter / Ctrl+S | 插入换行 / 发送草稿 |
 | Ctrl+D（空行）、`/exit` | 以退出码 0 离开会话 |
-| `/session` | 会话、工作目录、消息数量与累计 token |
-| `/provider` | 打开供应商菜单；选中后若缺 Key，直接进入隐藏输入 |
+| `/status` | 会话状态、工作目录、轮次、消息数、Token 统计与权限模式（兼容 `/session`） |
+| `/diff` | 经单次确认后交互式审查工作区 Git 改动；`/diff patch` 查阅最后一次应用补丁 |
+| `/provider` | 打开供应商交互选择器；选中后若缺 Key，直接进入隐藏输入 |
 | `/provider deepseek` | 在当前会话切换到 DeepSeek，保留对话历史 |
 | `/model MODEL` | 切换当前供应商的模型 |
 | `/endpoint URL` | 为 OpenAI 兼容供应商设置 API 地址 |
-| `/login`、`/login deepseek` | 先选择供应商再保存其 API Key（不回显）；`/login deepseek` 跳过选择 |
-| `/tools`、`/help` | 工具列表与命令帮助 |
+| `/login`、`/login deepseek` | 先选择供应商再保存其 API Key（不回显）；`/login deepseek` 跳过选择；`/login logout` 登出订阅 |
+| `/permissions` | 查看或更改权限模式（`ask-first` / `workspace` / `unrestricted` / `plan`） |
+| `/help` | 命令与快捷键帮助 |
 | `/clear` | 清空模型会话内容，保留终端滚动历史 |
-
 欢迎区保持两到三行。第一行是品牌和版本，第二行只显示工作区路径：放得下就显示完整路径，放不下就保留末尾，不会收成 `~`。只有需要设置供应商、模型或端点时才多显示一条操作提示。欢迎区不显示供应商和模型。会话标识按需通过 `/session` 或 `/status` 查看，欢迎区以及 `/new`、`/resume` 的成功提示不重复显示 session ID；`/resume` 的候选列表仍显示 ID，方便选择会话。
 
-默认输入框用方框包住草稿，`›` 标出当前行。草稿为空时框内显示 Ask chivgent to do anything；这几个字不是草稿，回车不会发送。命令菜单显示在框下方。框外是一行安静的状态栏。左侧是当前供应商和模型，两者都已设置才显示，缺模型时不编造名字。同一行放得下时，后面是当前 Plan、Auto mode 或 Ask for me、Shift+Tab 的下一种模式和 `/help`。窗口较窄、模型名很长时，仍保留这段模式提示。Shift+Tab 只在空闲输入时切换；完整按键说明放在 `/help`，显式 `/editor` 保留独立编辑提示。选择文字或打开命令菜单时，状态栏改为对应提示，暂不显示模型。占位符只在终端允许颜色时变暗。
+默认输入框用方框包住草稿，`›` 标出当前行。草稿为空时框内显示 Ask chivgent to do anything；这几个字不是草稿，回车不会发送。命令菜单显示在框下方。框外是一行安静的状态栏。左侧是当前供应商和模型，两者都已设置才显示，缺模型时不编造名字。同一行放得下时，后面是当前 Plan、Auto mode 或 Ask for me、Shift+Tab 的下一种模式和 `/help`。窗口较窄、模型名很长时，仍保留这段模式提示。Shift+Tab 只在空闲输入时切换；完整按键说明放在 `/help`。选择文字或打开命令菜单时，状态栏改为对应提示，暂不显示模型。占位符只在终端允许颜色时变暗。
 
 运行区显示回答尾部、最多三个工具的最新进度、
 轮次、耗时及 token。运行完成、取消、失败或达到轮次上限时会留下结果；`tokens+` 表示有一轮
