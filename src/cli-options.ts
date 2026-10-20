@@ -13,6 +13,7 @@ import {
 import { DEFAULT_CONTEXT_WINDOW } from "./context/context-manager.js";
 import type { ShellBackend } from "./shell/factory.js";
 import { parsePermissionMode, type PermissionMode } from "./permissions.js";
+import { parseBackendURL } from "./websearch/backend.js";
 
 /** A Provider id known to the registry. */
 export type Provider = string;
@@ -59,6 +60,12 @@ export interface CliOptions {
   readonly approveAllShell: boolean;
   readonly shellBackend: ShellBackend;
   readonly shellNetwork: boolean;
+  /** Explicitly configured SearXNG endpoint; absent means no web search tool. */
+  readonly webSearch?: {
+    readonly url: string;
+    /** Bearer token from CHIVGENT_WEB_SEARCH_TOKEN, never argv. */
+    readonly token?: string;
+  };
   /** Explicit policy for tool approval boundaries; absent preserves legacy flags. */
   readonly permissionMode?: PermissionMode;
   /** Explicitly request the rich terminal interface. */
@@ -110,6 +117,7 @@ export function parseCliArgs(
   let approveAllShell = false;
   let shellBackend: ShellBackend = "auto";
   let shellNetwork = false;
+  let webSearchURL: string | undefined;
   let permissionMode: PermissionMode | undefined;
   let tui = false;
   let simple = false;
@@ -182,6 +190,10 @@ export function parseCliArgs(
       index += 1;
     } else if (argument === "--shell-network") {
       shellNetwork = true;
+    } else if (argument === "--web-search") {
+      webSearchURL = readOptionValue(argv, index, "--web-search");
+      parseBackendURL(webSearchURL);
+      index += 1;
     } else if (argument === "--permission-mode") {
       permissionMode = parsePermissionMode(readOptionValue(argv, index, "--permission-mode"));
       index += 1;
@@ -227,6 +239,9 @@ export function parseCliArgs(
   if (permissionMode !== undefined && connect !== undefined) {
     throw new TypeError("--permission-mode applies to local sessions and cannot be used with --connect.");
   }
+  if (webSearchURL !== undefined && connect !== undefined) {
+    throw new TypeError("--web-search applies to local sessions and cannot be used with --connect.");
+  }
   if (permissionMode !== undefined && serve) {
     throw new TypeError("--permission-mode cannot be used with --serve because served sessions do not have an interactive approval channel.");
   }
@@ -261,6 +276,15 @@ export function parseCliArgs(
     approveAllShell,
     shellBackend,
     shellNetwork,
+    ...(webSearchURL === undefined ? {} : {
+      webSearch: {
+        url: webSearchURL,
+        ...(environment.CHIVGENT_WEB_SEARCH_TOKEN === undefined ||
+            environment.CHIVGENT_WEB_SEARCH_TOKEN.length === 0
+          ? {}
+          : { token: environment.CHIVGENT_WEB_SEARCH_TOKEN }),
+      },
+    }),
     ...(permissionMode === undefined ? {} : { permissionMode }),
     tui,
     simple,
@@ -306,6 +330,8 @@ Options:
                    Interactive commands require individual confirmation.
   --shell-backend MODE  auto, native, or docker (default: auto; macOS uses native).
   --shell-network  Allow shell network access (explicit opt-in for either backend).
+  --web-search URL  Enable web_search through a SearXNG JSON endpoint. Ask-first
+                   and workspace modes prompt for each query.
   --permission-mode MODE  ask-first, workspace, or unrestricted (network enabled).
   --approve-all-shell  Explicitly approve all shell commands this session;
                    use only with --allow-shell when individual prompts are unavailable.
@@ -342,6 +368,7 @@ Remote sessions:
 Environment:
   OPENAI_BASE_URL  Required when --provider openai-compatible
   CHIVGENT_HOME    Session, auth, trust and extension directory (default: ~/.chivgent)
+  CHIVGENT_WEB_SEARCH_TOKEN  Bearer token for --web-search; never put it in argv
 `;
 }
 

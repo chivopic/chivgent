@@ -8,7 +8,7 @@ import type { LLMClient } from "./llm.js";
 import type { Message } from "./messages.js";
 import type { AppliedCompaction } from "./context/context-manager.js";
 import type { UsageTotal } from "./providers/usage.js";
-import { MODERN_SHELL_SYSTEM_PROMPT, modernPermissionPrompt, SHELL_SYSTEM_PROMPT, SYSTEM_PROMPT, WRITE_SYSTEM_PROMPT } from "./prompts.js";
+import { MODERN_SHELL_SYSTEM_PROMPT, modernPermissionPrompt, SHELL_SYSTEM_PROMPT, SYSTEM_PROMPT, WEB_SEARCH_SYSTEM_PROMPT, WRITE_SYSTEM_PROMPT } from "./prompts.js";
 import { AgentSession } from "./session.js";
 import { ShellApprovalGate } from "./shell/approval.js";
 import { PermissionWorkspace, type PermissionPolicy, type ShellScope } from "./permissions.js";
@@ -20,8 +20,10 @@ import { EditFileTool } from "./tools/edit-file.js";
 import { ListFilesTool } from "./tools/list-files.js";
 import { ReadFileTool } from "./tools/read-file.js";
 import { SearchTextTool } from "./tools/search-text.js";
+import { WebSearchTool } from "./tools/web-search.js";
 import { WriteFileTool } from "./tools/write-file.js";
 import { UpdatePlanTool } from "./tools/update-plan.js";
+import { SearxngBackend } from "./websearch/backend.js";
 import { LocalWorkspace } from "./workspace.js";
 
 interface LocalSessionConfig {
@@ -51,8 +53,15 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
   const modernPolicy = config.permissionPolicy !== undefined;
   const allowWrites = modernPolicy || options.allowWrites;
   const allowShell = modernPolicy || options.allowShell;
+  const webSearchBackend = options.webSearch === undefined
+    ? undefined
+    : new SearxngBackend({
+        baseURL: options.webSearch.url,
+        ...(options.webSearch.token === undefined ? {} : { token: options.webSearch.token }),
+      });
   if (allowWrites) prompt.push(WRITE_SYSTEM_PROMPT);
   if (allowShell) prompt.push(modernPolicy ? MODERN_SHELL_SYSTEM_PROMPT : SHELL_SYSTEM_PROMPT);
+  if (webSearchBackend !== undefined) prompt.push(WEB_SEARCH_SYSTEM_PROMPT);
   if (modernPolicy) prompt.push(modernPermissionPrompt());
   prompt.push(...(extensions?.systemPromptContributions ?? []));
 
@@ -75,6 +84,13 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
     tools: [
       new ListFilesTool(),
       new SearchTextTool(),
+      ...(webSearchBackend === undefined ? [] : [new WebSearchTool({
+        backend: webSearchBackend,
+        ...(modernPolicy ? {
+          authorize: (query: string, signal?: AbortSignal) =>
+            config.permissionPolicy!.authorizeWebSearch(query, webSearchBackend.name, signal),
+        } : {}),
+      })]),
       new ReadFileTool(),
       new UpdatePlanTool(),
       ...(allowWrites ? [new WriteFileTool(), new EditFileTool(), new ApplyPatchTool()] : []),

@@ -16,7 +16,7 @@ import { terminalWidth } from "./tui/live.js";
 import { formatDiffPage, mostRecentSuccessfulPatch } from "./tui/diff.js";
 import type { LiveRegion } from "./tui/live.js";
 import type { ShellApprovalGate } from "./shell/approval.js";
-import { describePermissionMode, parsePermissionMode, type PermissionMode, type PermissionPolicy } from "./permissions.js";
+import { describePermissionMode, parsePermissionMode, WEB_SEARCH_APPROVAL_PREFIX, type PermissionMode, type PermissionPolicy } from "./permissions.js";
 import { HeuristicTokenEstimator } from "./context/token-estimator.js";
 
 export const REPL_PROMPT = "› ";
@@ -57,6 +57,8 @@ export interface SlashCommandContext {
   readonly compactionEnabled?: boolean;
   readonly providerName?: string;
   readonly modelName?: string;
+  /** Configured search provider, absent when web_search is not registered. */
+  readonly webSearch?: { readonly provider: string };
   readonly permissions?: readonly string[];
   readonly permissionPolicy?: PermissionPolicy;
   readonly inlineComposer?: boolean;
@@ -407,6 +409,9 @@ function describeStatus(context: SlashCommandContext): string {
     `session:   ${context.session.id}${context.session.title ? ` · ${context.session.title}` : ""}`,
     `plan:      ${context.session.planMode ? "on (writes and Shell blocked for this session)" : "off"}`,
     ...(context.permissionPolicy === undefined ? [] : [`permissions: ${context.permissionPolicy.mode} (${describePermissionMode(context.permissionPolicy.mode)})`]),
+    ...(context.webSearch === undefined ? [] : [
+      `web search: ${context.webSearch.provider}${context.permissionPolicy === undefined || context.permissionPolicy.mode === "unrestricted" ? "" : " (each query asks for approval)"}`,
+    ]),
     ...(context.permissionPolicy === undefined ? [
       `file write grant: ${context.permissions === undefined ? "unavailable" : context.permissions.includes("file-write") ? "enabled" : "disabled"}`,
       `Shell grant:      ${context.permissions === undefined ? "unavailable" : context.permissions.includes("shell") ? "enabled" : "disabled"}`,
@@ -439,6 +444,8 @@ export interface ReplOptions {
   readonly compactionEnabled?: boolean;
   readonly providerName?: string;
   readonly modelName?: string;
+  /** Configured search provider, absent when web_search is not registered. */
+  readonly webSearch?: { readonly provider: string };
   readonly permissions?: readonly string[];
   readonly permissionPolicy?: PermissionPolicy;
   readonly sessionFileForSession?: SlashCommandContext["sessionFileForSession"];
@@ -714,8 +721,9 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       tuiInput?.setBusy(false);
       try {
         const width = terminalWidth({ columns: (options.output as typeof options.output & { columns?: number }).columns });
-        write(approvalPreview(command, width, context ?? "Shell command"));
-        if (!commandReviewable(command, width)) {
+        const wraps = context?.startsWith(WEB_SEARCH_APPROVAL_PREFIX) === true;
+        write(approvalPreview(command, width, context ?? "Shell command", wraps ? { wrap: true } : {}));
+        if (!wraps && !commandReviewable(command, width)) {
           write("  Denied: command cannot be fully reviewed at this width. Ask for a shorter command.\n");
           return false;
         }
@@ -1053,6 +1061,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         ...(options.compactionEnabled === undefined ? {} : { compactionEnabled: options.compactionEnabled }),
         ...(options.providerName === undefined ? {} : { providerName: options.providerName }),
         ...(options.modelName === undefined ? {} : { modelName: options.modelName }),
+        ...(options.webSearch === undefined ? {} : { webSearch: options.webSearch }),
         ...(options.permissions === undefined ? {} : { permissions: options.permissions }),
         ...(options.permissionPolicy === undefined ? {} : { permissionPolicy: options.permissionPolicy }),
         ...(options.inlineComposer === true ? { inlineComposer: true } : {}),

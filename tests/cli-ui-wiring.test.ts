@@ -133,6 +133,19 @@ describe("CLI terminal UI wiring", () => {
     expect(harness.createLocalSession.mock.calls[0]?.[0].permissionPolicy).toMatchObject({ mode: "workspace" });
   });
 
+  it("passes an explicitly configured search provider to the REPL", async () => {
+    expect(await main([
+      "--simple", "--no-session", "--no-extensions",
+      "--web-search", "https://search.example",
+    ])).toBe(0);
+    expect(harness.runRepl.mock.calls[0]?.[0]).toMatchObject({
+      webSearch: { provider: "searxng (search.example)" },
+    });
+    expect(harness.createLocalSession.mock.calls[0]?.[0].options).toMatchObject({
+      webSearch: { url: "https://search.example" },
+    });
+  });
+
   it("leaves the rich interface active under NO_COLOR without passing ANSI color", async () => {
     harness.process.env.NO_COLOR = "1";
 

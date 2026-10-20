@@ -5,6 +5,8 @@ import { createLiveRegion } from "../src/tui/live.js";
 import { BashTool } from "../src/tools/bash.js";
 import { ShellApprovalGate } from "../src/shell/approval.js";
 import { LocalWorkspace } from "../src/workspace.js";
+import { PermissionPolicy } from "../src/permissions.js";
+import { WebSearchTool } from "../src/tools/web-search.js";
 import { terminalHarness } from "./helpers/terminal.js";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -122,6 +124,65 @@ describe("TUI approval modal terminal integration", () => {
       await vi.waitFor(() => expect(screen.bytes()).toContain("Completed"));
       expect(executed).toEqual([]);
       expect(screen.bytes()).not.toContain("\x1b[2J");
+      screen.input.write("\x04");
+      await repl;
+    } finally {
+      screen.input.end();
+      region.stop();
+      await repl;
+      screen.dispose();
+    }
+  });
+
+  it("wraps a full web search query and approves it without truncation", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const screen = terminalHarness(80, 24);
+    const gate = new ShellApprovalGate();
+    const queries: string[] = [];
+    const policy = new PermissionPolicy("ask-first");
+    policy.setApproval((action, signal, context) => gate.approve(action, signal, context));
+    const query = "node twenty four release notes compatibility changes for current tooling";
+    const tool = new WebSearchTool({
+      backend: {
+        name: "fake (test)",
+        async search(request) {
+          queries.push(request.query);
+          return { provider: "fake (test)", results: [] };
+        },
+      },
+      authorize: (value, signal) => policy.authorizeWebSearch(value, "fake (test)", signal),
+    });
+    let call = 0;
+    const session = new AgentSession({ agent: {
+      systemPrompt: "test", tools: [tool], maxTurns: 3,
+      workspace: new LocalWorkspace(process.cwd()),
+      llm: { async complete() {
+        call += 1;
+        return { message: call === 1
+          ? { role: "assistant" as const, content: "", toolCalls: [{ id: "search", name: "web_search", arguments: { query } }] }
+          : { role: "assistant" as const, content: "Done.", toolCalls: [] } };
+      } },
+    } });
+    const region = createLiveRegion({
+      stream: screen.output,
+      width: () => screen.output.columns,
+      height: () => screen.output.rows,
+    });
+    session.subscribe(region.listener);
+    const repl = runRepl({
+      session, ...screen, stderr: screen.output, tui: true,
+      shellApproval: gate, permissionPolicy: policy, liveRegion: region,
+    });
+    try {
+      screen.input.write("search for it\r");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("Approve once?"));
+      const visible = screen.visible().join(" ");
+      expect(visible).toContain("Web search via fake (test)");
+      for (const word of query.split(" ")) expect(visible).toContain(word);
+      expect(screen.bytes()).not.toContain("cannot be fully reviewed");
+      screen.input.write("y");
+      await vi.waitFor(() => expect(queries).toEqual([query]));
+      await vi.waitFor(() => expect(screen.bytes()).toContain("Completed"));
       screen.input.write("\x04");
       await repl;
     } finally {

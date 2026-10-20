@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { parseCliArgs } from "../src/cli-options.js";
 import { createLocalSession } from "../src/cli-runtime.js";
-import { WRITE_SYSTEM_PROMPT } from "../src/prompts.js";
-import { assistant, FakeLLMClient } from "./fakes.js";
 import { PermissionPolicy } from "../src/permissions.js";
+import { WEB_SEARCH_SYSTEM_PROMPT, WRITE_SYSTEM_PROMPT } from "../src/prompts.js";
+import { assistant, FakeLLMClient } from "./fakes.js";
 import { ShellApprovalGate } from "../src/shell/approval.js";
 
 describe("local CLI session setup", () => {
@@ -29,6 +29,46 @@ describe("local CLI session setup", () => {
     ]);
   });
 
+  it("registers web_search only with an explicitly configured backend", () => {
+    const withoutSearch = createLocalSession({
+      options: parseCliArgs([], {}),
+      cwd: "/workspace",
+      llm: new FakeLLMClient([]),
+      restored: { resumed: false },
+    });
+    expect(withoutSearch.toolNames).not.toContain("web_search");
+
+    const withSearch = createLocalSession({
+      options: parseCliArgs(["--web-search", "https://search.example"], {}),
+      cwd: "/workspace",
+      llm: new FakeLLMClient([]),
+      restored: { resumed: false },
+    });
+    expect(withSearch.toolNames).toContain("web_search");
+  });
+
+  it("adds web search instructions and denies without approval in ask-first mode", async () => {
+    const llm = new FakeLLMClient([
+      assistant("", [{ id: "s1", name: "web_search", arguments: { query: "internal notes" } }]),
+      assistant("Could not search."),
+    ]);
+    const session = createLocalSession({
+      options: parseCliArgs(["--web-search", "https://search.example"], {}),
+      cwd: "/workspace",
+      llm,
+      permissionPolicy: new PermissionPolicy("ask-first", async () => false),
+      restored: { resumed: false },
+    });
+
+    await session.prompt("Search for the notes");
+    expect(llm.requests[0]?.systemPrompt).toContain(WEB_SEARCH_SYSTEM_PROMPT);
+    const toolResult = session.messages.find((message) => message.role === "tool");
+    expect(toolResult).toMatchObject({
+      isError: true,
+      content: expect.stringContaining("No request was sent"),
+    });
+  });
+
   it("passes the correct capability instructions to the model", async () => {
     const llm = new FakeLLMClient([assistant("Done")]);
     const session = createLocalSession({
@@ -42,10 +82,10 @@ describe("local CLI session setup", () => {
     expect(llm.requests[0]?.systemPrompt).toContain(WRITE_SYSTEM_PROMPT);
     expect(llm.requests[0]?.systemPrompt).not.toContain("You can also run shell commands");
   });
-  it("passes modern permission instructions without contradictory legacy flags", async () => {
+  it("combines modern shell and web search instructions without contradictory legacy flags", async () => {
     const llm = new FakeLLMClient([assistant("Done")]);
     const session = createLocalSession({
-      options: parseCliArgs(["--permission-mode", "workspace"], {}),
+      options: parseCliArgs(["--permission-mode", "workspace", "--web-search", "https://search.example"], {}),
       cwd: "/workspace",
       llm,
       permissionPolicy: new PermissionPolicy("workspace"),
@@ -56,6 +96,8 @@ describe("local CLI session setup", () => {
     const prompt = llm.requests[0]?.systemPrompt ?? "";
     expect(prompt).not.toContain("--allow-writes");
     expect(prompt).not.toContain("--shell-network");
+    expect(prompt).toContain(WEB_SEARCH_SYSTEM_PROMPT);
+    expect(prompt).toContain("shell commands, web search, and extension tools");
     expect(prompt).toContain('scope "network"');
     expect(prompt).toContain('scope "host"');
   });

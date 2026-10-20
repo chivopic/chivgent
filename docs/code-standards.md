@@ -69,6 +69,7 @@ Update the owning page in the same PR when a change alters a documented responsi
 | --- | --- |
 | How a turn is wired | [docs/architecture.md](architecture.md) |
 | Permissions, sandbox, protected paths | [docs/shell-sandbox.md](shell-sandbox.md) |
+| Web search backend, consent, privacy, bounds | [docs/web-search.md](web-search.md) |
 | `AGENTS.md` discovery and compaction | [docs/scoped-agents-md.md](scoped-agents-md.md) |
 | Subscription sign-in | [docs/subscription-oauth.md](subscription-oauth.md) |
 | Patch application | [docs/apply-patch.md](apply-patch.md) |

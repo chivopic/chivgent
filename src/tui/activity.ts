@@ -1,11 +1,12 @@
 import type { ToolCall, ToolResultMessage } from "../messages.js";
 import { parsePatch } from "../patch/parse.js";
 import { callTarget } from "../tools/target.js";
-import { fitLine, terminalText } from "./text.js";
+import { displayWidth, fitLine, terminalText } from "./text.js";
 
 const MAX_DIFF_LINES = 6;
 const MAX_DIFF_SNIPPET_LINES = 4;
 const MAX_DETAIL_LINE = 120;
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 function short(value: string, width: number): string {
   return fitLine(terminalText(value), Math.max(1, width));
@@ -26,6 +27,7 @@ function isReadTool(name: string): boolean {
 function displayName(name: string): string {
   const names: Record<string, string> = {
     read_file: "Read", list_files: "Listed", search_text: "Searched",
+    web_search: "Web search",
     edit_file: "Edited", write_file: "Wrote", apply_patch: "Patched",
     bash: "Shell",
   };
@@ -146,19 +148,58 @@ export function toolTranscript(
 }
 
 /** Display Shell approvals as bounded, control-safe content instead of raw commands. */
-export function approvalPreview(command: string, columns: number, context = "Shell command"): string {
+export function approvalPreview(
+  command: string,
+  columns: number,
+  context = "Shell command",
+  options: { readonly wrap?: boolean } = {},
+): string {
   const width = Math.max(12, columns - 1);
-  const visibleLines = terminalText(command).split("\n");
-  const truncated = visibleLines.length > 8;
+  const visibleLines = options.wrap === true
+    ? wrapText(terminalText(command), Math.max(1, width - 4))
+    : terminalText(command).split("\n");
+  const truncated = options.wrap !== true && visibleLines.length > 8;
   const lines = [
     `  ${context}`,
     "  ──────────────────────────────────────────",
-    ...visibleLines.slice(0, 8).map(line => `  │ ${line}`),
+    ...visibleLines.slice(0, options.wrap === true ? visibleLines.length : 8).map(line => `  │ ${line}`),
     ...(truncated ? [`  │ … ${visibleLines.length - 8} more lines hidden`] : []),
     "  ──────────────────────────────────────────",
     "  Approve once? [y/N]  ·  Enter deny  ·  Ctrl+C cancel",
   ];
   return `\n${lines.map(line => short(line, width)).join("\n")}\n`;
+}
+
+/** Word-wraps a single-line value so an approval shows all of it. */
+function wrapText(text: string, width: number): readonly string[] {
+  const words = terminalText(text).replace(/\n/g, " ").trim().split(" ").filter(word => word.length > 0);
+  const lines: string[] = [];
+  let line = "";
+  for (const word of words) {
+    if (line.length === 0) {
+      line = word;
+    } else if (displayWidth(line) + 1 + displayWidth(word) <= width) {
+      line += ` ${word}`;
+    } else {
+      lines.push(line);
+      line = word;
+    }
+    while (displayWidth(line) > width) {
+      let prefix = "";
+      let used = 0;
+      for (const { segment } of graphemes.segment(line)) {
+        const size = displayWidth(segment);
+        if (used + size > width) break;
+        prefix += segment;
+        used += size;
+      }
+      if (prefix.length === 0) break;
+      lines.push(prefix);
+      line = line.slice(prefix.length);
+    }
+  }
+  if (line.length > 0) lines.push(line);
+  return lines.length === 0 ? [""] : lines;
 }
 
 /**
