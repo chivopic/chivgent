@@ -77,6 +77,9 @@ that only decides *when* to compact. The reserve budget absorbs the error.
 A single tool result larger than the whole budget cannot be compacted away;
 bound tool output instead. Compaction is disabled with `--no-compaction`.
 
+The eval runner owns the opt-in wiring for this path; task configuration and
+report behavior are documented in [Evals](evals.md).
+
 ### Runtime events
 
 The Agent Loop reports what it is doing through a typed event stream instead of

@@ -12,7 +12,7 @@ import { MissingCapabilityError, runTask } from "../src/evals/runner.js";
 import { formatFailures, formatTable, toJsonReport } from "../src/evals/report.js";
 import { assistant, FakeLLMClient } from "./fakes.js";
 import { createLocalShellOperations } from "../src/shell/local.js";
-import type { LLMResponse } from "../src/llm.js";
+import type { LLMClient, LLMRequest, LLMResponse } from "../src/llm.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -83,6 +83,23 @@ describe("task parsing", () => {
 
     expect(task).toMatchObject({ name: "demo", attempts: 5, maxTurns: 12 });
     expect(task.capabilities).toEqual([]);
+  });
+
+  it("accepts an opt-in context window while leaving the default unset", () => {
+    const ordinary = parseTask(valid, "/tasks/demo", "/tasks/demo/fixture");
+    const longRun = parseTask(
+      { ...valid, contextWindow: 1_200 },
+      "/tasks/long-run",
+      "/tasks/long-run/fixture",
+    );
+
+    expect(ordinary.contextWindow).toBeUndefined();
+    expect(longRun.contextWindow).toBe(1_200);
+  });
+
+  it("rejects an invalid opt-in context window", () => {
+    expect(() => parseTask({ ...valid, contextWindow: 0 }, "/d", "/f")).toThrow(/contextWindow/);
+    expect(() => parseTask({ ...valid, contextWindow: 999 }, "/d", "/f")).toThrow(/at least 1000/);
   });
 
   it("rejects a task with no graders", () => {
@@ -402,6 +419,92 @@ describe("runner", () => {
     expect(result.attempts.map((attempt) => attempt.passed)).toEqual([true, false, true]);
   });
 
+  it("uses repeated real compaction only for opt-in tasks and grades facts in the actual request", async () => {
+    const root = await temporaryDirectory();
+    const fact = "ARCHIVE_KEY=violet-731";
+    const noise = Array.from(
+      { length: 45 },
+      (_, index) => `line-${index} ${"noise ".repeat(12)}`,
+    ).join("\n");
+    const directory = await writeTask(root, "long-run", {
+      name: "long-run",
+      prompt: "Read fact.txt first, then read noise.txt repeatedly. What is the archive key?",
+      attempts: 1,
+      maxTurns: 14,
+      contextWindow: 3_000,
+      graders: [{ type: "answer-matches", pattern: "ARCHIVE_KEY=violet-731" }],
+    }, { "fact.txt": fact, "noise.txt": noise });
+    const task = await loadTask(directory);
+
+    const run = async (preserveFact: boolean, selectedTask = task) => {
+      let ordinaryCalls = 0;
+      let summaryCalls = 0;
+      let summarySawFact = false;
+      let finalRequestSawFact = false;
+      let finalRequestSawRawFactResult = false;
+      const client: LLMClient = {
+        async complete(request: LLMRequest): Promise<LLMResponse> {
+          const visible = JSON.stringify(request.messages);
+          if (request.systemPrompt.includes("You are compacting an engineering conversation")) {
+            summaryCalls += 1;
+            summarySawFact ||= visible.includes(fact);
+            const summary = preserveFact && visible.includes(fact)
+              ? fact
+              : "Prior file reading completed.";
+            return assistant(JSON.stringify({ summary, decisions: [], pendingTasks: [] }));
+          }
+          const call = ordinaryCalls;
+          ordinaryCalls += 1;
+          if (call === 0) {
+            return assistant("", [
+              { id: "fact", name: "read_file", arguments: { path: "fact.txt" } },
+            ]);
+          }
+          if (call <= 6) {
+            return assistant("", [
+              { id: `noise-${call}`, name: "read_file", arguments: { path: "noise.txt" } },
+            ]);
+          }
+          finalRequestSawFact = visible.includes(fact);
+          finalRequestSawRawFactResult = visible.includes("File: fact.txt");
+          return assistant(visible.includes(fact) ? fact : "The archive key is unknown.");
+        },
+      };
+
+      const result = await runTask(selectedTask, { ...baseOptions, createClient: () => client });
+      return { result, summaryCalls, summarySawFact, finalRequestSawFact, finalRequestSawRawFactResult };
+    };
+
+    const good = await run(true);
+    expect(
+      good.result.attempts[0]?.status,
+      good.result.attempts[0]?.failures.join("; "),
+    ).toBe("completed");
+    expect(good.result.attempts[0]?.compactionCount).toBeGreaterThanOrEqual(2);
+    expect(good.summaryCalls).toBeGreaterThanOrEqual(2);
+    expect(good.summarySawFact).toBe(true);
+    expect(good.finalRequestSawFact).toBe(true);
+    expect(good.finalRequestSawRawFactResult).toBe(false);
+    expect(good.result.passed).toBe(1);
+
+    const ordinary = await run(true, { ...task, contextWindow: undefined });
+    expect(ordinary.result.attempts[0]?.status).toBe("completed");
+    expect(ordinary.result.passed).toBe(1);
+    expect(ordinary.result.attempts[0]?.compactionCount).toBeUndefined();
+    expect(ordinary.summaryCalls).toBe(0);
+
+    const bad = await run(false);
+    expect(bad.result.attempts[0]?.status).toBe("completed");
+    expect(bad.result.attempts[0]?.compactionCount).toBeGreaterThanOrEqual(2);
+    expect(bad.summaryCalls).toBeGreaterThanOrEqual(2);
+    expect(bad.summarySawFact).toBe(true);
+    expect(bad.finalRequestSawFact).toBe(false);
+    expect(bad.finalRequestSawRawFactResult).toBe(false);
+    expect(bad.result.passed).toBe(0);
+    expect(bad.result.attempts[0]?.failures.join(" ")).toContain("ARCHIVE_KEY=violet-731");
+    expect(bad.result.attempts[0]?.failures.join(" ")).not.toMatch(/context budget/i);
+  });
+
   it("records every tool call in order, with whether it succeeded", async () => {
     const root = await temporaryDirectory();
     const directory = await writeTask(root, "trace", {
@@ -663,7 +766,7 @@ describe("report", () => {
       total: 2,
       passed: 1,
       attempts: [
-        { attempt: 1, passed: true, status: "completed" as const, turnCount: 2, durationMs: 1000, toolsUsed: ["read_file"], toolCalls: [{ name: "read_file", ok: true }], failures: [] },
+        { attempt: 1, passed: true, status: "completed" as const, turnCount: 2, durationMs: 1000, compactionCount: 2, toolsUsed: ["read_file"], toolCalls: [{ name: "read_file", ok: true }], failures: [] },
         { attempt: 2, passed: false, status: "completed" as const, turnCount: 4, durationMs: 3000, toolsUsed: ["read_file"], toolCalls: [{ name: "read_file", ok: false }, { name: "read_file", ok: true }], failures: ["used-tool name=\"edit_file\" — never called edit_file"] },
       ],
     },
@@ -707,6 +810,8 @@ describe("report", () => {
     expect(json.schemaVersion).toBe(2);
     expect(json.tasks[0].passRate).toBe(0.5);
     expect(json.tasks[0].attempts).toHaveLength(2);
+    expect(json.tasks[0].attempts[0].compactionCount).toBe(2);
+    expect(json.tasks[0].attempts[1]).not.toHaveProperty("compactionCount");
     expect(json.overall).toEqual({ passed: 1, total: 2, totalTokens: null, missingUsageAttempts: 2 });
   });
 });

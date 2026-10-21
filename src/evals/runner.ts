@@ -9,6 +9,8 @@ import { toolsFor } from "./tools.js";
 import type { ShellOperations } from "../shell/types.js";
 import { createAttemptWorkspace } from "./fixture.js";
 import { ScopedProjectInstructions } from "../context/project-instructions.js";
+import { ContextManager } from "../context/context-manager.js";
+import { Compactor } from "../context/compaction.js";
 import { createGrader, describeGrader, type AttemptFacts } from "./graders.js";
 import type { Capability, Task } from "./task.js";
 
@@ -35,6 +37,8 @@ export interface AttemptResult {
   readonly status: AttemptFacts["status"];
   readonly turnCount: number;
   readonly durationMs: number;
+  /** Successful ContextManager compactions; omitted for ordinary tasks. */
+  readonly compactionCount?: number;
   readonly toolsUsed: readonly string[];
   /**
    * Every call in order, with whether it succeeded.
@@ -102,12 +106,14 @@ async function runAttempt(
   const workspace = await createAttemptWorkspace(task.fixtureDirectory);
   const events: AgentEvent[] = [];
   const startedAt = Date.now();
+  let compactionCount = 0;
 
   try {
+    const llm = options.createClient();
     const agent: Agent = new AgentClass({
       systemPrompt: options.systemPrompt,
       maxTurns: task.maxTurns,
-      llm: options.createClient(),
+      llm,
       tools: toolsFor(task.capabilities, workspace.path, {
         ...(options.shellOperations === undefined ? {} : { shellOperations: options.shellOperations }),
       }),
@@ -116,6 +122,13 @@ async function runAttempt(
       }),
       streaming: false,
       projectInstructions: new ScopedProjectInstructions(workspace.path),
+      ...(task.contextWindow === undefined ? {} : {
+        contextManager: new ContextManager({
+          contextWindow: task.contextWindow,
+          compactor: new Compactor(llm),
+          onCompaction: () => { compactionCount += 1; },
+        }),
+      }),
       onEvent: (event) => events.push(event),
     });
 
@@ -196,6 +209,7 @@ async function runAttempt(
       status,
       turnCount,
       durationMs: Date.now() - startedAt,
+      ...(task.contextWindow === undefined ? {} : { compactionCount }),
       ...(usage === undefined ? {} : { usage }),
       toolsUsed: [...new Set(calls.map((call) => call.name))],
       toolCalls: calls,

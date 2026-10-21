@@ -26,6 +26,8 @@ export interface Task {
   readonly capabilities: readonly Capability[];
   readonly attempts: number;
   readonly maxTurns: number;
+  /** Enables the production ContextManager path for this task only. */
+  readonly contextWindow?: number;
   readonly graders: readonly GraderSpec[];
   /** Directory copied into a fresh workspace for every attempt. */
   readonly fixtureDirectory: string;
@@ -142,6 +144,19 @@ export function parseTask(
 
   const capabilities = readCapabilities(value.capabilities, name);
   assertGradersCanFire(name, capabilities, graders);
+  const contextWindow =
+    value.contextWindow === undefined
+      ? undefined
+      : readPositiveInteger(
+          value.contextWindow,
+          0,
+          Number.MAX_SAFE_INTEGER,
+          "contextWindow",
+          name,
+        );
+  if (contextWindow !== undefined && contextWindow < 1_000) {
+    throw new TaskError(`${name}: contextWindow must be an integer of at least 1000.`);
+  }
 
   return {
     name,
@@ -161,6 +176,7 @@ export function parseTask(
       "maxTurns",
       name,
     ),
+    ...(contextWindow === undefined ? {} : { contextWindow }),
     graders,
     fixtureDirectory,
     directory,

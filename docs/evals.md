@@ -46,6 +46,15 @@ deterministic.
 A task is a directory under `evals/`: a `task.json` and a `fixture/` tree copied
 into a fresh temporary workspace for every attempt.
 
+Tasks can opt in to the same automatic context compaction used by local
+sessions by setting `contextWindow` in `task.json`, for example
+`"contextWindow": 6000`. The eval runner then uses the task's Provider client
+for both normal requests and summaries. Tasks without this field continue to
+run without a `ContextManager`, so existing task results remain comparable.
+Opt-in compaction attempts include `compactionCount` in their JSON report; the
+count is omitted for other tasks. Keep long-session probes outside the default
+suite unless they are deliberately added as benchmark tasks.
+
 ```jsonc
 {
   "prompt": "Rename the function sayHi to greet everywhere, including callers.",
