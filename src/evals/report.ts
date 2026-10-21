@@ -140,6 +140,9 @@ export function toJsonReport(
         status: attempt.status,
         turnCount: attempt.turnCount,
         durationMs: attempt.durationMs,
+        ...(attempt.compactionCount === undefined
+          ? {}
+          : { compactionCount: attempt.compactionCount }),
         toolsUsed: attempt.toolsUsed,
         toolCalls: attempt.toolCalls,
         ...(attempt.usage === undefined ? {} : { usage: attempt.usage }),
