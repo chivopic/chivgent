@@ -853,6 +853,48 @@ describe("Compactor", () => {
       .rejects.toThrow(/pending/i);
   });
 
+  it("replaces only explicitly superseded decisions by exact match and preserves later decisions", async () => {
+    const previous: CompactionState = {
+      summary: "Prior API direction",
+      readFiles: [],
+      modifiedFiles: [],
+      decisions: ["Use API v1", "Keep the public API stable", "Use API v1 with cache"],
+      pendingTasks: [],
+    };
+    const replacement = new Compactor(summarisingClient(
+      '{"summary":"API v2 selected","decisions":["Use API v2"],"supersededDecisions":["Use API v1","Use API v1 "],"pendingTasks":[]}',
+    ));
+
+    const first = await replacement.compact([user("The user explicitly replaced the API version")], undefined, previous);
+    expect(first.state.decisions).toEqual([
+      "Keep the public API stable",
+      "Use API v1 with cache",
+      "Use API v2",
+    ]);
+
+    const noReplacementListed = new Compactor(summarisingClient(
+      '{"summary":"More work","decisions":[],"pendingTasks":[]}',
+    ));
+    const second = await noReplacementListed.compact([user("Continue")], undefined, first.state);
+    expect(second.state.decisions).toEqual(first.state.decisions);
+
+    const unmatched = new Compactor(summarisingClient(
+      '{"summary":"Related wording","decisions":[],"supersededDecisions":["use api v1"],"pendingTasks":[]}',
+    ));
+    const unmatchedState = await unmatched.compact([user("A related phrase")], undefined, previous);
+    expect(unmatchedState.state.decisions).toEqual(previous.decisions);
+
+    const readded = new Compactor(summarisingClient(
+      '{"summary":"The same choice was made again","decisions":["Use API v1"],"supersededDecisions":["Use API v1"],"pendingTasks":[]}',
+    ));
+    const readdedState = await readded.compact([user("The user chose API v1 again")], undefined, previous);
+    expect(readdedState.state.decisions).toEqual([
+      "Keep the public API stable",
+      "Use API v1 with cache",
+      "Use API v1",
+    ]);
+  });
+
   it("retains verified file facts across repeated compactions", async () => {
     const compactor = new Compactor(summarisingClient('{"summary":"new summary"}'));
     const previous: CompactionState = {
@@ -877,6 +919,33 @@ describe("parseSummary", () => {
     expect(
       parseSummary('{"summary":"s","decisions":["d"],"pendingTasks":["p"]}'),
     ).toEqual({ summary: "s", decisions: ["d"], pendingTasks: ["p"] });
+  });
+
+  it("parses explicit superseded decision strings and ignores non-strings", () => {
+    expect(parseSummary(
+      '{"summary":"s","decisions":["new"],"supersededDecisions":["old",4,null],"pendingTasks":[]}',
+    )).toEqual({
+      summary: "s",
+      decisions: ["new"],
+      supersededDecisions: ["old"],
+      pendingTasks: [],
+    });
+  });
+
+  it("bounds superseded-decision evidence to 32 entries", () => {
+    const decisions = Array.from({ length: 40 }, (_, index) => `decision-${index}`);
+    const parsed = parseSummary(JSON.stringify({ summary: "s", supersededDecisions: decisions }));
+
+    expect(parsed.supersededDecisions).toEqual(decisions.slice(0, 32));
+  });
+
+  it("preserves the 32-entry decision parse boundary", () => {
+    const decisions = Array.from({ length: 40 }, (_, index) => `decision-${index}`);
+    const supersededDecisions = Array.from({ length: 40 }, (_, index) => `old-${index}`);
+    const parsed = parseSummary(JSON.stringify({ summary: "s", decisions, supersededDecisions }));
+
+    expect(parsed.decisions).toEqual(decisions.slice(0, 32));
+    expect(parsed.supersededDecisions).toEqual(supersededDecisions.slice(0, 32));
   });
 
   it("tolerates prose around the JSON", () => {
@@ -989,6 +1058,58 @@ describe("Agent with a ContextManager", () => {
     await agent.run("please read a.ts");
 
     expect(llm.requests[1]).toHaveProperty("continuation");
+  });
+
+  it("sends only the replaced decision in the next request after real context compaction", async () => {
+    const oldDecision = "Use API v1";
+    const newDecision = "Use API v2";
+    const compactLlm = new FakeLLMClient([assistant(JSON.stringify({
+      summary: "The user explicitly selected API v2.",
+      decisions: [newDecision],
+      supersededDecisions: [oldDecision],
+      pendingTasks: [],
+    }))]);
+    const llm = new FakeLLMClient([assistant("done")]);
+    const agent = new Agent({
+      systemPrompt: "test",
+      maxTurns: 2,
+      llm,
+      tools: [],
+      workspace,
+      streaming: false,
+      contextManager: new ContextManager({
+        contextWindow: 5_500,
+        reserveTokens: 750,
+        keepRecentTokens: 1_800,
+        compactor: new Compactor(compactLlm),
+      }),
+    });
+    const previous = {
+      state: {
+        summary: "Previous instructions",
+        readFiles: [],
+        modifiedFiles: [],
+        decisions: [oldDecision],
+        pendingTasks: [],
+      },
+      splitIndex: 0,
+    };
+
+    const result = await agent.run("Continue", {
+      history: [
+        user("The user now explicitly chooses API v2."),
+        ...Array.from({ length: 55 }, () => user("old transcript ".repeat(27))),
+      ],
+      compaction: previous,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(compactLlm.requests).toHaveLength(1);
+    expect(JSON.stringify(compactLlm.requests[0]?.messages)).toContain("The user now explicitly chooses API v2.");
+    expect(llm.requests).toHaveLength(1);
+    const requestMessages = JSON.stringify(llm.requests[0]?.messages);
+    expect(requestMessages).toContain(newDecision);
+    expect(requestMessages).not.toContain(oldDecision);
   });
 
   it("drops Provider continuation when a long tool run compacts its history", async () => {
