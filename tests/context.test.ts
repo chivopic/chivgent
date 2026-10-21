@@ -4,6 +4,7 @@ import { HeuristicTokenEstimator } from "../src/context/token-estimator.js";
 import {
   Compactor,
   CompactionResultError,
+  estimateCompactionRequestTokens,
   parseSummary,
   renderCompactionState,
   type CompactionState,
@@ -13,7 +14,7 @@ import {
   findSplitIndex,
   type AppliedCompaction,
 } from "../src/context/context-manager.js";
-import type { LLMClient, LLMResponse } from "../src/llm.js";
+import type { LLMClient, LLMRequest, LLMResponse } from "../src/llm.js";
 import type { AgentEvent } from "../src/events.js";
 import { Agent } from "../src/agent.js";
 import { ReadFileTool } from "../src/tools/read-file.js";
@@ -52,6 +53,22 @@ function summarisingClient(content: string): LLMClient & { calls: number } {
     },
   };
   return client;
+}
+
+function recordingSummarisingClient(
+  contents: readonly string[],
+): LLMClient & { requests: LLMRequest[] } {
+  const requests: LLMRequest[] = [];
+  return {
+    requests,
+    async complete(request) {
+      requests.push(request);
+      return {
+        message: assistant(contents[requests.length - 1] ?? "summary").message,
+        usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 },
+      };
+    },
+  };
 }
 
 describe("HeuristicTokenEstimator", () => {
@@ -123,11 +140,11 @@ describe("ContextManager", () => {
       },
     };
     const manager = new ContextManager({
-      contextWindow: 100, reserveTokens: 10, keepRecentTokens: 5,
+      contextWindow: 5_000, reserveTokens: 100, keepRecentTokens: 100,
       compactor: new Compactor(client),
     });
 
-    await expect(manager.build([user("old".repeat(120)), user("continue")]))
+    await expect(manager.build([user("old".repeat(1_000)), user("continue")], { fixedMessages: [user("f".repeat(18_000))] }))
       .rejects.toMatchObject({
         name: "ContextCompactionError",
         compactionUsage: usage,
@@ -145,11 +162,11 @@ describe("ContextManager", () => {
       },
     };
     const manager = new ContextManager({
-      contextWindow: 100, reserveTokens: 10, keepRecentTokens: 5,
+      contextWindow: 5_000, reserveTokens: 100, keepRecentTokens: 100,
       compactor: new Compactor(client),
     });
 
-    await expect(manager.build([user("old".repeat(120)), user("continue")], { signal: controller.signal }))
+    await expect(manager.build([user("old".repeat(1_000)), user("continue")], { fixedMessages: [user("f".repeat(18_000))], signal: controller.signal }))
       .rejects.toMatchObject({
         name: "ContextCompactionError",
         compactionUsage: usage,
@@ -168,10 +185,10 @@ describe("ContextManager", () => {
       async searchText() { return { matches: [], truncated: false, scannedFiles: 0, skippedFiles: 0 }; },
     };
     const agent = new Agent({
-      systemPrompt: "test", maxTurns: 2, llm, tools: [], workspace: agentWorkspace,
+      systemPrompt: "t".repeat(18_000), maxTurns: 2, llm, tools: [], workspace: agentWorkspace,
       onEvent: (event) => { if (event.type === "agent_end") endEvent = event; },
       contextManager: new ContextManager({
-        contextWindow: 1_000, reserveTokens: 100, keepRecentTokens: 100,
+        contextWindow: 5_000, reserveTokens: 100, keepRecentTokens: 100,
         compactor: new Compactor({
           async complete(): Promise<LLMResponse> {
             return { message: { role: "assistant", content: "  ", toolCalls: [] }, usage };
@@ -205,8 +222,10 @@ describe("ContextManager", () => {
       async searchText() { return { matches: [], truncated: false, scannedFiles: 0, skippedFiles: 0 }; },
     };
     let endEvent: Extract<AgentEvent, { type: "agent_end" }> | undefined;
+    // Keep the checkpoint/history summarizable; this fixed prompt makes the
+    // full request exceed budget so the pending-task overflow path runs.
     const agent = new Agent({
-      systemPrompt: "test", maxTurns: 2, llm: new FakeLLMClient([assistant("Must not run after overflow")]), tools: [], workspace: agentWorkspace,
+      systemPrompt: "s".repeat(1_400), maxTurns: 2, llm: new FakeLLMClient([assistant("Must not run after overflow")]), tools: [], workspace: agentWorkspace,
       onEvent: event => { if (event.type === "agent_end") endEvent = event; },
       contextManager: new ContextManager({
         contextWindow: 1_000, reserveTokens: 100, keepRecentTokens: 100,
@@ -217,7 +236,7 @@ describe("ContextManager", () => {
     });
 
     await expect(agent.run("continue", {
-      history: [user("old".repeat(5_000)), assistant("older answer").message],
+      history: [user("old".repeat(600)), assistant("older answer").message],
       compaction: previous,
     })).rejects.toThrow(/pending/i);
 
@@ -238,10 +257,10 @@ describe("ContextManager", () => {
       async searchText() { return { matches: [], truncated: false, scannedFiles: 0, skippedFiles: 0 }; },
     };
     const agent = new Agent({
-      systemPrompt: "test", maxTurns: 2, llm, tools: [], workspace: agentWorkspace,
+      systemPrompt: "t".repeat(18_000), maxTurns: 2, llm, tools: [], workspace: agentWorkspace,
       onEvent: (event) => { if (event.type === "agent_end") endEvent = event; },
       contextManager: new ContextManager({
-        contextWindow: 1_000, reserveTokens: 100, keepRecentTokens: 100,
+        contextWindow: 5_000, reserveTokens: 100, keepRecentTokens: 100,
         compactor: new Compactor({
           async complete(): Promise<LLMResponse> {
             return { message: { role: "assistant", content: "valid summary", toolCalls: [] }, usage };
@@ -288,10 +307,10 @@ describe("ContextManager", () => {
   it("keeps usage when a manual candidate exceeds the context budget", async () => {
     const usage = { inputTokens: 10, outputTokens: 2, totalTokens: 12 };
     const manager = new ContextManager({
-      contextWindow: 40, reserveTokens: 10,
+      contextWindow: 600, reserveTokens: 100,
       compactor: new Compactor({
         async complete(): Promise<LLMResponse> {
-          return { message: { role: "assistant", content: '{"summary":"' + "x".repeat(500) + '"}', toolCalls: [] }, usage };
+          return { message: { role: "assistant", content: '{"summary":"' + "x".repeat(2_000) + '"}', toolCalls: [] }, usage };
         },
       }),
     });
@@ -304,14 +323,153 @@ describe("ContextManager", () => {
       });
   });
 
+  it("refuses the first automatic summary request when its system prompt and rendered history exceed the budget", async () => {
+    const client = recordingSummarisingClient(['{"summary":"replacement"}']);
+    const manager = new ContextManager({
+      contextWindow: 2_700, reserveTokens: 500, keepRecentTokens: 1_105,
+      estimator: new HeuristicTokenEstimator(1),
+      compactor: new Compactor(client),
+    });
+    const messages: Message[] = [
+      user("o".repeat(1_600)),
+      user("m".repeat(200)),
+      user("r".repeat(1_000)),
+    ];
+
+    await expect(manager.build(messages)).rejects.toMatchObject({
+      name: "ContextBudgetError",
+      message: expect.stringMatching(/summary request.*exceeding.*context budget/i),
+    });
+    expect(client.requests).toHaveLength(0);
+  });
+
+  it("includes a previous summary in an automatic repeated-compaction request", async () => {
+    const client = recordingSummarisingClient(['{"summary":"replacement"}']);
+    const manager = new ContextManager({
+      contextWindow: 2_500, reserveTokens: 500, keepRecentTokens: 1_105,
+      estimator: new HeuristicTokenEstimator(1),
+      compactor: new Compactor(client),
+    });
+    const previous: AppliedCompaction = {
+      state: {
+        summary: "prior summary ".repeat(80),
+        readFiles: [], modifiedFiles: [], decisions: [], pendingTasks: [],
+      },
+      splitIndex: 1,
+    };
+
+    await expect(manager.build([
+      user("original history"), user("m".repeat(200)), user("r".repeat(1_000)),
+    ], { previous })).rejects.toMatchObject({ name: "ContextBudgetError" });
+    expect(client.requests).toHaveLength(0);
+  });
+
+  it("still compacts a near-window request when the actual summary request fits", async () => {
+    const client = recordingSummarisingClient(['{"summary":"earlier work"}']);
+    const manager = new ContextManager({
+      contextWindow: 2_600, reserveTokens: 500, keepRecentTokens: 1_105,
+      estimator: new HeuristicTokenEstimator(1),
+      compactor: new Compactor(client),
+    });
+
+    const context = await manager.build([
+      user("o".repeat(1_100)),
+      user("n".repeat(1_100)),
+    ]);
+
+    expect(context.compacted).toBe(true);
+    expect(client.requests).toHaveLength(1);
+    expect(client.requests[0]?.systemPrompt).toContain("compacting an engineering conversation");
+    expect(client.requests[0]?.messages[0]?.content).toContain(`user: ${"o".repeat(1_100)}`);
+  });
+
+  it("allows a summary request at the exact budget and refuses one estimated token over", async () => {
+    const estimator = new HeuristicTokenEstimator(1);
+    const exactInput = [user("old")];
+    const exactBudget = estimateCompactionRequestTokens(exactInput, estimator);
+    const allowedClient = recordingSummarisingClient(['{"summary":"done"}']);
+    const allowed = new ContextManager({
+      contextWindow: exactBudget + 1,
+      reserveTokens: 1,
+      estimator,
+      compactor: new Compactor(allowedClient),
+    });
+
+    await expect(allowed.compactHistory([...exactInput, user("current")])).resolves.toMatchObject({ compacted: true });
+    expect(allowedClient.requests).toHaveLength(1);
+
+    const overClient = recordingSummarisingClient(['{"summary":"must not be requested"}']);
+    const over = new ContextManager({
+      contextWindow: exactBudget + 1,
+      reserveTokens: 1,
+      estimator,
+      compactor: new Compactor(overClient),
+    });
+
+    await expect(over.compactHistory([user("old!"), user("current")])).rejects.toMatchObject({
+      name: "ContextBudgetError",
+      message: expect.stringMatching(/exceeding the available context budget/i),
+    });
+    expect(overClient.requests).toHaveLength(0);
+  });
+
+  it("checks each automatic summary pass before sending it", async () => {
+    const client = recordingSummarisingClient([
+      `{"summary":"${"s".repeat(650)}"}`,
+      '{"summary":"second pass"}',
+    ]);
+    const manager = new ContextManager({
+      contextWindow: 2_750, reserveTokens: 500, keepRecentTokens: 2_010,
+      estimator: new HeuristicTokenEstimator(1),
+      compactor: new Compactor(client),
+    });
+    const messages = Array.from({ length: 5 }, () => user("h".repeat(600)));
+
+    await expect(manager.build(messages)).rejects.toMatchObject({
+      name: "ContextBudgetError",
+      compactionUsage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 },
+      compactionUsageComplete: true,
+    });
+    expect(client.requests).toHaveLength(1);
+  });
+
+  it("checks manual first and repeated compaction requests against the same budget", async () => {
+    const client = recordingSummarisingClient([
+      '{"summary":"first"}',
+      '{"summary":"second"}',
+    ]);
+    const manager = new ContextManager({
+      contextWindow: 2_500, reserveTokens: 500, keepRecentTokens: 1_105,
+      estimator: new HeuristicTokenEstimator(1),
+      compactor: new Compactor(client),
+    });
+    const previous: AppliedCompaction = {
+      state: {
+        summary: "previous summary ".repeat(80),
+        readFiles: [], modifiedFiles: [], decisions: [], pendingTasks: [],
+      },
+      splitIndex: 1,
+    };
+
+    await expect(manager.compactHistory([
+      user("o".repeat(1_600)), user("m".repeat(200)), user("r".repeat(1_000)),
+    ])).rejects.toMatchObject({ name: "ContextBudgetError" });
+    expect(client.requests).toHaveLength(0);
+
+    await expect(manager.compactHistory([
+      user("original"), user("m".repeat(200)), user("r".repeat(1_000)),
+    ], previous)).rejects.toMatchObject({ name: "ContextBudgetError" });
+    expect(client.requests).toHaveLength(0);
+  });
+
   it("keeps the active prompt and complete recent tool pairs while compacting a long run", async () => {
     const client = summarisingClient('{"summary":"earlier tool work"}');
     const manager = new ContextManager({
-      contextWindow: 450, reserveTokens: 100, keepRecentTokens: 150,
+      contextWindow: 1_400, reserveTokens: 100, keepRecentTokens: 600,
       compactor: new Compactor(client),
     });
     const messages: Message[] = [user("Keep this instruction")];
-    for (let index = 0; index < 12; index += 1) {
+    for (let index = 0; index < 30; index += 1) {
       messages.push(assistantWithCall("read_file", `f${index}.ts`, `call-${index}`));
       messages.push({ role: "tool", toolCallId: `call-${index}`, toolName: "read_file", content: `result ${index} ${"x".repeat(120)}`, isError: false });
     }
@@ -329,7 +487,7 @@ describe("ContextManager", () => {
         expect(first.messages[index - 1]).toMatchObject({ role: "assistant" });
       }
     }
-    for (let index = 12; index < 24; index += 1) {
+    for (let index = 30; index < 45; index += 1) {
       messages.push(assistantWithCall("read_file", `f${index}.ts`, `call-${index}`));
       messages.push({ role: "tool", toolCallId: `call-${index}`, toolName: "read_file", content: `result ${index} ${"y".repeat(120)}`, isError: false });
     }
@@ -370,14 +528,16 @@ describe("ContextManager", () => {
       '{"summary":"did the thing","decisions":["keep paths relative"],"pendingTasks":["add tests"]}',
     );
     const manager = new ContextManager({
-      contextWindow: 2_000,
+      contextWindow: 1_150,
       reserveTokens: 500,
-      keepRecentTokens: 300,
+      keepRecentTokens: 250,
       compactor: new Compactor(client),
     });
-    const messages = [user(long), user(long), user("most recent")];
+    const messages = [user("x".repeat(1_300)), user("older"), user("m".repeat(950)), user("most recent")];
 
-    const context = await manager.build(messages);
+    // Fixed request context makes the full input exceed budget while leaving
+    // the actual summary request within the same limit.
+    const context = await manager.build(messages, { fixedMessages: [user("f".repeat(1_000))] });
 
     expect(context.compacted).toBe(true);
     expect(context.messages.length).toBeLessThan(messages.length);
@@ -390,18 +550,21 @@ describe("ContextManager", () => {
   it("reuses an existing summary instead of summarising again", async () => {
     const client = summarisingClient('{"summary":"first pass"}');
     const manager = new ContextManager({
-      contextWindow: 2_000,
+      contextWindow: 1_150,
       reserveTokens: 500,
-      keepRecentTokens: 300,
+      keepRecentTokens: 250,
       compactor: new Compactor(client),
     });
-    const messages = [user(long), user(long), user("recent")];
+    const messages = [user("x".repeat(1_300)), user("older"), user("m".repeat(950)), user("recent")];
+    // Reuse the same fixed request context so only the first build compacts.
+    const fixedMessages = [user("f".repeat(1_000))];
 
-    const first = await manager.build(messages);
+    const first = await manager.build(messages, { fixedMessages });
     expect(client.calls).toBe(1);
 
     const second = await manager.build([...messages, user("newer")], {
       ...(first.compaction === undefined ? {} : { previous: first.compaction }),
+      fixedMessages,
     });
 
     expect(client.calls).toBe(1);
@@ -473,7 +636,7 @@ describe("ContextManager", () => {
   it("shrinks the retained tail when fixed request context consumes the budget", async () => {
     const client = summarisingClient('{"summary":"old history"}');
     const manager = new ContextManager({
-      contextWindow: 1_000,
+      contextWindow: 1_100,
       reserveTokens: 100,
       keepRecentTokens: 400,
       compactor: new Compactor(client),
@@ -488,13 +651,13 @@ describe("ContextManager", () => {
     ];
 
     const context = await manager.build(messages, {
-      fixedMessages: [user("schema".repeat(400))],
+      fixedMessages: [user("schema".repeat(440))],
     });
 
     expect(context.compacted).toBe(true);
     expect(context.messages.at(-1)).toEqual(messages[4]);
     expect(context.messages.some((message) => message.content.includes("old history"))).toBe(true);
-    expect(context.estimatedTokens).toBeLessThanOrEqual(900);
+    expect(context.estimatedTokens).toBeLessThanOrEqual(1_000);
     expect(client.calls).toBe(2);
   });
 
@@ -519,7 +682,7 @@ describe("ContextManager", () => {
   it("carries an existing summary forward across an anchor-only cut", async () => {
     const client = summarisingClient('{"summary":"new summary"}');
     const manager = new ContextManager({
-      contextWindow: 130,
+      contextWindow: 480,
       reserveTokens: 10,
       keepRecentTokens: 35,
       compactor: new Compactor(client),
@@ -541,9 +704,11 @@ describe("ContextManager", () => {
       anchorIndex: 1,
     };
 
+    // The prior checkpoint summary fits the summary-call budget; fixed request
+    // context forces the anchor-only replacement path to run.
     const context = await manager.build(messages, {
       previous,
-      fixedMessages: [user("f".repeat(268))],
+      fixedMessages: [user("f".repeat(1_600))],
     });
 
     expect(context.compacted).toBe(true);
@@ -569,14 +734,14 @@ describe("ContextManager", () => {
       },
     } as unknown as Compactor;
     const manager = new ContextManager({
-      contextWindow: 1_000, reserveTokens: 100, keepRecentTokens: 400, compactor,
+      contextWindow: 1_100, reserveTokens: 100, keepRecentTokens: 400, compactor,
     });
     const messages: Message[] = [
       user("x".repeat(2_000)), user("a".repeat(700)), user("older"),
       { role: "assistant", content: "b".repeat(700), toolCalls: [] }, user("continue"),
     ];
 
-    await expect(manager.build(messages, { fixedMessages: [user("schema".repeat(400))] }))
+    await expect(manager.build(messages, { fixedMessages: [user("schema".repeat(440))] }))
       .rejects.toMatchObject({
         name: "ContextCompactionError",
         compactionUsage: { inputTokens: 20, outputTokens: 4, totalTokens: 24 },
@@ -602,14 +767,14 @@ describe("ContextManager", () => {
       },
     } as unknown as Compactor;
     const manager = new ContextManager({
-      contextWindow: 1_000, reserveTokens: 100, keepRecentTokens: 400, compactor,
+      contextWindow: 1_100, reserveTokens: 100, keepRecentTokens: 400, compactor,
     });
     const messages: Message[] = [
       user("x".repeat(2_000)), user("a".repeat(700)), user("older"),
       { role: "assistant", content: "b".repeat(700), toolCalls: [] }, user("continue"),
     ];
 
-    await expect(manager.build(messages, { fixedMessages: [user("schema".repeat(400))] }))
+    await expect(manager.build(messages, { fixedMessages: [user("schema".repeat(460))] }))
       .rejects.toMatchObject({
         name: "ContextCompactionError",
         compactionUsage: { inputTokens: 50, outputTokens: 10, totalTokens: 60 },
@@ -621,14 +786,17 @@ describe("ContextManager", () => {
   it("reports what it dropped", async () => {
     const events: number[] = [];
     const manager = new ContextManager({
-      contextWindow: 2_000,
+      contextWindow: 1_150,
       reserveTokens: 500,
-      keepRecentTokens: 300,
+      keepRecentTokens: 250,
       compactor: new Compactor(summarisingClient('{"summary":"s"}')),
       onCompaction: (event) => events.push(event.droppedMessages),
     });
 
-    await manager.build([user(long), user(long), user("recent")]);
+    await manager.build(
+      [user("x".repeat(1_300)), user("older"), user("m".repeat(950)), user("recent")],
+      { fixedMessages: [user("f".repeat(1_000))] },
+    );
 
     expect(events).toEqual([2]);
   });
@@ -1021,9 +1189,9 @@ describe("Agent with a ContextManager", () => {
       assistant("done"),
     ]);
     const manager = new ContextManager({
-      contextWindow: 2_000,
-      reserveTokens: 400,
-      keepRecentTokens: 200,
+      contextWindow: 1_250,
+      reserveTokens: 200,
+      keepRecentTokens: 300,
       compactor: new Compactor(summarisingClient('{"summary":"read a.ts"}')),
     });
     const agent = new Agent({
@@ -1156,7 +1324,11 @@ describe("Agent with a ContextManager", () => {
     });
 
     const result = await agent.run("please continue", {
-      history: [user("x".repeat(20_000)), { role: "assistant", content: "old", toolCalls: [] }],
+      history: [
+        user("x".repeat(3_500)),
+        { role: "assistant", content: "old", toolCalls: [] },
+        user("r".repeat(1_000)),
+      ],
     });
 
     // The session keeps what happened; only the request was shortened.
@@ -1164,8 +1336,9 @@ describe("Agent with a ContextManager", () => {
       "user",
       "assistant",
       "user",
+      "user",
       "assistant",
     ]);
-    expect(result.messages[0]?.content).toBe("x".repeat(20_000));
+    expect(result.messages[0]?.content).toBe("x".repeat(3_500));
   });
 });

@@ -1,6 +1,7 @@
 import type { LLMClient, Usage } from "../llm.js";
 import type { Message, ToolCall } from "../messages.js";
 import { parsePatch } from "../patch/parse.js";
+import type { TokenEstimator } from "./token-estimator.js";
 
 export interface CompactionState {
   readonly summary: string;
@@ -137,6 +138,20 @@ export class Compactor {
       ...(response.usage === undefined ? {} : { usage: response.usage }),
     };
   }
+}
+
+/** Estimates the exact text-bearing parts of the summary request. */
+export function estimateCompactionRequestTokens(
+  messages: readonly Message[],
+  estimator: TokenEstimator,
+): number {
+  // The estimator accepts runtime Messages rather than Provider roles. Its
+  // current contract counts content and a role-independent per-message cost,
+  // so these two messages represent the summary system prompt and transcript.
+  return estimator.estimateMessages([
+    { role: "user", content: SUMMARY_INSTRUCTIONS },
+    { role: "user", content: renderTranscript(messages) },
+  ]);
 }
 
 /** Falls back to the raw text when the model does not return usable JSON. */

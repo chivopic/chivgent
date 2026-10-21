@@ -69,7 +69,17 @@ waits cannot install a late candidate. Starting the checkpoint append is the
 manual persistence commit point.
 
 When the estimate exceeds the budget, older messages are summarised into a
-single message and recent turns are kept verbatim. Three details matter:
+single message and recent turns are kept verbatim. Four details matter:
+
+- **The summary request has the same input budget.** Before each automatic or
+  manual summary call, the ContextManager estimates the summary instructions
+  and the transcript exactly as rendered for that call, using the same
+  estimator and `contextWindow - reserveTokens` budget as an agent request.
+  This includes an earlier summary when it is part of the history being
+  summarised. If it does not fit, the request is refused locally; no summary
+  call is sent and the transcript and existing checkpoint stay intact. The
+  configured context window can be raised when the selected Provider accepts
+  the larger request, or the user can start a new session.
 
 - **File lists are derived from tool calls, not from the summary.** A summary
   can forget or invent a path. For a coding agent, "which files did I read and
