@@ -6,7 +6,7 @@ import { ContextManager } from "../src/context/context-manager.js";
 import { Compactor } from "../src/context/compaction.js";
 import type { LLMClient, LLMResponse } from "../src/llm.js";
 import { AgentSession } from "../src/session.js";
-import { FileSessionStore } from "../src/session-store.js";
+import { FileSessionStore, type SessionRecord, type SessionStore } from "../src/session-store.js";
 import { handleSlashCommand } from "../src/repl.js";
 import type { Workspace } from "../src/workspace.js";
 import { assistant, FakeLLMClient, readOnlyWorkspaceWrites } from "./fakes.js";
@@ -75,6 +75,35 @@ describe("session control regression checks", () => {
     expect(resumed.messages.slice(0, original.length)).toEqual(original);
   });
 
+  it("keeps a valid checkpoint and accounts for usage when a later summary is empty", async () => {
+    let calls = 0;
+    const summarizer: LLMClient = {
+      async complete() {
+        calls += 1;
+        return calls === 1
+          ? { ...assistant('{"summary":"first valid summary"}'), usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 } }
+          : { ...assistant("  \n"), usage: { inputTokens: 20, outputTokens: 3, totalTokens: 23 } };
+      },
+    };
+    const { session, store, agent } = await prepared(summarizer);
+    await session.compact();
+    const checkpoint = session.compactionCheckpoint;
+    await session.prompt("Continue after the checkpoint.");
+    const transcript = structuredClone(session.messages);
+
+    await expect(session.compact()).rejects.toThrow(/empty|summary/i);
+
+    expect(session.compactionCheckpoint).toEqual(checkpoint);
+    expect(session.messages).toEqual(transcript);
+    expect(session.usage?.usage.totalTokens).toBe(35);
+    const saved = await store.read(session.id);
+    expect(saved?.compaction).toEqual(checkpoint);
+    expect(saved?.usage?.usage.totalTokens).toBe(35);
+    const resumed = new AgentSession({ ...saved!, id: session.id, cwd: workspace.root, resumed: true, store, agent });
+    expect(resumed.compactionCheckpoint).toEqual(checkpoint);
+    expect(resumed.usage?.usage.totalTokens).toBe(35);
+  });
+
   it("does not pay for another summary when no new history can be compacted", async () => {
     const summarizer = new FakeLLMClient([assistant('{"summary":"First summary"}'), assistant('{"summary":"Unnecessary summary"}')]);
     const { session, store } = await prepared(summarizer);
@@ -95,6 +124,57 @@ describe("session control regression checks", () => {
     await expect(session.compact(controller.signal)).rejects.toThrow(/cancel|abort/i);
     expect(session.messages).toEqual(before);
     expect((await store.read(session.id))?.compaction).toBeUndefined();
+  });
+
+  it("keeps the old checkpoint and paid usage when cancellation arrives before checkpoint append", async () => {
+    const previous = {
+      state: { summary: "Old checkpoint", readFiles: [], modifiedFiles: [], decisions: [], pendingTasks: [] },
+      splitIndex: 0,
+    };
+    const usage = { inputTokens: 10, outputTokens: 2, totalTokens: 12 };
+    let releaseHeader!: () => void;
+    let notifyHeaderStarted!: () => void;
+    const headerStarted = new Promise<void>(resolve => { notifyHeaderStarted = resolve; });
+    const headerGate = new Promise<void>(resolve => { releaseHeader = resolve; });
+    const records: SessionRecord[] = [];
+    const store: SessionStore = {
+      async append(_id, record) {
+        records.push(record);
+        if (record.type === "session") {
+          notifyHeaderStarted();
+          await headerGate;
+        }
+      },
+      async read() { return undefined; },
+      async list() { return []; },
+      location() { return "memory"; },
+    };
+    const agent = {
+      systemPrompt: "Follow user constraints", maxTurns: 1, workspace, tools: [], streaming: false,
+      contextManager: new ContextManager({ compactor: new Compactor({ async complete() {
+        return { ...assistant('{"summary":"New checkpoint"}'), usage };
+      } }) }),
+      llm: new FakeLLMClient([]),
+    };
+    const session = new AgentSession({
+      id: "cancel-before-checkpoint", agent, store, cwd: workspace.root,
+      messages: [
+        { role: "user", content: "older request" }, { role: "assistant", content: "older answer", toolCalls: [] },
+        { role: "user", content: "latest request" },
+      ],
+      compaction: previous,
+    });
+    const controller = new AbortController();
+    const pending = session.compact(controller.signal);
+    await headerStarted;
+    controller.abort();
+    releaseHeader();
+
+    await expect(pending).rejects.toThrow(/cancel|abort/i);
+    expect(session.compactionCheckpoint).toEqual(previous);
+    expect(session.usage?.usage).toEqual(usage);
+    expect(records.some(record => record.type === "session_compaction")).toBe(false);
+    expect(records.some(record => record.type === "session_usage")).toBe(true);
   });
 
   it("locks the transcript while a manual summary is in flight and releases it afterwards", async () => {

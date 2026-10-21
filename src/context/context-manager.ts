@@ -2,6 +2,7 @@ import type { Message } from "../messages.js";
 import type { Usage } from "../llm.js";
 import {
   Compactor,
+  CompactionResultError,
   renderCompactionState,
   type CompactionState,
 } from "./compaction.js";
@@ -9,6 +10,8 @@ import {
   HeuristicTokenEstimator,
   type TokenEstimator,
 } from "./token-estimator.js";
+import { ContextBudgetError, ContextCompactionError } from "./errors.js";
+export { ContextBudgetError } from "./errors.js";
 
 export const DEFAULT_CONTEXT_WINDOW = 128_000;
 export const DEFAULT_RESERVE_TOKENS = 16_384;
@@ -140,14 +143,28 @@ export class ContextManager {
     if (previous !== undefined && head.length === 1 && head[0]?.role === "user" && head[0].content.startsWith("[Compacted conversation data")) {
       return { compacted: false };
     }
-    const compacted = await this.compactor.compact(head, signal, previous?.state);
-    if (signal?.aborted) throw new Error("Compaction cancelled.");
+    let compacted: Awaited<ReturnType<Compactor["compact"]>>;
+    try {
+      compacted = await this.compactor.compact(head, signal, previous?.state);
+    } catch (error: unknown) {
+      if (error instanceof CompactionResultError) {
+        throw new ContextCompactionError(error.message, error.usage, error.usageComplete);
+      }
+      throw error;
+    }
+    if (signal?.aborted) {
+      throw new ContextCompactionError("Compaction cancelled.", compacted.usage, compacted.usage !== undefined);
+    }
     const splitIndex = previous === undefined
       ? latestUser
       : previous.splitIndex + Math.max(0, latestUser - (previous.anchorIndex === undefined ? 1 : 2));
     const candidate: AppliedCompaction = { state: compacted.state, splitIndex, manualTranscriptLength: messages.length };
     if (this.estimator.estimateMessages([summaryMessage(candidate.state), ...messages.slice(splitIndex)]) > this.budget) {
-      throw new ContextBudgetError("The manual summary and retained transcript exceed the available context budget; no checkpoint was saved.");
+      throw new ContextBudgetError(
+        "The manual summary and retained transcript exceed the available context budget; no checkpoint was saved.",
+        compacted.usage,
+        compacted.usage !== undefined,
+      );
     }
     return { compacted: true, compaction: candidate, ...(compacted.usage === undefined ? {} : { usage: compacted.usage }) };
   }
@@ -216,7 +233,18 @@ export class ContextManager {
     let state: CompactionState;
     let usage: Usage | undefined;
     let usageComplete = true;
-    const first = await this.compactor.compact(head, options.signal, previous?.state);
+    let first: Awaited<ReturnType<Compactor["compact"]>>;
+    try {
+      first = await this.compactor.compact(head, options.signal, previous?.state);
+    } catch (error: unknown) {
+      if (error instanceof CompactionResultError) {
+        throw new ContextCompactionError(error.message, error.usage, error.usageComplete);
+      }
+      throw error;
+    }
+    if (options.signal?.aborted) {
+      throw new ContextCompactionError("Compaction cancelled.", first.usage, first.usage !== undefined);
+    }
     state = first.state;
     usage = first.usage;
     usageComplete = first.usage !== undefined;
@@ -249,12 +277,19 @@ export class ContextManager {
       try {
         second = await this.compactor.compact(head, options.signal, state);
       } catch (error: unknown) {
-        // The first summary was already paid for. Preserve its usage even if
-        // the bounded retry fails or is aborted; the retry's usage is unknown.
-        throw new ContextBudgetError(
+        const retryUsage = error instanceof CompactionResultError ? error.usage : undefined;
+        const retryUsageComplete = error instanceof CompactionResultError && error.usageComplete;
+        throw new ContextCompactionError(
           error instanceof Error ? `Context compaction retry failed: ${error.message}` : "Context compaction retry failed.",
-          usage,
-          false,
+          mergeCompactionUsage(usage, retryUsage),
+          usageComplete && retryUsageComplete,
+        );
+      }
+      if (options.signal?.aborted) {
+        throw new ContextCompactionError(
+          "Compaction cancelled.",
+          mergeCompactionUsage(usage, second.usage),
+          usageComplete && second.usage !== undefined,
         );
       }
       state = second.state;
@@ -298,14 +333,6 @@ export class ContextManager {
       usageComplete,
     };
   }
-}
-
-export class ContextBudgetError extends Error {
-  constructor(
-    message: string,
-    readonly compactionUsage?: Usage,
-    readonly compactionUsageComplete?: boolean,
-  ) { super(message); this.name = "ContextBudgetError"; }
 }
 
 function mergeCompactionUsage(first: Usage | undefined, second: Usage | undefined): Usage | undefined {
