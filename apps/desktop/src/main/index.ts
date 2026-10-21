@@ -202,7 +202,12 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   quitting = true;
   traceE2EShutdown("electron.before-quit-prevented");
-  void bridge.shutdown().finally(() => {
+  void bridge.shutdown().catch((error: unknown) => {
+    process.exitCode = 1;
+    traceE2EShutdown("electron.host-shutdown-failed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }).finally(() => {
     traceE2EShutdown("electron.host-shutdown-finished");
     app.quit();
   });
