@@ -138,6 +138,49 @@ describe("session control regression checks", () => {
     expect(resumed.usage?.usage.totalTokens).toBe(35);
   });
 
+  it("roundtrips legacy decision checkpoints and carries explicit replacements through resume", async () => {
+    const oldDecision = "Use API v1";
+    const newDecision = "Use API v2";
+    const summarizer = new FakeLLMClient([
+      assistant(JSON.stringify({ summary: "Old choice", decisions: [oldDecision], pendingTasks: [] })),
+      assistant(JSON.stringify({
+        summary: "The user explicitly replaced API v1 with API v2.",
+        decisions: [newDecision],
+        supersededDecisions: [oldDecision],
+        pendingTasks: [],
+      })),
+    ]);
+    const { session, store, agent } = await prepared(summarizer);
+
+    await session.compact();
+    const legacyCheckpoint = await store.read(session.id);
+    expect(legacyCheckpoint?.compaction?.state.decisions).toEqual([oldDecision]);
+    expect(Object.hasOwn(legacyCheckpoint?.compaction?.state ?? {}, "supersededDecisions")).toBe(false);
+
+    await session.prompt("The user explicitly replaces API v1 with API v2.");
+    await session.compact();
+    const updatedCheckpoint = await store.read(session.id);
+    expect(updatedCheckpoint?.compaction?.state.decisions).toEqual([newDecision]);
+    expect(Object.hasOwn(updatedCheckpoint?.compaction?.state ?? {}, "supersededDecisions")).toBe(false);
+    expect(summarizer.requests[1]?.systemPrompt).toContain("supersededDecisions");
+    expect(summarizer.requests[1]?.systemPrompt).toContain("omission or [] means no prior decision is revoked.");
+
+    const legacyClient = new FakeLLMClient([assistant("Legacy checkpoint loaded")]);
+    const legacyResume = new AgentSession({ ...legacyCheckpoint, id: session.id, cwd: workspace.root,
+      resumed: true, agent: { ...agent, llm: legacyClient } });
+    await legacyResume.prompt("Continue with the old checkpoint.");
+    const legacyRequest = JSON.stringify(legacyClient.requests[0]?.messages);
+    expect(legacyRequest).toContain(oldDecision);
+
+    const updatedClient = new FakeLLMClient([assistant("Use the current rule")]);
+    const updatedResume = new AgentSession({ ...updatedCheckpoint, id: session.id, cwd: workspace.root,
+      resumed: true, agent: { ...agent, llm: updatedClient } });
+    await updatedResume.prompt("Continue with the updated checkpoint.");
+    const updatedRequest = JSON.stringify(updatedClient.requests[0]?.messages);
+    expect(updatedRequest).toContain(newDecision);
+    expect(updatedRequest).not.toContain(oldDecision);
+  });
+
   it("does not pay for another summary when no new history can be compacted", async () => {
     const summarizer = new FakeLLMClient([assistant('{"summary":"First summary"}'), assistant('{"summary":"Unnecessary summary"}')]);
     const { session, store } = await prepared(summarizer);

@@ -32,14 +32,16 @@ export const DEFAULT_FILE_EFFECTS: FileEffectMap = {
 
 const SUMMARY_INSTRUCTIONS = `You are compacting an engineering conversation so it can continue in a smaller context.
 Reply with JSON only, no code fence, matching:
-{"summary": string, "decisions": string[], "pendingTasks": string[], "completedTasks": string[]}
+{"summary": string, "decisions": string[], "supersededDecisions": string[], "pendingTasks": string[], "completedTasks": string[]}
 summary: what was asked and what was established, in a few sentences.
 decisions: choices that later work must respect.
+supersededDecisions: up to 32 exact prior decision strings that the user explicitly revoked or replaced in this history. Include only when this history provides clear evidence; omission or [] means no prior decision is revoked. Omitting a decision from decisions is not evidence that it was superseded.
 pendingTasks: work that was identified but not finished.
 completedTasks: exact previously pending task strings demonstrably completed in this history; otherwise [] to preserve unfinished work.
 Omit file lists; they are tracked separately.`;
 
 export type ParsedSummary = Pick<CompactionState, "summary" | "decisions" | "pendingTasks"> & {
+  readonly supersededDecisions?: readonly string[];
   readonly completedTasks?: readonly string[];
 };
 
@@ -85,6 +87,7 @@ export class Compactor {
     // Keep durable facts from older compactions even when a summarizer
     // overlooks them. Only an explicit completedTasks entry retires a task.
     const completed = new Set(prose.completedTasks ?? []);
+    const supersededDecisions = new Set(prose.supersededDecisions ?? []);
     const pendingTasks = [...new Set([...(previousState?.pendingTasks ?? []), ...prose.pendingTasks])]
       .filter((task) => !completed.has(task));
     if (pendingTasks.length > 32) {
@@ -96,7 +99,10 @@ export class Compactor {
     }
     const state: CompactionState = {
       summary: prose.summary,
-      decisions: [...new Set([...(previousState?.decisions ?? []), ...prose.decisions])].slice(-32),
+      decisions: [...new Set([
+        ...(previousState?.decisions ?? []).filter((decision) => !supersededDecisions.has(decision)),
+        ...prose.decisions,
+      ])].slice(-32),
       pendingTasks,
       ...files,
     };
@@ -167,6 +173,9 @@ export function parseSummary(
   return {
     summary,
     decisions: stringList(record.decisions, 32),
+    ...(Array.isArray(record.supersededDecisions)
+      ? { supersededDecisions: stringList(record.supersededDecisions, 32) }
+      : {}),
     pendingTasks: stringList(record.pendingTasks),
     ...(Array.isArray(record.completedTasks) ? { completedTasks: stringList(record.completedTasks) } : {}),
   };
