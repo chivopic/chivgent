@@ -15,6 +15,7 @@ import { ToolExecutionError, type Tool, type ToolDefinition, type ToolOutput } f
 import { isParallelReadTool, isPlanModeTool, MAX_PARALLEL_READS } from "./tools/parallel.js";
 import { UpdatePlanTool, type PlanUpdate } from "./tools/update-plan.js";
 import type { Workspace } from "./workspace.js";
+import { ContextCompactionError } from "./context/errors.js";
 import { ContextBudgetError, type AppliedCompaction, type ContextManager } from "./context/context-manager.js";
 import { INCOMPLETE_PROJECT_GUIDANCE, type ProjectInstructionsProvider } from "./context/project-instructions.js";
 
@@ -295,7 +296,7 @@ export class Agent {
         ],
       });
     } catch (error: unknown) {
-      if (error instanceof ContextBudgetError &&
+      if (error instanceof ContextCompactionError &&
         (error.compactionUsage !== undefined || error.compactionUsageComplete === false)) {
         state.usage = addUsage(state.usage, error.compactionUsage);
         if (error.compactionUsageComplete === false) {
@@ -303,6 +304,18 @@ export class Agent {
         }
       }
       throw error;
+    }
+    // The signal can be aborted after ContextManager has finished building a
+    // candidate but before this continuation resumes. Count the completed
+    // summary call, then reject before installing its checkpoint.
+    if (isAborted(signal)) {
+      if (context.usage !== undefined || context.usageComplete === false) {
+        state.usage = addUsage(state.usage, context.usage);
+        if (context.usageComplete === false) {
+          state.usage = { usage: state.usage.usage, complete: false };
+        }
+      }
+      throw new Error("Compaction cancelled.");
     }
     if (context.compaction === undefined) {
       delete state.compaction;

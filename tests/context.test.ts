@@ -3,6 +3,7 @@ import type { Message } from "../src/messages.js";
 import { HeuristicTokenEstimator } from "../src/context/token-estimator.js";
 import {
   Compactor,
+  CompactionResultError,
   parseSummary,
   renderCompactionState,
   type CompactionState,
@@ -13,6 +14,7 @@ import {
   type AppliedCompaction,
 } from "../src/context/context-manager.js";
 import type { LLMClient, LLMResponse } from "../src/llm.js";
+import type { AgentEvent } from "../src/events.js";
 import { Agent } from "../src/agent.js";
 import { ReadFileTool } from "../src/tools/read-file.js";
 import type { Workspace } from "../src/workspace.js";
@@ -113,6 +115,158 @@ describe("findSplitIndex", () => {
 });
 
 describe("ContextManager", () => {
+  it("rejects an empty automatic summary and retains its Provider usage", async () => {
+    const usage = { inputTokens: 10, outputTokens: 2, totalTokens: 12 };
+    const client = {
+      async complete(): Promise<LLMResponse> {
+        return { message: { role: "assistant", content: " \n ", toolCalls: [] }, usage };
+      },
+    };
+    const manager = new ContextManager({
+      contextWindow: 100, reserveTokens: 10, keepRecentTokens: 5,
+      compactor: new Compactor(client),
+    });
+
+    await expect(manager.build([user("old".repeat(120)), user("continue")]))
+      .rejects.toMatchObject({
+        name: "ContextCompactionError",
+        compactionUsage: usage,
+        compactionUsageComplete: true,
+      });
+  });
+
+  it("rejects an automatic summary returned after cancellation and keeps its usage", async () => {
+    const controller = new AbortController();
+    const usage = { inputTokens: 10, outputTokens: 2, totalTokens: 12 };
+    const client = {
+      async complete(): Promise<LLMResponse> {
+        controller.abort();
+        return { message: { role: "assistant", content: "valid summary", toolCalls: [] }, usage };
+      },
+    };
+    const manager = new ContextManager({
+      contextWindow: 100, reserveTokens: 10, keepRecentTokens: 5,
+      compactor: new Compactor(client),
+    });
+
+    await expect(manager.build([user("old".repeat(120)), user("continue")], { signal: controller.signal }))
+      .rejects.toMatchObject({
+        name: "ContextCompactionError",
+        compactionUsage: usage,
+        compactionUsageComplete: true,
+      });
+  });
+
+  it("counts a rejected automatic summary in the Agent run without installing it", async () => {
+    const usage = { inputTokens: 10, outputTokens: 2, totalTokens: 12 };
+    const llm = new FakeLLMClient([]);
+    let endEvent: Extract<AgentEvent, { type: "agent_end" }> | undefined;
+    const agentWorkspace: Workspace = {
+      root: "/workspace", ...readOnlyWorkspaceWrites,
+      async readTextFile() { return { content: "", startLine: 1, endLine: 1, totalLines: 1, truncated: false }; },
+      async listFiles() { return { entries: [], truncated: false }; },
+      async searchText() { return { matches: [], truncated: false, scannedFiles: 0, skippedFiles: 0 }; },
+    };
+    const agent = new Agent({
+      systemPrompt: "test", maxTurns: 2, llm, tools: [], workspace: agentWorkspace,
+      onEvent: (event) => { if (event.type === "agent_end") endEvent = event; },
+      contextManager: new ContextManager({
+        contextWindow: 1_000, reserveTokens: 100, keepRecentTokens: 100,
+        compactor: new Compactor({
+          async complete(): Promise<LLMResponse> {
+            return { message: { role: "assistant", content: "  ", toolCalls: [] }, usage };
+          },
+        }),
+      }),
+    });
+
+    await expect(agent.run("continue", {
+      history: [user("old".repeat(5_000)), { role: "assistant", content: "older answer", toolCalls: [] }],
+    })).rejects.toThrow(/empty/i);
+
+    expect(endEvent?.usage).toEqual({ usage, complete: true });
+    expect(endEvent?.compaction).toBeUndefined();
+    expect(llm.requests).toHaveLength(0);
+  });
+
+  it("does not install a completed automatic candidate if cancellation arrives before Agent commits it", async () => {
+    const controller = new AbortController();
+    const usage = { inputTokens: 10, outputTokens: 2, totalTokens: 12 };
+    const llm = new FakeLLMClient([]);
+    let endEvent: Extract<AgentEvent, { type: "agent_end" }> | undefined;
+    const agentWorkspace: Workspace = {
+      root: "/workspace", ...readOnlyWorkspaceWrites,
+      async readTextFile() { return { content: "", startLine: 1, endLine: 1, totalLines: 1, truncated: false }; },
+      async listFiles() { return { entries: [], truncated: false }; },
+      async searchText() { return { matches: [], truncated: false, scannedFiles: 0, skippedFiles: 0 }; },
+    };
+    const agent = new Agent({
+      systemPrompt: "test", maxTurns: 2, llm, tools: [], workspace: agentWorkspace,
+      onEvent: (event) => { if (event.type === "agent_end") endEvent = event; },
+      contextManager: new ContextManager({
+        contextWindow: 1_000, reserveTokens: 100, keepRecentTokens: 100,
+        compactor: new Compactor({
+          async complete(): Promise<LLMResponse> {
+            return { message: { role: "assistant", content: "valid summary", toolCalls: [] }, usage };
+          },
+        }),
+        onCompaction: () => controller.abort(),
+      }),
+    });
+
+    const result = await agent.run("continue", {
+      history: [user("old".repeat(5_000)), { role: "assistant", content: "older answer", toolCalls: [] }],
+      signal: controller.signal,
+    });
+
+    expect(result.status).toBe("aborted");
+    expect(endEvent?.compaction).toBeUndefined();
+    expect(endEvent?.usage).toEqual({ usage, complete: true });
+    expect(llm.requests).toHaveLength(0);
+  });
+
+  it("rejects an empty manual summary without replacing the previous checkpoint", async () => {
+    const usage = { inputTokens: 10, outputTokens: 2, totalTokens: 12 };
+    const manager = new ContextManager({
+      compactor: new Compactor({
+        async complete(): Promise<LLMResponse> {
+          return { message: { role: "assistant", content: "\t ", toolCalls: [] }, usage };
+        },
+      }),
+    });
+    const previous: AppliedCompaction = {
+      state: { summary: "keep this checkpoint", readFiles: [], modifiedFiles: [], decisions: [], pendingTasks: [] },
+      splitIndex: 0,
+    };
+
+    await expect(manager.compactHistory([user("old"), user("new")], previous))
+      .rejects.toMatchObject({
+        name: "ContextCompactionError",
+        compactionUsage: usage,
+        compactionUsageComplete: true,
+      });
+    expect(previous.state.summary).toBe("keep this checkpoint");
+  });
+
+  it("keeps usage when a manual candidate exceeds the context budget", async () => {
+    const usage = { inputTokens: 10, outputTokens: 2, totalTokens: 12 };
+    const manager = new ContextManager({
+      contextWindow: 40, reserveTokens: 10,
+      compactor: new Compactor({
+        async complete(): Promise<LLMResponse> {
+          return { message: { role: "assistant", content: '{"summary":"' + "x".repeat(500) + '"}', toolCalls: [] }, usage };
+        },
+      }),
+    });
+
+    await expect(manager.compactHistory([user("old".repeat(60)), user("new")]))
+      .rejects.toMatchObject({
+        name: "ContextBudgetError",
+        compactionUsage: usage,
+        compactionUsageComplete: true,
+      });
+  });
+
   it("keeps the active prompt and complete recent tool pairs while compacting a long run", async () => {
     const client = summarisingClient('{"summary":"earlier tool work"}');
     const manager = new ContextManager({
@@ -387,9 +541,42 @@ describe("ContextManager", () => {
 
     await expect(manager.build(messages, { fixedMessages: [user("schema".repeat(400))] }))
       .rejects.toMatchObject({
-        name: "ContextBudgetError",
+        name: "ContextCompactionError",
         compactionUsage: { inputTokens: 20, outputTokens: 4, totalTokens: 24 },
         compactionUsageComplete: false,
+      });
+    expect(calls).toBe(2);
+  });
+
+  it("adds known usage from a rejected bounded retry to the first summary", async () => {
+    let calls = 0;
+    const compactor = {
+      async compact() {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            state: { summary: "first summary", readFiles: [], modifiedFiles: [], decisions: [], pendingTasks: [] },
+            usage: { inputTokens: 20, outputTokens: 4, totalTokens: 24 },
+          };
+        }
+        throw new CompactionResultError("The compaction summary was empty.", {
+          inputTokens: 30, outputTokens: 6, totalTokens: 36,
+        });
+      },
+    } as unknown as Compactor;
+    const manager = new ContextManager({
+      contextWindow: 1_000, reserveTokens: 100, keepRecentTokens: 400, compactor,
+    });
+    const messages: Message[] = [
+      user("x".repeat(2_000)), user("a".repeat(700)), user("older"),
+      { role: "assistant", content: "b".repeat(700), toolCalls: [] }, user("continue"),
+    ];
+
+    await expect(manager.build(messages, { fixedMessages: [user("schema".repeat(400))] }))
+      .rejects.toMatchObject({
+        name: "ContextCompactionError",
+        compactionUsage: { inputTokens: 50, outputTokens: 10, totalTokens: 60 },
+        compactionUsageComplete: true,
       });
     expect(calls).toBe(2);
   });
@@ -417,6 +604,29 @@ describe("ContextManager", () => {
 });
 
 describe("Compactor", () => {
+  it.each(['{"summary":""}', '{"summary":"   "}'])("rejects an empty JSON summary field: %s", async (content) => {
+    const usage = { inputTokens: 10, outputTokens: 2, totalTokens: 12 };
+    const compactor = new Compactor({
+      async complete(): Promise<LLMResponse> {
+        return { message: { role: "assistant", content, toolCalls: [] }, usage };
+      },
+    });
+
+    await expect(compactor.compact([user("old history")])).rejects.toMatchObject({
+      name: "CompactionResultError",
+      usage,
+      usageComplete: true,
+    });
+  });
+
+  it("accepts a non-JSON prose summary", async () => {
+    const compactor = new Compactor(summarisingClient("Earlier work established the required API behavior."));
+
+    const { state } = await compactor.compact([user("old history")]);
+
+    expect(state.summary).toBe("Earlier work established the required API behavior.");
+  });
+
   it("derives file lists from tool calls rather than from prose", async () => {
     const compactor = new Compactor(summarisingClient('{"summary":"s"}'));
     const messages: Message[] = [
@@ -537,6 +747,11 @@ describe("parseSummary", () => {
     expect(parseSummary('{"summary":"s","decisions":[1,"keep",null]}')).toMatchObject(
       { decisions: ["keep"] },
     );
+  });
+
+  it("preserves an explicitly empty JSON summary for rejection by the compactor", () => {
+    expect(parseSummary('{"summary":"   "}').summary).toBe("");
+    expect(parseSummary('{"other":"value"}').summary).toBe('{"other":"value"}');
   });
 });
 

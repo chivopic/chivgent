@@ -1,6 +1,7 @@
 import { Agent, type AgentOptions, type AgentRunResult } from "./agent.js";
 import type { AgentEvent, AgentEventListener } from "./events.js";
 import type { Message } from "./messages.js";
+import { ContextCompactionError } from "./context/errors.js";
 import type { AppliedCompaction } from "./context/context-manager.js";
 import { transcriptHash } from "./transcript-hash.js";
 import { addUsage, type UsageTotal } from "./providers/usage.js";
@@ -137,12 +138,30 @@ export class AgentSession {
     this.beginControl("compact");
     try {
       if (this.compaction === undefined && this.transcript.length < 2) throw new Error("There is no older conversation to compact safely.");
-      const result = await this.agent.compactHistory(this.transcript, this.compaction, signal);
+      let result: Awaited<ReturnType<Agent["compactHistory"]>>;
+      try {
+        result = await this.agent.compactHistory(this.transcript, this.compaction, signal);
+        if (signal?.aborted && result.compacted) {
+          throw new ContextCompactionError("Compaction cancelled.", result.usage, result.usage !== undefined);
+        }
+      } catch (error: unknown) {
+        if (error instanceof ContextCompactionError &&
+          (error.compactionUsage !== undefined || error.compactionUsageComplete === false)) {
+          await this.recordCompactionFailureUsage(error);
+        }
+        throw error;
+      }
       if (!result.compacted) return false;
-      if (signal?.aborted) throw new Error("Compaction cancelled.");
       const total = addUsage(this.usageTotal, result.usage);
       await this.writeHeaderStrict();
+      if (signal?.aborted) {
+        const error = new ContextCompactionError("Compaction cancelled.", result.usage, result.usage !== undefined);
+        await this.recordCompactionFailureUsage(error);
+        throw error;
+      }
       if (this.store !== undefined) {
+        // Starting this append is the checkpoint commit point. Cancellation
+        // after it begins does not claim that the durable write was rolled back.
         await this.store.append(this.id, { type: "session_compaction", compaction: result.compaction, transcriptHash: transcriptHash(this.transcript), ...(result.usage === undefined ? {} : { usage: total }) });
         await this.store.flush?.();
       }
@@ -155,6 +174,17 @@ export class AgentSession {
   private beginControl(action: string): void {
     if (this.promptInProgress || this.controlInProgress) throw new Error(`Cannot ${action} while another session operation is running.`);
     this.controlInProgress = true;
+  }
+
+  private async recordCompactionFailureUsage(error: ContextCompactionError): Promise<void> {
+    let total = addUsage(this.usageTotal, error.compactionUsage);
+    if (error.compactionUsageComplete === false) total = { usage: total.usage, complete: false };
+    await this.writeHeaderStrict();
+    if (this.store !== undefined) {
+      await this.store.append(this.id, { type: "session_usage", usage: total });
+      await this.store.flush?.();
+    }
+    this.usageTotal = total;
   }
 
   subscribe(listener: AgentEventListener): () => void {

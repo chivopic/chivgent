@@ -47,6 +47,18 @@ export interface CompactorOptions {
   readonly fileEffects?: FileEffectMap;
 }
 
+/** A completed summarizer call whose result cannot be installed as a checkpoint. */
+export class CompactionResultError extends Error {
+  constructor(
+    message: string,
+    readonly usage?: Usage,
+    readonly usageComplete = usage !== undefined,
+  ) {
+    super(message);
+    this.name = "CompactionResultError";
+  }
+}
+
 export class Compactor {
   private readonly fileEffects: FileEffectMap;
 
@@ -99,8 +111,15 @@ export class Compactor {
       tools: [],
       ...(signal === undefined ? {} : { signal }),
     });
+    if (signal?.aborted) {
+      throw new CompactionResultError("Compaction cancelled.", response.usage, response.usage !== undefined);
+    }
+    const prose = parseSummary(response.message.content);
+    if (prose.summary.trim().length === 0) {
+      throw new CompactionResultError("The compaction summary was empty.", response.usage, response.usage !== undefined);
+    }
     return {
-      prose: parseSummary(response.message.content),
+      prose,
       ...(response.usage === undefined ? {} : { usage: response.usage }),
     };
   }
@@ -134,7 +153,7 @@ export function parseSummary(
 
   const record = parsed as Record<string, unknown>;
   const summary =
-    typeof record.summary === "string" && record.summary.trim().length > 0
+    typeof record.summary === "string"
       ? record.summary.trim().slice(0, 4_000)
       : fallback.summary;
   return {

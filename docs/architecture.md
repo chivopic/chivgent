@@ -57,6 +57,17 @@ ContextManager
 summary + recent messages ────→ Provider (what the model sees)
 ```
 
+A summary response with no non-whitespace text is rejected before it can become
+a checkpoint. This includes a parsed JSON `summary` field that is empty or only
+whitespace; non-JSON prose remains a valid fallback summary, and JSON without a
+string `summary` field keeps the existing raw-text fallback. The full transcript
+and any prior checkpoint remain in place; reported usage from that completed
+call is still included in the run or session total. Cancellation is checked
+after the Provider returns and immediately before a manual session starts its
+checkpoint append, so a Provider that ignores the signal or a header write that
+waits cannot install a late candidate. Starting the checkpoint append is the
+manual persistence commit point.
+
 When the estimate exceeds the budget, older messages are summarised into a
 single message and recent turns are kept verbatim. Three details matter:
 

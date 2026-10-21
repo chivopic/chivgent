@@ -34,6 +34,7 @@ export interface SessionClearRecord {
 export type SessionMetadataRecord =
   | { readonly type: "session_rename"; readonly title: string }
   | { readonly type: "session_plan_mode"; readonly enabled: boolean }
+  | { readonly type: "session_usage"; readonly usage: UsageTotal }
   | { readonly type: "session_compaction"; readonly compaction: AppliedCompaction; readonly transcriptHash: string; readonly usage?: UsageTotal };
 
 export type SessionRecord = SessionHeader | AgentEvent | SessionClearRecord | SessionMetadataRecord;
@@ -238,6 +239,9 @@ export function parseTranscript(
       title = record.title;
     } else if (record.type === "session_plan_mode" && "enabled" in record && typeof record.enabled === "boolean") {
       planMode = record.enabled;
+    } else if (record.type === "session_usage" && "usage" in record) {
+      const savedUsage = validUsage(record.usage);
+      if (savedUsage !== undefined) usage = savedUsage;
     } else if (record.type === "session_compaction" && "compaction" in record && "transcriptHash" in record) {
       const candidate = record as { compaction: unknown; transcriptHash: unknown; usage?: unknown };
       if (candidate.transcriptHash === transcriptHash(messages)) compaction = validCompaction(candidate.compaction, messages);
