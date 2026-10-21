@@ -104,6 +104,40 @@ describe("session control regression checks", () => {
     expect(resumed.usage?.usage.totalTokens).toBe(35);
   });
 
+  it("keeps the previous checkpoint and records overflow usage across session resume", async () => {
+    let calls = 0;
+    const summarizer: LLMClient = {
+      async complete() {
+        calls += 1;
+        const pendingTasks = calls === 1
+          ? Array.from({ length: 32 }, (_, index) => `old-${index}`)
+          : ["new-task"];
+        const usage = calls === 1
+          ? { inputTokens: 10, outputTokens: 2, totalTokens: 12 }
+          : { inputTokens: 20, outputTokens: 3, totalTokens: 23 };
+        return { ...assistant(JSON.stringify({ summary: `summary ${calls}`, pendingTasks })), usage };
+      },
+    };
+    const { session, store, agent } = await prepared(summarizer);
+    await session.compact();
+    const checkpoint = structuredClone(session.compactionCheckpoint);
+    expect(checkpoint?.state.pendingTasks).toHaveLength(32);
+    await session.prompt("Record one more unfinished item.");
+    const transcript = structuredClone(session.messages);
+
+    await expect(session.compact()).rejects.toThrow(/pending/i);
+
+    expect(session.compactionCheckpoint).toEqual(checkpoint);
+    expect(session.messages).toEqual(transcript);
+    expect(session.usage?.usage.totalTokens).toBe(35);
+    const saved = await store.read(session.id);
+    expect(saved?.compaction).toEqual(checkpoint);
+    expect(saved?.usage?.usage.totalTokens).toBe(35);
+    const resumed = new AgentSession({ ...saved!, id: session.id, cwd: workspace.root, resumed: true, store, agent });
+    expect(resumed.compactionCheckpoint).toEqual(checkpoint);
+    expect(resumed.usage?.usage.totalTokens).toBe(35);
+  });
+
   it("does not pay for another summary when no new history can be compacted", async () => {
     const summarizer = new FakeLLMClient([assistant('{"summary":"First summary"}'), assistant('{"summary":"Unnecessary summary"}')]);
     const { session, store } = await prepared(summarizer);
