@@ -85,11 +85,19 @@ export class Compactor {
     // Keep durable facts from older compactions even when a summarizer
     // overlooks them. Only an explicit completedTasks entry retires a task.
     const completed = new Set(prose.completedTasks ?? []);
+    const pendingTasks = [...new Set([...(previousState?.pendingTasks ?? []), ...prose.pendingTasks])]
+      .filter((task) => !completed.has(task));
+    if (pendingTasks.length > 32) {
+      throw new CompactionResultError(
+        `The summary leaves ${pendingTasks.length} active pending tasks, above the limit of 32. Compaction was rejected; the full transcript and any previous checkpoint are retained. Resolve or explicitly complete pending tasks before retrying; a larger context window does not change this limit.`,
+        usage,
+        usage !== undefined,
+      );
+    }
     const state: CompactionState = {
       summary: prose.summary,
       decisions: [...new Set([...(previousState?.decisions ?? []), ...prose.decisions])].slice(-32),
-      pendingTasks: [...new Set([...(previousState?.pendingTasks ?? []), ...prose.pendingTasks])]
-        .filter((task) => !completed.has(task)).slice(-32),
+      pendingTasks,
       ...files,
     };
     return {
@@ -158,20 +166,20 @@ export function parseSummary(
       : fallback.summary;
   return {
     summary,
-    decisions: stringList(record.decisions),
+    decisions: stringList(record.decisions, 32),
     pendingTasks: stringList(record.pendingTasks),
     ...(Array.isArray(record.completedTasks) ? { completedTasks: stringList(record.completedTasks) } : {}),
   };
 }
 
-function stringList(value: unknown): readonly string[] {
+function stringList(value: unknown, limit?: number): readonly string[] {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value
+  const entries = value
     .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
-    .slice(0, 32)
     .map((entry) => entry.slice(0, 500));
+  return limit === undefined ? entries : entries.slice(0, limit);
 }
 
 function collectFiles(

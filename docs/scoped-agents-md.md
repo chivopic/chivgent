@@ -23,6 +23,7 @@ This is **not** an exact Codex implementation. Codex may discover a project root
 - A successful `apply_patch` contributes the paths it added, changed or deleted.
 - Already remembered read/modified file lists survive subsequent compactions instead of disappearing when a prior summary replaces old tool history.
 - Prior decisions and pending items persist across subsequent summaries; the summarizer must explicitly list an exact prior task under `completedTasks` before it is removed.
+- A checkpoint may retain at most 32 distinct active pending tasks. Compaction combines the previous and new tasks, deduplicates them, applies exact `completedTasks` entries, then checks the limit. If more than 32 remain, the candidate is rejected with any reported Provider usage; the full transcript and previous checkpoint stay intact. Resolve tasks or explicitly mark them completed before retrying. Increasing the token window does not change this metadata limit.
 - Summarized prose and file lists are bounded, and project instructions are included in estimated token budgeting.
 - File lists record successful tool activity, **not** an independently verified git diff. They are not proof that the final on-disk content matches the Agent's report.
 

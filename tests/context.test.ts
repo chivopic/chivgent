@@ -189,6 +189,43 @@ describe("ContextManager", () => {
     expect(llm.requests).toHaveLength(0);
   });
 
+  it("keeps an automatic checkpoint and accounts for usage when pending tasks overflow", async () => {
+    const usage = { inputTokens: 10, outputTokens: 2, totalTokens: 12 };
+    const previous: AppliedCompaction = {
+      state: {
+        summary: "previous checkpoint", readFiles: [], modifiedFiles: [], decisions: [],
+        pendingTasks: Array.from({ length: 32 }, (_, index) => `old-${index}`),
+      },
+      splitIndex: 0,
+    };
+    const agentWorkspace: Workspace = {
+      root: "/workspace", ...readOnlyWorkspaceWrites,
+      async readTextFile() { return { content: "", startLine: 1, endLine: 1, totalLines: 1, truncated: false }; },
+      async listFiles() { return { entries: [], truncated: false }; },
+      async searchText() { return { matches: [], truncated: false, scannedFiles: 0, skippedFiles: 0 }; },
+    };
+    let endEvent: Extract<AgentEvent, { type: "agent_end" }> | undefined;
+    const agent = new Agent({
+      systemPrompt: "test", maxTurns: 2, llm: new FakeLLMClient([assistant("Must not run after overflow")]), tools: [], workspace: agentWorkspace,
+      onEvent: event => { if (event.type === "agent_end") endEvent = event; },
+      contextManager: new ContextManager({
+        contextWindow: 1_000, reserveTokens: 100, keepRecentTokens: 100,
+        compactor: new Compactor({ async complete(): Promise<LLMResponse> {
+          return { ...assistant('{"summary":"candidate","pendingTasks":["new-task"]}'), usage };
+        } }),
+      }),
+    });
+
+    await expect(agent.run("continue", {
+      history: [user("old".repeat(5_000)), assistant("older answer").message],
+      compaction: previous,
+    })).rejects.toThrow(/pending/i);
+
+    expect(endEvent?.compaction).toEqual(previous);
+    expect(endEvent?.usage?.usage).toEqual(usage);
+    expect(endEvent?.usage?.complete).toBe(true);
+  });
+
   it("does not install a completed automatic candidate if cancellation arrives before Agent commits it", async () => {
     const controller = new AbortController();
     const usage = { inputTokens: 10, outputTokens: 2, totalTokens: 12 };
@@ -701,6 +738,119 @@ describe("Compactor", () => {
     const { state: after } = await next.compact([user("Proceed")], undefined, state);
     expect(after.pendingTasks).toEqual(["write docs", "review CI"]);
     expect(after.decisions).toEqual(["Keep existing API stable", "avoid breaking changes"]);
+  });
+
+  it("accepts exactly 32 active pending tasks", async () => {
+    const pendingTasks = Array.from({ length: 32 }, (_, index) => `task-${index}`);
+    const compactor = new Compactor(summarisingClient(JSON.stringify({ summary: "bounded", pendingTasks })));
+
+    const { state } = await compactor.compact([user("History")]);
+
+    expect(state.pendingTasks).toEqual(pendingTasks);
+  });
+
+  it("rejects 33 distinct active tasks and keeps the completed Provider usage", async () => {
+    const usage = { inputTokens: 20, outputTokens: 4, totalTokens: 24 };
+    const pendingTasks = Array.from({ length: 33 }, (_, index) => `task-${index}`);
+    const compactor = new Compactor({ async complete() {
+      return { ...assistant(JSON.stringify({ summary: "too many", pendingTasks })), usage };
+    } });
+
+    await expect(compactor.compact([user("History")])).rejects.toMatchObject({
+      name: "CompactionResultError",
+      message: expect.stringMatching(/33.*32|32.*33|pending/i),
+      usage,
+      usageComplete: true,
+    });
+  });
+
+  it("keeps missing Provider usage unknown when rejecting overflow", async () => {
+    const pendingTasks = Array.from({ length: 33 }, (_, index) => `task-${index}`);
+    const compactor = new Compactor({ async complete() {
+      return assistant(JSON.stringify({ summary: "too many", pendingTasks }));
+    } });
+
+    await expect(compactor.compact([user("History")])).rejects.toMatchObject({
+      name: "CompactionResultError",
+      usage: undefined,
+      usageComplete: false,
+    });
+  });
+
+  it("rejects a new task beyond 32 retained tasks without changing the previous state", async () => {
+    const previous: CompactionState = {
+      summary: "old", readFiles: [], modifiedFiles: [], decisions: [],
+      pendingTasks: Array.from({ length: 32 }, (_, index) => `old-${index}`),
+    };
+    const compactor = new Compactor(summarisingClient('{"summary":"new","pendingTasks":["new-task"]}'));
+
+    await expect(compactor.compact([user("History")], undefined, previous))
+      .rejects.toThrow(/pending/i);
+    expect(previous.pendingTasks).toHaveLength(32);
+    expect(previous.pendingTasks).not.toContain("new-task");
+  });
+
+  it("does not reject duplicate tasks at the 32-task boundary", async () => {
+    const tasks = Array.from({ length: 32 }, (_, index) => `task-${index}`);
+    const previous: CompactionState = {
+      summary: "old", readFiles: [], modifiedFiles: [], decisions: [], pendingTasks: tasks,
+    };
+    const compactor = new Compactor(summarisingClient('{"summary":"new","pendingTasks":["task-0","task-0"]}'));
+
+    const { state } = await compactor.compact([user("History")], undefined, previous);
+
+    expect(state.pendingTasks).toEqual(tasks);
+  });
+
+  it("applies explicit completions before enforcing the pending-task limit", async () => {
+    const tasks = Array.from({ length: 32 }, (_, index) => `task-${index}`);
+    const previous: CompactionState = {
+      summary: "old", readFiles: [], modifiedFiles: [], decisions: [], pendingTasks: tasks,
+    };
+    const compactor = new Compactor(summarisingClient(
+      '{"summary":"new","pendingTasks":["new-task"],"completedTasks":["task-0"]}',
+    ));
+
+    const { state } = await compactor.compact([user("History")], undefined, previous);
+
+    expect(state.pendingTasks).toHaveLength(32);
+    expect(state.pendingTasks).not.toContain("task-0");
+    expect(state.pendingTasks).toContain("new-task");
+  });
+
+  it("does not truncate completion evidence before enforcing the pending-task limit", async () => {
+    const tasks = Array.from({ length: 32 }, (_, index) => `task-${index}`);
+    const previous: CompactionState = {
+      summary: "old", readFiles: [], modifiedFiles: [], decisions: [], pendingTasks: tasks,
+    };
+    const completedTasks = [
+      ...Array.from({ length: 32 }, (_, index) => `unrelated-${index}`),
+      "task-0",
+    ];
+    const compactor = new Compactor(summarisingClient(JSON.stringify({
+      summary: "new", pendingTasks: ["new-task"], completedTasks,
+    })));
+
+    const { state } = await compactor.compact([user("History")], undefined, previous);
+
+    expect(state.pendingTasks).toHaveLength(32);
+    expect(state.pendingTasks).not.toContain("task-0");
+    expect(state.pendingTasks).toContain("new-task");
+  });
+
+  it("checks beyond redundant leading tasks instead of truncating the candidate", async () => {
+    const tasks = Array.from({ length: 32 }, (_, index) => `task-${index}`);
+    const previous: CompactionState = {
+      summary: "old", readFiles: [], modifiedFiles: [], decisions: [], pendingTasks: tasks,
+    };
+    const repeated = Array.from({ length: 33 }, () => "task-0");
+    repeated.push("late-active-task");
+    const compactor = new Compactor(summarisingClient(
+      JSON.stringify({ summary: "new", pendingTasks: repeated }),
+    ));
+
+    await expect(compactor.compact([user("History")], undefined, previous))
+      .rejects.toThrow(/pending/i);
   });
 
   it("retains verified file facts across repeated compactions", async () => {
