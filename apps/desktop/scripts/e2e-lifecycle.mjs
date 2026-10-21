@@ -41,7 +41,7 @@ async function pidIsAlive(pid) {
   }
 }
 
-async function waitForPidExit(pid, timeoutMs) {
+export async function waitForPidExit(pid, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (!await pidIsAlive(pid)) return true;

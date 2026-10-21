@@ -102,11 +102,13 @@ jobs:
               echo "Could not capture the Xvfb child owned by wrapper PID ${wrapper_pid} during ${label}"
               return 1
             fi
-            xvfb_comm="$(ps -o comm= -p "$xvfb_pid" 2>/dev/null || true)"
-            if [[ "$xvfb_comm" == Xvfb* ]]; then
-              echo "Xvfb PID ${xvfb_pid} survived wrapper PID ${wrapper_pid} after ${label}"
-              return 1
-            fi
+            node --input-type=module -e '
+              import { waitForPidExit, E2EStageError } from "./apps/desktop/scripts/e2e-lifecycle.mjs";
+              const [pid, wrapper] = process.argv.slice(1);
+              if (!await waitForPidExit(Number(pid), 5000)) {
+                throw new E2EStageError(`Xvfb exit (PID ${pid}, wrapper PID ${wrapper})`, 5000);
+              }
+            ' "$xvfb_pid" "$wrapper_pid"
             echo "Xvfb cleanup verified for ${label}: wrapper PID ${wrapper_pid}, Xvfb PID ${xvfb_pid} exited"
           }
           for run in $(seq 1 20); do
