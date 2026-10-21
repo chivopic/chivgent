@@ -324,13 +324,15 @@ describe("AgentSession", () => {
 
   it("restores an anchored long-run checkpoint after multiple prompts and repeated compaction", async () => {
     const store = new FileSessionStore(await temporaryHome());
+    let summaryCalls = 0;
     const summaryClient = {
       async complete() {
+        summaryCalls += 1;
         return assistant('{"summary":"prior tool work","decisions":[],"pendingTasks":[]}');
       },
     };
     const contextManager = new ContextManager({
-      contextWindow: 700, reserveTokens: 120, keepRecentTokens: 100,
+      contextWindow: 1_770, reserveTokens: 120, keepRecentTokens: 600,
       compactor: new Compactor(summaryClient),
     });
     const longTool: Tool = {
@@ -340,7 +342,7 @@ describe("AgentSession", () => {
       async execute() { return { content: "tool-result ".repeat(45), isError: false }; },
     };
     const agentOptions = (llm: FakeLLMClient) => ({
-      systemPrompt: "system", maxTurns: 16, llm, tools: [longTool], workspace, streaming: false,
+      systemPrompt: "system", maxTurns: 32, llm, tools: [longTool], workspace, streaming: false,
       contextManager,
     });
     const first = new AgentSession({
@@ -349,7 +351,7 @@ describe("AgentSession", () => {
     });
     await first.prompt("first prompt");
 
-    const toolResponses = Array.from({ length: 12 }, (_, index) => assistant("", [{
+    const toolResponses = Array.from({ length: 24 }, (_, index) => assistant("", [{
       id: `long-${index}`, name: "echo", arguments: {},
     }]));
     const secondLlm = new FakeLLMClient([...toolResponses, assistant("second answer")]);
@@ -359,6 +361,7 @@ describe("AgentSession", () => {
     const saved = await store.read(first.id);
     expect(saved?.compaction).toBeDefined();
     expect(saved?.compaction?.anchorIndex).toBeGreaterThan(0);
+    expect(summaryCalls).toBeGreaterThanOrEqual(2);
 
     const expected = await contextManager.build(
       [...(saved?.messages ?? []), { role: "user", content: "third prompt" }],

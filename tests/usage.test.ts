@@ -234,7 +234,7 @@ describe("an Agent run's total", () => {
       { ...assistant('{"summary":"second pass"}'), usage: usage(50, 5) },
     ]);
     const manager = new ContextManager({
-      contextWindow: 1_000,
+      contextWindow: 1_100,
       reserveTokens: 100,
       keepRecentTokens: 400,
       compactor: new Compactor(summariser),
@@ -249,7 +249,7 @@ describe("an Agent run's total", () => {
     ];
 
     const context = await manager.build(messages, {
-      fixedMessages: [{ role: "user", content: "schema".repeat(400) }],
+      fixedMessages: [{ role: "user", content: "schema".repeat(440) }],
     });
 
     expect(context.usage).toEqual(usage(50, 5));
@@ -264,16 +264,16 @@ describe("an Agent run's total", () => {
     ]);
     const events: AgentEvent[] = [];
     const agent = new Agent({
-      systemPrompt: "system",
+      systemPrompt: "system".repeat(300),
       maxTurns: 4,
       llm: new MeteredClient([{ ...assistant("done"), usage: usage(20, 5) }]),
       tools: [],
       workspace,
       onEvent: (event) => events.push(event),
       contextManager: new ContextManager({
-        contextWindow: 1000,
-        reserveTokens: 100,
-        keepRecentTokens: 20,
+        contextWindow: 1_000,
+        reserveTokens: 190,
+        keepRecentTokens: 250,
         compactor: new Compactor(summariser),
       }),
     });
@@ -281,9 +281,9 @@ describe("an Agent run's total", () => {
     // Compaction needs a history worth summarising: a lone message has
     // nothing to cut, and the manager correctly declines to compact it.
     const history = [
-      { role: "user" as const, content: "x".repeat(4000) },
-      { role: "assistant" as const, content: "y".repeat(4000), toolCalls: [] },
-      { role: "user" as const, content: "z".repeat(4000) },
+      { role: "user" as const, content: "x".repeat(1_300) },
+      { role: "user" as const, content: "older" },
+      { role: "user" as const, content: "z".repeat(950) },
     ];
     const result = await agent.run("and now the last question", { history });
 

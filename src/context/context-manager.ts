@@ -3,6 +3,7 @@ import type { Usage } from "../llm.js";
 import {
   Compactor,
   CompactionResultError,
+  estimateCompactionRequestTokens,
   renderCompactionState,
   type CompactionState,
 } from "./compaction.js";
@@ -114,6 +115,20 @@ export class ContextManager {
     return this.contextWindow - this.reserveTokens;
   }
 
+  private assertCompactionRequestFits(
+    messages: readonly Message[],
+    usage?: Usage,
+    usageComplete?: boolean,
+  ): void {
+    const estimatedTokens = estimateCompactionRequestTokens(messages, this.estimator);
+    if (estimatedTokens <= this.budget) return;
+    throw new ContextBudgetError(
+      `The summary request needs about ${estimatedTokens} tokens, exceeding the available context budget of ${this.budget}; no summary request was sent. Increase --context-window only if the selected Provider can accept a larger request, or start a new session.`,
+      usage,
+      usageComplete,
+    );
+  }
+
   /** Build a durable checkpoint on demand without changing the transcript. */
   async compactHistory(
     messages: readonly Message[],
@@ -143,6 +158,7 @@ export class ContextManager {
     if (previous !== undefined && head.length === 1 && head[0]?.role === "user" && head[0].content.startsWith("[Compacted conversation data")) {
       return { compacted: false };
     }
+    this.assertCompactionRequestFits(head);
     let compacted: Awaited<ReturnType<Compactor["compact"]>>;
     try {
       compacted = await this.compactor.compact(head, signal, previous?.state);
@@ -233,6 +249,7 @@ export class ContextManager {
     let state: CompactionState;
     let usage: Usage | undefined;
     let usageComplete = true;
+    this.assertCompactionRequestFits(head);
     let first: Awaited<ReturnType<Compactor["compact"]>>;
     try {
       first = await this.compactor.compact(head, options.signal, previous?.state);
@@ -274,6 +291,9 @@ export class ContextManager {
       }
 
       let second: Awaited<ReturnType<Compactor["compact"]>>;
+      // A local refusal of the retry is not an unreported Provider call. Keep
+      // the first call's exact usage completeness when the new head cannot fit.
+      this.assertCompactionRequestFits(head, usage, usageComplete);
       try {
         second = await this.compactor.compact(head, options.signal, state);
       } catch (error: unknown) {
