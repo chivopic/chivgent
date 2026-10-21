@@ -62,6 +62,22 @@ describe("initial TUI permission selection", () => {
 });
 
 describe("permission policy", () => {
+  it.each([
+    [{ approved: false, reason: "user" }, "Shell command denied by user."],
+    [{ approved: false, reason: "cancelled" }, "Shell command approval was cancelled."],
+    [{ approved: false, reason: "unavailable" }, "Shell command denied: approval is unavailable."],
+    [{ approved: false, reason: "unreviewable" }, "Shell command denied: command cannot be safely displayed for approval. Shorten it or remove terminal control characters and try again."],
+  ] as const)("maps typed shell denial %# to the Agent without execution", async (decision, expected) => {
+    const cwd = await root();
+    const exec = vi.fn(async () => ({ exitCode: 0 }));
+    const tool = new BashTool({ cwd, approve: async () => decision, operations: { backend: "fake", exec } });
+    const output = await tool.execute({ command: "echo no" }, {
+      workspace: new PermissionWorkspace(cwd, new PermissionPolicy("workspace")),
+    });
+    expect(output).toMatchObject({ content: expected, isError: true });
+    expect(exec).not.toHaveBeenCalled();
+  });
+
   it("asks before each ask-first file change and does not mutate on denial", async () => {
     const cwd = await root();
     const approval = vi.fn(async () => false);
@@ -189,6 +205,28 @@ describe("permission policy", () => {
     expect(output.content).toBe("Shell command denied by user.");
     expect(approve).toHaveBeenCalledOnce();
     expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("keeps typed approval failures from becoming grants or user refusals", async () => {
+    const cwd = await root();
+    const policy = new PermissionPolicy("ask-first", async () => ({ approved: false, reason: "unreviewable" }));
+    const exec = vi.fn(async () => ({ exitCode: 0 }));
+    const tool = new BashTool({
+      cwd,
+      supportedScopes: ["workspace", "network"],
+      operationsForCall: () => ({ backend: "Docker (test)", exec }),
+      authorize: request => policy.authorizeShell(request.command, request.scope, request.signal),
+    });
+    const output = await tool.execute({ command: "curl https://example.test", scope: "network", justification: "fetch" }, {
+      workspace: new PermissionWorkspace(cwd, policy),
+    });
+    expect(output.isError).toBe(true);
+    expect(output.content).toContain("command cannot be safely displayed");
+    expect(exec).not.toHaveBeenCalled();
+    await expect(policy.authorizeShell("echo x", "network")).resolves.toMatchObject({ approved: false, reason: "unreviewable" });
+    await expect(policy.authorizeWrite("write x")).resolves.toBe(false);
+    await expect(policy.authorizeExtension("fake", { x: 1 })).resolves.toBe(false);
+    await expect(policy.authorizeWebSearch("q", "test")).resolves.toBe(false);
   });
 
   it("rejects network scope without justification before invoking approval", async () => {

@@ -292,7 +292,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   const shellApproval = options.allowShell || permissionPolicy !== undefined
     ? new ShellApprovalGate(options.approveAllShell)
     : undefined;
-  permissionPolicy?.setApproval((action, signal, context) => shellApproval?.approve(action, signal, context) ?? Promise.resolve(false));
+  permissionPolicy?.setApproval((action, signal, context) => shellApproval?.approveDecision(action, signal, context) ?? Promise.resolve({ approved: false, reason: "unavailable" }));
 
   const session = createLocalSession({
     options,

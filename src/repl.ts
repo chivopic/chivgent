@@ -12,10 +12,11 @@ import type { OutputStream } from "./render.js";
 import type { RegisteredCommand } from "./extensions/api.js";
 import { formatTokens } from "./providers/usage.js";
 import { approvalPreview, commandReviewable } from "./tui/activity.js";
+import { fitLine } from "./tui/text.js";
 import { terminalWidth } from "./tui/live.js";
 import { formatDiffPage, mostRecentSuccessfulPatch } from "./tui/diff.js";
 import type { LiveRegion } from "./tui/live.js";
-import type { ShellApprovalGate } from "./shell/approval.js";
+import type { ApprovalDecision, ShellApprovalGate } from "./shell/approval.js";
 import { describePermissionMode, parsePermissionMode, WEB_SEARCH_APPROVAL_PREFIX, type PermissionMode, type PermissionPolicy } from "./permissions.js";
 import { HeuristicTokenEstimator } from "./context/token-estimator.js";
 
@@ -749,8 +750,9 @@ export async function runRepl(options: ReplOptions): Promise<number> {
 
   // Approval and normal input share the same readline iterator.
   if (options.shellApproval !== undefined) {
-    options.shellApproval.setHandler(async (command, signal, context) => {
-      if (signal?.aborted) return false;
+    options.shellApproval.setHandler(async (command, signal, context): Promise<ApprovalDecision> => {
+      if (signal?.aborted) return { approved: false, reason: "cancelled" };
+      let resizeListener: (() => void) | undefined;
       menu?.clear();
       options.liveRegion?.pause();
       tuiInput?.setApprovalMode(true);
@@ -758,27 +760,45 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       try {
         const width = terminalWidth({ columns: (options.output as typeof options.output & { columns?: number }).columns });
         const wraps = context?.startsWith(WEB_SEARCH_APPROVAL_PREFIX) === true;
+        const reviewable = wraps || commandReviewable(command, width);
+        const approvalOutput = options.output as typeof options.output & { columns?: number };
+        let previewInvalidated = false;
+        const invalidateOnResize = (): void => {
+          if (approvalOutput.columns !== width) previewInvalidated = true;
+        };
+        if (!wraps) {
+          resizeListener = invalidateOnResize;
+          options.output.on("resize", invalidateOnResize);
+        }
         write(approvalPreview(command, width, context ?? "Shell command", wraps ? { wrap: true } : {}));
-        if (!wraps && !commandReviewable(command, width)) {
-          write("  Denied: command cannot be fully reviewed at this width. Ask for a shorter command.\n");
-          return false;
+        if (!reviewable) {
+          return { approved: false, reason: "unreviewable" };
         }
         readline.setPrompt("approve> ");
         readline.prompt();
         // Ctrl+C must unblock the pending line read, not leave the agent
         // stuck waiting for a reply to an approval that was cancelled.
         const unblockOnAbort = (): void => {
-          readline.write("\n");
+          if (!inputClosed) readline.write("\n");
         };
         signal?.addEventListener("abort", unblockOnAbort, { once: true });
         try {
-          if (signal?.aborted) return false;
+          if (signal?.aborted) return { approved: false, reason: "cancelled" };
           const answer = await readNextLine();
-          return answer?.trim().toLowerCase() === "y" && signal?.aborted !== true;
+          if (signal?.aborted) return { approved: false, reason: "cancelled" };
+          if (answer === undefined) return { approved: false, reason: "unavailable" };
+          if (answer.trim().toLowerCase() !== "y") return { approved: false, reason: "user" };
+          const currentWidth = terminalWidth({ columns: (options.output as typeof options.output & { columns?: number }).columns });
+          if (!wraps && (previewInvalidated || currentWidth !== width || !commandReviewable(command, currentWidth))) {
+            write(`${fitLine("  Denied: resized; review again.", currentWidth - 1)}\n`);
+            return { approved: false, reason: "unreviewable" };
+          }
+          return { approved: true };
         } finally {
           signal?.removeEventListener("abort", unblockOnAbort);
         }
       } finally {
+        if (resizeListener !== undefined) options.output.off("resize", resizeListener);
         readline.setPrompt(REPL_PROMPT);
         tuiInput?.setApprovalMode(false);
         tuiInput?.setBusy(true);

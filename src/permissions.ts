@@ -2,12 +2,13 @@ import { LocalWorkspace } from "./workspace.js";
 import type { Workspace } from "./workspace.js";
 import type { EditTextFileOptions, EditTextFileResult, ListFilesOptions, ListFilesResult, PatchResult, ReadTextFileOptions, SearchTextOptions, SearchTextResult, TextFileSlice, WriteTextFileResult } from "./workspace/types.js";
 import { WorkspaceError } from "./workspace/types.js";
+import { approvalWasGranted, type ApprovalDecision } from "./shell/approval.js";
 
 export const PERMISSION_MODES = ["ask-first", "workspace", "unrestricted"] as const;
 export type PermissionMode = typeof PERMISSION_MODES[number];
 export const SHELL_SCOPES = ["workspace", "network", "host"] as const;
 export type ShellScope = typeof SHELL_SCOPES[number];
-export type PermissionApproval = (action: string, signal?: AbortSignal, context?: string) => Promise<boolean>;
+export type PermissionApproval = (action: string, signal?: AbortSignal, context?: string) => Promise<boolean | ApprovalDecision>;
 
 /** Approval context prefix the REPL uses to render a full-query web prompt. */
 export const WEB_SEARCH_APPROVAL_PREFIX = "Web search via ";
@@ -45,10 +46,10 @@ export class PermissionPolicy {
     if (signal?.aborted) return false;
     if (this.modeValue !== "ask-first") return true;
     const approved = await (this.approval?.(action, signal, "File change") ?? Promise.resolve(false));
-    return approved && signal?.aborted !== true;
+    return approvalWasGranted(approved) && signal?.aborted !== true;
   }
 
-  async authorizeShell(command: string, scope: ShellScope, signal?: AbortSignal, context?: string): Promise<boolean> {
+  async authorizeShell(command: string, scope: ShellScope, signal?: AbortSignal, context?: string): Promise<boolean | ApprovalDecision> {
     if (signal?.aborted) return false;
     if (this.modeValue === "unrestricted") return true;
     if (this.modeValue === "workspace" && scope === "workspace") return true;
@@ -58,8 +59,10 @@ export class PermissionPolicy {
       : scope === "network"
         ? `Network access for this command only: outbound network enabled within the workspace sandbox${detail}`
         : `Sandboxed workspace shell command${detail}`;
-    const approved = await (this.approval?.(command, signal, scopeContext) ?? Promise.resolve(false));
-    return approved && signal?.aborted !== true;
+    const approved = await (this.approval?.(command, signal, scopeContext) ?? Promise.resolve({ approved: false, reason: "unavailable" } as const));
+    if (signal?.aborted) return false;
+    if (typeof approved === "boolean") return approved;
+    return approved;
   }
 
   async authorizeExtension(toolName: string, argumentsValue: unknown, signal?: AbortSignal): Promise<boolean> {
@@ -67,7 +70,7 @@ export class PermissionPolicy {
     if (this.modeValue === "unrestricted") return true;
     const preview = JSON.stringify(argumentsValue);
     const approved = await (this.approval?.(preview, signal, `Extension tool ${toolName}`) ?? Promise.resolve(false));
-    return approved && signal?.aborted !== true;
+    return approvalWasGranted(approved) && signal?.aborted !== true;
   }
 
   /** Network access leaves the machine, so ask-first and workspace ask each time. */
@@ -79,7 +82,7 @@ export class PermissionPolicy {
       signal,
       `${WEB_SEARCH_APPROVAL_PREFIX}${provider}`,
     ) ?? Promise.resolve(false));
-    return approved && signal?.aborted !== true;
+    return approvalWasGranted(approved) && signal?.aborted !== true;
   }
 
   get shellNetwork(): boolean { return this.modeValue === "unrestricted"; }
