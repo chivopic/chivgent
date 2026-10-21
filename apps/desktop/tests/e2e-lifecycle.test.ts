@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanupE2EResources, shutdownElectron } from "../scripts/e2e-lifecycle.mjs";
+import { cleanupE2EResources, shutdownElectron, waitForPidExit } from "../scripts/e2e-lifecycle.mjs";
 
 const roots: string[] = [];
 const children: ChildProcess[] = [];
@@ -138,5 +138,27 @@ describe("Electron E2E teardown", () => {
       .rejects.toMatchObject({ name: "E2EStageError", message: expect.stringContaining(`Electron PID ${electron.pid}`) });
     expect(await exitedWithin(electron)).toBe(true);
     expect(electron.signalCode).toBe("SIGKILL");
+  });
+});
+
+
+describe("owned Xvfb process exit wait", () => {
+  it("waits for a delayed SIGTERM exit instead of rejecting a process still shutting down", async () => {
+    const owned = spawn(globalThis.process.execPath, ["-e", "process.on('SIGTERM', () => setTimeout(() => process.exit(0), 1500)); process.send('ready'); setInterval(() => {}, 1000)"], { stdio: ["ignore", "ignore", "ignore", "ipc"] });
+    children.push(owned);
+    await once(owned, "message");
+    owned.kill("SIGTERM");
+
+    expect(await waitForPidExit(owned.pid, 5_000)).toBe(true);
+    await exited(owned);
+    expect(owned.exitCode).toBe(0);
+    expect(owned.signalCode).toBeNull();
+  }, 10_000);
+
+  it("returns false for an owned process that stays alive past the bound", async () => {
+    const owned = child();
+    expect(await waitForPidExit(owned.pid, 100)).toBe(false);
+    expect(owned.exitCode).toBeNull();
+    expect(owned.signalCode).toBeNull();
   });
 });
