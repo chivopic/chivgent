@@ -1,18 +1,37 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { _electron as electron } from "playwright-core";
+import { promisify } from "node:util";
+import { cleanupE2EResources, listOwnedDescendants, shutdownElectron } from "./e2e-lifecycle.mjs";
+import { requireUiEntry } from "./e2e-ui-guard.mjs";
+
+requireUiEntry();
+const { _electron: electron } = await import("playwright-core");
 
 // Exercise the built app through its real IPC, host, Provider adapter and
 // workspace tools. Only this loopback fixture receives model requests.
 const desktop = fileURLToPath(new URL("../", import.meta.url));
 const root = await mkdtemp(join(tmpdir(), "chivgent desktop 中文-"));
+const fixtureTmp = join(root, "tmp");
 const project = join(root, "chivopic");
 const auth = join(root, "auth");
+const hostPidFile = join(root, "host.pid");
+const execFileAsync = promisify(execFile);
+async function assertPidExited(pid, label) {
+  try {
+    const { stdout } = await execFileAsync("ps", ["-o", "state=", "-p", String(pid)], { timeout: 500, maxBuffer: 1024 });
+    const state = stdout.trim();
+    assert.ok(!state || state.startsWith("Z"), `${label} PID ${pid} is still alive with state ${state}`);
+  } catch (error) {
+    if (error.code !== 1) throw error;
+  }
+}
+await mkdir(fixtureTmp);
 await mkdir(project);
 await mkdir(auth);
 const canonicalProject = await realpath(project);
@@ -20,6 +39,7 @@ const marker = "fixture-project-入口-123";
 await writeFile(join(project, "README.md"), `${marker}\n`);
 const requests = [];
 const fixtureErrors = [];
+let injectedPids = [];
 let activeApp;
 let stage = "setup";
 let endpointPath = "";
@@ -28,8 +48,12 @@ let endpoint = "";
 // Electron's utility process is reaped by its parent watchdog on hard exit.
 const watchdog = setTimeout(() => {
   console.error(`Electron read-only E2E deadline exceeded during: ${stage}`);
+  process.exitCode = 1;
   try { activeApp?.process()?.kill("SIGKILL"); } catch {}
-  process.exit(1);
+  void readFile(hostPidFile, "utf8").then(value => {
+    const pid = Number(value.trim());
+    if (Number.isSafeInteger(pid) && pid > 1) { try { process.kill(pid, "SIGKILL"); } catch {} }
+  }).catch(() => {});
 }, 120_000);
 watchdog.unref();
 const progress = (label) => {
@@ -82,6 +106,7 @@ const server = createServer(async (request, response) => {
   }
 });
 
+let runError;
 try {
   await new Promise((accept, reject) => {
     server.once("error", reject);
@@ -89,21 +114,26 @@ try {
   });
   endpointPath = `/v1/${"long-endpoint-segment-".repeat(5)}`;
   endpoint = `http://127.0.0.1:${server.address().port}${endpointPath}`;
+  await rm(hostPidFile, { force: true });
   const environment = {};
-  for (const key of ["PATH", "TMPDIR", "LANG", "LC_ALL", "SystemRoot", "DISPLAY", "XAUTHORITY"]) {
+  for (const key of ["PATH", "LANG", "LC_ALL", "SystemRoot", "DISPLAY", "XAUTHORITY"]) {
     if (process.env[key] !== undefined) environment[key] = process.env[key];
   }
   activeApp = await electron.launch({
     executablePath: createRequire(import.meta.url)("electron"),
     args: [resolve(desktop), `--user-data-dir=${join(root, "profile")}`],
     cwd: root,
-    env: { ...environment, CHIVGENT_HOME: auth, CHIVGENT_PROVIDER: "openai-compatible",
+    env: { ...environment, TMPDIR: fixtureTmp, CHIVGENT_DESKTOP_HOST_PID_FILE: hostPidFile, CHIVGENT_HOME: auth, CHIVGENT_PROVIDER: "openai-compatible",
       OPENAI_API_KEY: "fixture-key", OPENAI_MODEL: "desktop-fixture", OPENAI_BASE_URL: endpoint },
   });
   progress("Electron launched; waiting for host readiness");
   const page = await activeApp.firstWindow();
   progress("checking default information hierarchy");
   await page.locator(".dot.ready").first().waitFor({ timeout: 20_000 });
+  const electronPid = activeApp.process().pid;
+  const electronMainPid = await activeApp.evaluate(() => process.pid);
+  const hostPid = Number((await readFile(hostPidFile, "utf8")).trim());
+  console.log(JSON.stringify({ e2eShutdownOwner: { playwrightPid: electronPid, electronMainPid, hostPid } }));
   assert.equal(await page.getByTestId("provider-select").isVisible().catch(() => false), false,
     "provider controls must stay hidden until the user opens settings");
   assert.equal(await page.getByTestId("compatible-endpoint").isVisible().catch(() => false), false,
@@ -316,24 +346,79 @@ try {
     multiTurn: true, missingCredentialRecovery: true, cancellation: true, continueAfterStop: true,
     readonlyWorkspace: true, noCredentialWrites: true, minimumWindowLayout: true,
     providerRequests: requests.length }, null, 2));
+} catch (error) {
+  runError = error;
 } finally {
+  const cleanupErrors = [];
   try {
     progress("requesting the application's normal quit path");
-    // Playwright's close() can stall after all UI assertions have passed when
-    // Electron intercepts window lifecycle events. Exercise the real app
-    // before-quit / HostBridge shutdown path explicitly, then close transport.
     if (activeApp !== undefined) {
-      await activeApp.evaluate(({ app }) => {
-        app.quit();
-      });
-      progress("waiting for Electron shutdown after app.quit");
-      await activeApp.close();
+      const closing = activeApp;
+      const hangQuit = process.env.CHIVGENT_E2E_HANG_QUIT === "1";
+      const hangClose = process.env.CHIVGENT_E2E_HANG_CLOSE === "1";
+      if (hangQuit) {
+        const hostPid = Number((await readFile(hostPidFile, "utf8")).trim());
+        const electronPid = closing.process().pid;
+        const descendants = await listOwnedDescendants(electronPid);
+        injectedPids = [electronPid, hostPid, ...descendants];
+        console.log(JSON.stringify({ e2eFaultInjection: "prevent-before-quit", root, fixtureTmp, hostPid, electronPid, descendants }));
+        await closing.evaluate(({ app }) => app.on("before-quit", event => event.preventDefault()));
+      }
+      if (hangClose) {
+        const hostPid = Number((await readFile(hostPidFile, "utf8")).trim());
+        const electronPid = closing.process().pid;
+        const descendants = await listOwnedDescendants(electronPid);
+        injectedPids = [electronPid, hostPid, ...descendants];
+        console.log(JSON.stringify({ e2eFaultInjection: "close-promise-never-settles", root, fixtureTmp, hostPid, electronPid, descendants }));
+      }
+      const shutdownApp = hangClose ? {
+        process: () => closing.process(),
+        close: () => { void closing.close().catch(() => {}); return new Promise(() => {}); },
+      } : closing;
+      let shutdownFailure;
+      try {
+        const shutdownResult = await shutdownElectron({ app: shutdownApp, hostPidFile });
+        console.log(JSON.stringify({ e2eShutdownResult: shutdownResult }));
+      } catch (error) {
+        shutdownFailure = error;
+      }
+      if (hangQuit || hangClose) {
+        const expectedStage = hangQuit ? "Electron OS process exit" : "Playwright app.close";
+        assert.ok(shutdownFailure, `fault injection ${hangQuit ? "hang-quit" : "hang-close"} did not fail teardown`);
+        assert.ok(shutdownFailure.message.includes(expectedStage),
+          `fault injection failed in the wrong stage: ${shutdownFailure.message}`);
+        console.log(JSON.stringify({ e2eFaultInjectionResult: hangQuit ? "hang-quit" : "hang-close",
+          stage: shutdownFailure.stage ?? shutdownFailure.message.match(/E2E teardown timed out during ([^(]+)/)?.[1]?.trim(),
+          message: shutdownFailure.message, ownerPid: injectedPids[0], hostPid: injectedPids[1], descendants: injectedPids.slice(2) }));
+      } else if (shutdownFailure) {
+        cleanupErrors.push(shutdownFailure);
+      }
+      activeApp = undefined;
     }
-  } finally {
-    progress("closing fixture HTTP server and deleting temporary project");
-    server.closeAllConnections();
-    await new Promise((accept) => server.close(accept));
-    await rm(root, { recursive: true, force: true });
-    clearTimeout(watchdog);
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  progress("closing fixture HTTP server and deleting temporary project");
+  try { await cleanupE2EResources({ server, root }); }
+  catch (error) { cleanupErrors.push(error); }
+  try {
+    await access(root);
+    cleanupErrors.push(new Error(`fixture root remained after cleanup: ${root}`));
+  } catch (error) {
+    if (error.code !== "ENOENT") cleanupErrors.push(error);
+    else console.log(JSON.stringify({ e2eFixtureCleanup: { rootRemoved: true, fixtureTmp: join(root, "tmp") } }));
+  }
+  if (injectedPids.length > 0) {
+    for (const [index, pid] of injectedPids.entries()) {
+      try { await assertPidExited(pid, index === 0 ? "Electron owner" : index === 1 ? "Agent host" : "Electron descendant"); }
+      catch (error) { cleanupErrors.push(error); }
+    }
+  }
+  clearTimeout(watchdog);
+  if (cleanupErrors.length) {
+    runError = runError
+      ? new AggregateError([runError, ...cleanupErrors], "E2E scenario and teardown both failed")
+      : cleanupErrors.length === 1 ? cleanupErrors[0] : new AggregateError(cleanupErrors, "E2E teardown failed");
   }
 }
+if (runError) throw runError;

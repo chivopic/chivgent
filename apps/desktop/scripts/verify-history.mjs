@@ -5,6 +5,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { cleanupE2EResources, shutdownElectron } from './e2e-lifecycle.mjs';
+import { requireUiEntry } from './e2e-ui-guard.mjs';
+
+requireUiEntry();
 
 // Run against the built app with a temporary profile, project, history, and localhost model.
 // Optional arguments: desktop directory, screenshot destination.
@@ -16,6 +20,7 @@ const { _electron: electron } = require('playwright-core');
 const root = await mkdtemp(join(tmpdir(), 'chivgent-history-e2e-'));
 const project = join(root, 'chivopic');
 const auth = join(root, 'auth');
+const hostPidFile = join(root, 'host.pid');
 await mkdir(project); await mkdir(auth);
 const canonicalProject = await realpath(project);
 const marker = 'history-real-file-123';
@@ -28,8 +33,12 @@ const fixtureErrors = [];
 const progress = label => { stage = label; console.log(`History E2E: ${label}`); };
 const watchdog = setTimeout(() => {
   console.error(`History E2E timed out: ${stage}`);
+  process.exitCode = 1;
   try { activeApp?.process()?.kill('SIGKILL'); } catch {}
-  process.exit(1);
+  void readFile(hostPidFile, 'utf8').then(value => {
+    const pid = Number(value.trim());
+    if (Number.isSafeInteger(pid) && pid > 1) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+  }).catch(() => {});
 }, 100_000);
 watchdog.unref();
 const server = createServer(async (request, response) => {
@@ -62,8 +71,9 @@ const server = createServer(async (request, response) => {
 const environment = {};
 for (const key of ['PATH', 'TMPDIR', 'LANG', 'LC_ALL', 'SystemRoot', 'DISPLAY', 'XAUTHORITY']) if (process.env[key] !== undefined) environment[key] = process.env[key];
 async function launch(endpoint) {
+  await rm(hostPidFile, { force: true });
   activeApp = await electron.launch({ executablePath: require('electron'), args: [desktop, `--user-data-dir=${join(root, 'profile')}`], cwd: root,
-    env: { ...environment, CHIVGENT_DESKTOP_HOST_PID_FILE: join(root, 'host.pid'), CHIVGENT_DESKTOP_HISTORY_DIR: join(root, 'history'), CHIVGENT_HOME: auth, CHIVGENT_PROVIDER: 'openai-compatible', OPENAI_API_KEY: 'fixture-key', OPENAI_MODEL: 'history-fixture', OPENAI_BASE_URL: endpoint } });
+    env: { ...environment, CHIVGENT_DESKTOP_HOST_PID_FILE: hostPidFile, CHIVGENT_DESKTOP_HISTORY_DIR: join(root, 'history'), CHIVGENT_HOME: auth, CHIVGENT_PROVIDER: 'openai-compatible', OPENAI_API_KEY: 'fixture-key', OPENAI_MODEL: 'history-fixture', OPENAI_BASE_URL: endpoint } });
   const page = await activeApp.firstWindow();
   await page.locator('[data-testid="status-action"] .dot.ready').waitFor({ timeout: 15_000 });
   await page.getByTestId('status-action').click();
@@ -73,10 +83,11 @@ async function launch(endpoint) {
 }
 async function quit() {
   if (!activeApp) return;
-  const closing = activeApp; activeApp = undefined;
-  await closing.evaluate(({ app }) => app.quit());
-  await closing.close();
+  const closing = activeApp;
+  await shutdownElectron({ app: closing, hostPidFile });
+  activeApp = undefined;
 }
+let runError;
 try {
   await new Promise((accept, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', accept); });
   const endpoint = `http://127.0.0.1:${server.address().port}/v1`;
@@ -169,10 +180,19 @@ try {
   assert.deepEqual(fixtureErrors, []);
   if (process.argv[3]) await page.screenshot({ path: resolve(process.argv[3]) });
   console.log(JSON.stringify({ preservedProviderSelection: true, liveReload: true, onePromptAfterReload: true, toolRestored: true, noReplay: true, restartHistory: true, resumedModelContext: true, crashedRunUnknown: true, noCrashReplay: true, readonlyWorkspace: true, noCredentialWrites: true, providerRequests: requests.length }, null, 2));
+} catch (error) {
+  runError = error;
 } finally {
+  const cleanupErrors = [];
   finishStream?.();
-  try { await quit(); } finally {
-    server.closeAllConnections(); await new Promise(accept => server.close(accept));
-    await rm(root, { recursive: true, force: true }); clearTimeout(watchdog);
+  try { await quit(); } catch (error) { cleanupErrors.push(error); }
+  try { await cleanupE2EResources({ server, root }); }
+  catch (error) { cleanupErrors.push(error); }
+  clearTimeout(watchdog);
+  if (cleanupErrors.length) {
+    runError = runError
+      ? new AggregateError([runError, ...cleanupErrors], "History E2E scenario and teardown both failed")
+      : cleanupErrors.length === 1 ? cleanupErrors[0] : new AggregateError(cleanupErrors, "History E2E teardown failed");
   }
 }
+if (runError) throw runError;

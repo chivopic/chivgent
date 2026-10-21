@@ -166,7 +166,7 @@ CHIVGENT_WEB_SEARCH_TOKEN=… chivgent --web-search https://search.example.com
 
 在已提交的代码上工作。不信任的仓库，用一份副本。
 
-这个仓库还包含 Electron 桌面应用。它通过原生目录选择器打开项目，并用同一 Agent 和只读项目工具运行已配置的 Provider。桌面端仅从环境变量或 CLI `auth.json` 读取 API Key，不保存凭证；它不会读取 `oauth.json` 或刷新订阅 OAuth 凭证。仅通过 `/login oauth` 登录的用户，使用桌面端前还需配置 API Key。选择兼容 Provider 时，请先核对界面显示的请求端点，再发送项目内容。目前每个项目保留一个会话：窗口刷新可恢复当前运行，应用重启后加载历史供用户主动续聊。中断运行标记为结果未知，不自动重放；完整历史导航和 CLI 会话导入仍待实现。设置 `CHIVGENT_DESKTOP_DEMO=1` 可显式启用离线演示。使用 `npm run desktop:dev` 开发；离线真实 adapter 验收运行 `npm run desktop:build && node apps/desktop/scripts/verify-readonly.mjs`。[桌面行为与限制](docs/desktop-architecture.md)。
+这个仓库还包含 Electron 桌面应用。它通过原生目录选择器打开项目，并用同一 Agent 和只读项目工具运行已配置的 Provider。桌面端仅从环境变量或 CLI `auth.json` 读取 API Key，不保存凭证；它不会读取 `oauth.json` 或刷新订阅 OAuth 凭证。仅通过 `/login oauth` 登录的用户，使用桌面端前还需配置 API Key。选择兼容 Provider 时，请先核对界面显示的请求端点，再发送项目内容。目前每个项目保留一个会话：窗口刷新可恢复当前运行，应用重启后加载历史供用户主动续聊。中断运行标记为结果未知，不自动重放；完整历史导航和 CLI 会话导入仍待实现。设置 `CHIVGENT_DESKTOP_DEMO=1` 可显式启用离线演示。使用 `npm run desktop:dev` 开发；本地离线真实 adapter 验收运行 `npm run desktop:build && node apps/desktop/scripts/verify-readonly.mjs --allow-ui`，会打开可见窗口。重复 GUI 验收由 CI 在 Xvfb 下运行。[桌面行为与限制](docs/desktop-architecture.md)。
 
 ## 文档
 

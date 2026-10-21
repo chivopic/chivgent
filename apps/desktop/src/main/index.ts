@@ -199,7 +199,9 @@ app.on("before-quit", (event) => {
   }
   event.preventDefault();
   quitting = true;
-  void bridge.shutdown().finally(() => {
+  void bridge.shutdown().catch((error: unknown) => {
+    console.error("Agent host shutdown failed; continuing application exit after reporting the cleanup error.", error);
+  }).finally(() => {
     app.quit();
   });
 });

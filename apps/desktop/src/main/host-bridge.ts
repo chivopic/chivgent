@@ -10,6 +10,7 @@ import { hostEntryError, hostEntryPath } from "./paths.js";
 
 const HOST_SERVICE_NAME = "chivgent-agent-host";
 const REQUEST_TIMEOUT_MS = 8_000;
+const HOST_SHUTDOWN_TIMEOUT_MS = 2_000;
 
 export interface HostBridge {
   readonly start: () => HostStatus;
@@ -24,6 +25,7 @@ export function createHostBridge(): HostBridge {
   let spawned: Promise<void> = Promise.resolve();
   let status: HostStatus = { phase: "starting" };
   let shuttingDown = false;
+  let shutdownPromise: Promise<void> | undefined;
   const eventListeners = new Set<(message: HostToMain) => void>();
   const statusListeners = new Set<(status: HostStatus) => void>();
   const pending = new Map<
@@ -188,29 +190,72 @@ export function createHostBridge(): HostBridge {
         statusListeners.delete(listener);
       };
     },
-    async shutdown() {
+    shutdown() {
+      if (shutdownPromise !== undefined) return shutdownPromise;
       shuttingDown = true;
       const target = child;
       if (target === undefined) {
         publish({ phase: "exited", message: "Agent host 已停止。" });
-        return;
+        shutdownPromise = Promise.resolve();
+        return shutdownPromise;
       }
-      try {
-        target.postMessage({ type: "shutdown", requestId: "shutdown" });
-      } catch {
-        target.kill();
-        return;
-      }
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(() => {
-          target.kill();
-          resolve();
-        }, 2_000);
-        target.once("exit", () => {
-          clearTimeout(timer);
-          resolve();
-        });
+
+      // Register before sending the request: UtilityProcess can exit before
+      // postMessage returns, and every forced-stop path must wait for this
+      // owned process's actual exit event before Electron quits.
+      let didExit = child !== target;
+      let resolveExit!: () => void;
+      const exited = new Promise<void>((resolve) => { resolveExit = resolve; });
+      if (didExit) resolveExit();
+      else target.once("exit", () => {
+        didExit = true;
+        resolveExit();
       });
+
+      shutdownPromise = (async () => {
+        let messageError: unknown;
+        let messageFailed = false;
+        try {
+          target.postMessage({ type: "shutdown", requestId: "shutdown" });
+        } catch (error: unknown) {
+          messageFailed = true;
+          messageError = error;
+        }
+
+        let gracefulExit = didExit;
+        if (!messageFailed && !gracefulExit) {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          gracefulExit = await Promise.race([
+            exited.then(() => true),
+            new Promise<boolean>((resolve) => {
+              timer = setTimeout(() => resolve(false), HOST_SHUTDOWN_TIMEOUT_MS);
+            }),
+          ]).finally(() => { if (timer !== undefined) clearTimeout(timer); });
+        }
+        if (gracefulExit) return;
+
+        let killError: unknown;
+        let killResult: boolean | undefined;
+        try {
+          killResult = target.kill();
+        } catch (error: unknown) {
+          killError = error;
+        }
+
+        let killedExit = didExit;
+        if (!killedExit) {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          killedExit = await Promise.race([
+            exited.then(() => true),
+            new Promise<boolean>((resolve) => {
+              timer = setTimeout(() => resolve(false), HOST_SHUTDOWN_TIMEOUT_MS);
+            }),
+          ]).finally(() => { if (timer !== undefined) clearTimeout(timer); });
+        }
+        if (killedExit) return;
+        throw new Error(`Agent host did not exit within ${HOST_SHUTDOWN_TIMEOUT_MS}ms after kill (PID ${target.pid}, kill returned ${String(killResult)}, kill error ${String(killError ?? "none")}, shutdown message error ${String(messageError ?? "none")}).`);
+      })();
+      return shutdownPromise;
     },
   };
 }

@@ -71,5 +71,39 @@ jobs:
       - name: Build Electron app
         run: npm run desktop:build
 
-      - name: Electron read-only end-to-end verification (offline fixture)
-        run: xvfb-run -a node apps/desktop/scripts/verify-readonly.mjs
+      - name: Electron read-only end-to-end verification (offline fixture, 20 runs under Xvfb)
+        run: |
+          set -e
+          run_e2e_under_xvfb() {
+            label="$1"
+            shift
+            echo "Electron read-only E2E ${label}"
+            xvfb-run -a env CHIVGENT_E2E_XVFB=1 TMPDIR=/tmp "$@" node apps/desktop/scripts/verify-readonly.mjs &
+            wrapper_pid=$!
+            xvfb_pid=""
+            for attempt in $(seq 1 100); do
+              xvfb_pid="$(ps -eo pid=,ppid=,comm= | awk -v parent="$wrapper_pid" '$2 == parent && $3 ~ /^Xvfb/ { print $1; exit }')"
+              if [ -n "$xvfb_pid" ]; then break; fi
+              sleep 0.05
+            done
+            if wait "$wrapper_pid"; then status=0; else status=$?; fi
+            if [ "$status" -ne 0 ]; then
+              echo "Xvfb run ${label} failed with exit ${status}; wrapper PID ${wrapper_pid}; Xvfb PID ${xvfb_pid:-unknown}"
+              return "$status"
+            fi
+            if [ -z "$xvfb_pid" ]; then
+              echo "Could not capture the Xvfb child owned by wrapper PID ${wrapper_pid} during ${label}"
+              return 1
+            fi
+            xvfb_comm="$(ps -o comm= -p "$xvfb_pid" 2>/dev/null || true)"
+            if [[ "$xvfb_comm" == Xvfb* ]]; then
+              echo "Xvfb PID ${xvfb_pid} survived wrapper PID ${wrapper_pid} after ${label}"
+              return 1
+            fi
+            echo "Xvfb cleanup verified for ${label}: wrapper PID ${wrapper_pid}, Xvfb PID ${xvfb_pid} exited"
+          }
+          for run in $(seq 1 20); do
+            run_e2e_under_xvfb "run ${run}/20"
+          done
+          run_e2e_under_xvfb "injected hang-quit cleanup" CHIVGENT_E2E_HANG_QUIT=1
+          run_e2e_under_xvfb "injected hang-close cleanup" CHIVGENT_E2E_HANG_CLOSE=1
