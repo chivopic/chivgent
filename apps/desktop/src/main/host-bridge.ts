@@ -1,4 +1,4 @@
-import { appendFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { utilityProcess, type UtilityProcess } from "electron";
 import {
   isHostToMain,
@@ -11,16 +11,6 @@ import { hostEntryError, hostEntryPath } from "./paths.js";
 const HOST_SERVICE_NAME = "chivgent-agent-host";
 const REQUEST_TIMEOUT_MS = 8_000;
 const HOST_SHUTDOWN_TIMEOUT_MS = 2_000;
-
-export function traceE2EShutdown(stage: string, details: Record<string, unknown> = {}): void {
-  const path = process.env["CHIVGENT_DESKTOP_E2E_SHUTDOWN_TRACE_FILE"];
-  if (path === undefined) return;
-  try {
-    appendFileSync(path, `${JSON.stringify({ stage, pid: process.pid, at: Date.now(), ...details })}\n`);
-  } catch {
-    // Optional E2E diagnostics must never affect application shutdown.
-  }
-}
 
 export interface HostBridge {
   readonly start: () => HostStatus;
@@ -100,13 +90,9 @@ export function createHostBridge(): HostBridge {
       }
     });
     let stderr = "";
-    let stdoutEnded = false;
-    let stderrEnded = false;
     started.stderr?.on("data", (chunk: Buffer | string) => {
       stderr = `${stderr}${chunk.toString()}`.slice(-2_000);
     });
-    started.stdout?.on("end", () => { stdoutEnded = true; });
-    started.stderr?.on("end", () => { stderrEnded = true; });
     started.stdout?.on("data", () => {
       // Drain so a piped host cannot block on a full buffer.
     });
@@ -135,10 +121,6 @@ export function createHostBridge(): HostBridge {
       }
     });
     started.on("exit", (code) => {
-      traceE2EShutdown("host-process.exit", { hostPid: started.pid, code, shuttingDown,
-        stdoutEnded, stderrEnded,
-        stdoutReadableEnded: (started.stdout as unknown as { readableEnded?: boolean } | undefined)?.readableEnded,
-        stderrReadableEnded: (started.stderr as unknown as { readableEnded?: boolean } | undefined)?.readableEnded });
       child = undefined;
       const detail = stderr.trim();
       const message = shuttingDown
@@ -212,9 +194,7 @@ export function createHostBridge(): HostBridge {
       if (shutdownPromise !== undefined) return shutdownPromise;
       shuttingDown = true;
       const target = child;
-      traceE2EShutdown("host-bridge.shutdown.begin", { hostPid: target?.pid });
       if (target === undefined) {
-        traceE2EShutdown("host-bridge.shutdown.no-host");
         publish({ phase: "exited", message: "Agent host 已停止。" });
         shutdownPromise = Promise.resolve();
         return shutdownPromise;
@@ -229,22 +209,21 @@ export function createHostBridge(): HostBridge {
       if (didExit) resolveExit();
       else target.once("exit", () => {
         didExit = true;
-        traceE2EShutdown("host-bridge.shutdown-exit", { hostPid: target.pid });
         resolveExit();
       });
 
       shutdownPromise = (async () => {
         let messageError: unknown;
+        let messageFailed = false;
         try {
           target.postMessage({ type: "shutdown", requestId: "shutdown" });
-          traceE2EShutdown("host-bridge.shutdown-message-sent", { hostPid: target.pid });
         } catch (error: unknown) {
+          messageFailed = true;
           messageError = error;
-          traceE2EShutdown("host-bridge.shutdown-message-failed", { hostPid: target.pid });
         }
 
         let gracefulExit = didExit;
-        if (messageError === undefined && !gracefulExit) {
+        if (!messageFailed && !gracefulExit) {
           let timer: ReturnType<typeof setTimeout> | undefined;
           gracefulExit = await Promise.race([
             exited.then(() => true),
@@ -255,7 +234,6 @@ export function createHostBridge(): HostBridge {
         }
         if (gracefulExit) return;
 
-        traceE2EShutdown("host-bridge.shutdown-timeout-kill", { hostPid: target.pid, messageError: String(messageError ?? "") });
         let killError: unknown;
         let killResult: boolean | undefined;
         try {

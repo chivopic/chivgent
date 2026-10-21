@@ -32,23 +32,21 @@ afterEach(async () => {
 });
 
 describe("Electron E2E teardown", () => {
-  it("sends one normal quit request and returns after the owned Electron and host processes exit", async () => {
+  it("uses Playwright close once and returns after the owned Electron and host processes exit", async () => {
     const root = mkdtempSync(join(tmpdir(), "chivgent-e2e-normal-quit-")); roots.push(root);
     const hostPidFile = join(root, "host.pid");
     const host = child();
     writeFileSync(hostPidFile, `${host.pid}\n`);
     const electron = spawn(globalThis.process.execPath, ["-e", "process.on('message', () => process.exit(0)); setInterval(() => {}, 1000)"], { stdio: ["ignore", "ignore", "ignore", "ipc"] });
     children.push(electron);
-    let quitRequests = 0;
-    const electronApp = { quit: () => { quitRequests += 1; if (quitRequests === 1) electronApp.quit(); else { host.kill("SIGTERM"); electron.send("quit"); } } };
+    let closeRequests = 0;
     const app = {
       process: () => electron,
-      evaluate: async (callback: (arg: { app: typeof electronApp }) => void) => callback({ app: electronApp }),
-      close: async () => { electronApp.quit(); await exited(electron); },
+      close: async () => { closeRequests += 1; host.kill("SIGTERM"); electron.send("quit"); await exited(electron); },
     };
 
     await expect(shutdown({ app, hostPidFile, timeoutMs: 500 })).resolves.toMatchObject({ ownerPid: electron.pid, exitCode: 0, signalCode: null });
-    expect(quitRequests).toBe(2);
+    expect(closeRequests).toBe(1);
     expect(await exitedWithin(host)).toBe(true);
     expect(await exitedWithin(electron)).toBe(true);
     expect(host.signalCode).toBe("SIGTERM");
@@ -78,16 +76,16 @@ describe("Electron E2E teardown", () => {
     expect(ownerCloseAt).toBeGreaterThanOrEqual(ownerExitAt);
   });
 
-  it("bounds Playwright's single app.quit request and reaps the fixture host and Electron owner", async () => {
+  it("bounds a prevented quit and reaps the fixture host and Electron owner", async () => {
     const root = mkdtempSync(join(tmpdir(), "chivgent-e2e-teardown-")); roots.push(root);
     const hostPidFile = join(root, "host.pid");
     const host = child();
     writeFileSync(hostPidFile, `${host.pid}\n`);
     const electron = child();
-    const app = { process: () => electron, evaluate: () => new Promise(() => {}), close: () => { throw new Error("close must not be used after quit scheduling failure"); } };
+    const app = { process: () => electron, close: () => new Promise(() => {}) };
 
     await expect(shutdown({ app, hostPidFile, timeoutMs: 500 }))
-      .rejects.toMatchObject({ name: "E2EStageError", stage: expect.stringContaining("Electron quit scheduling"), message: expect.stringContaining(`Electron PID ${electron.pid}`) });
+      .rejects.toMatchObject({ name: "E2EStageError", stage: expect.stringContaining("Electron OS process exit"), message: expect.stringContaining(`Electron PID ${electron.pid}`) });
     expect(await exitedWithin(host)).toBe(true);
     expect(await exitedWithin(electron)).toBe(true);
     expect(host.exitCode).toBeNull();
@@ -97,29 +95,24 @@ describe("Electron E2E teardown", () => {
     expect(existsSync(root)).toBe(false);
   });
 
-  it("bounds a hung quit request and tolerates target-closed quit rejection", async () => {
-    const electron = child();
-    const hangingClose = { process: () => electron, evaluate: () => new Promise(() => {}), close: () => { throw new Error("close must not be used for normal shutdown"); } };
-    await expect(shutdown({ app: hangingClose, timeoutMs: 500 }))
-      .rejects.toMatchObject({ name: "E2EStageError", stage: expect.stringContaining("Electron quit scheduling"), message: expect.stringContaining(`Electron PID ${electron.pid}`) });
-    expect(await exitedWithin(electron)).toBe(true);
-    expect(electron.signalCode).toBe("SIGTERM");
+  it("tolerates target-closed Playwright close only after a normal Electron exit", async () => {
+    const electron = spawn(globalThis.process.execPath, ["-e", ""], { stdio: "ignore" });
+    children.push(electron);
+    await exited(electron);
 
-    const alreadyClosed = spawn(globalThis.process.execPath, ["-e", ""], { stdio: "ignore" });
-    children.push(alreadyClosed);
-    await exited(alreadyClosed);
-    const targetClosed = { process: () => alreadyClosed, evaluate: () => Promise.reject(new Error("Target page, context or browser has been closed")) };
-    await expect(shutdown({ app: targetClosed, timeoutMs: 500 })).resolves.toMatchObject({ ownerPid: alreadyClosed.pid, exitCode: 0 });
+    const targetClosed = { process: () => electron, close: () => Promise.reject(new Error("Target page, context or browser has been closed")) };
+    await expect(shutdown({ app: targetClosed, timeoutMs: 500 })).resolves.toMatchObject({ ownerPid: electron.pid, exitCode: 0, signalCode: null });
   });
 
   it("bounds a hung Playwright close and reaps the owner", async () => {
-    const electron = child();
-    const electronApp = { quit: () => electron.kill("SIGTERM") };
-    const app = { process: () => electron, evaluate: async (callback: (arg: { app: typeof electronApp }) => void) => callback({ app: electronApp }), close: () => { electronApp.quit(); return new Promise(() => {}); } };
+    const electron = spawn(globalThis.process.execPath, ["-e", "process.on('message', () => process.exit(0)); setInterval(() => {}, 1000)"], { stdio: ["ignore", "ignore", "ignore", "ipc"] });
+    children.push(electron);
+    const app = { process: () => electron, close: () => { electron.send("quit"); return new Promise(() => {}); } };
     await expect(shutdown({ app, timeoutMs: 500 }))
       .rejects.toMatchObject({ name: "E2EStageError", stage: expect.stringContaining("Playwright app.close"), message: expect.stringContaining(`Electron PID ${electron.pid}`) });
     expect(await exitedWithin(electron)).toBe(true);
-    expect(electron.signalCode).toBe("SIGTERM");
+    expect(electron.exitCode).toBe(0);
+    expect(electron.signalCode).toBeNull();
   });
 
   it("still reaps Electron when its host PID file is unreadable", async () => {
@@ -127,7 +120,7 @@ describe("Electron E2E teardown", () => {
     const hostPidFile = join(root, "host.pid");
     writeFileSync(hostPidFile, "not-a-pid\n");
     const electron = child();
-    const app = { process: () => electron, evaluate: () => new Promise(() => {}) };
+    const app = { process: () => electron, close: () => new Promise(() => {}) };
 
     await expect(shutdown({ app, hostPidFile, timeoutMs: 500 }))
       .rejects.toThrow(/could not determine owned host PID.*invalid PID value/);
@@ -139,7 +132,7 @@ describe("Electron E2E teardown", () => {
     const electron = spawn(globalThis.process.execPath, ["-e", "process.on('SIGTERM', () => {}); process.send('ready'); setInterval(() => {}, 1000)"], { stdio: ["ignore", "ignore", "ignore", "ipc"] });
     children.push(electron);
     await once(electron, "message");
-    const app = { process: () => electron, evaluate: () => new Promise(() => {}) };
+    const app = { process: () => electron, close: () => new Promise(() => {}) };
 
     await expect(shutdown({ app, timeoutMs: 500 }))
       .rejects.toMatchObject({ name: "E2EStageError", message: expect.stringContaining(`Electron PID ${electron.pid}`) });

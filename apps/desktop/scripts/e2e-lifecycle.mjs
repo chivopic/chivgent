@@ -130,7 +130,7 @@ async function readPid(path) {
   }
 }
 
-export async function shutdownElectron({ app, hostPidFile, diagnosticsFile, timeoutMs = 5_000, listDescendants = listOwnedDescendants }) {
+export async function shutdownElectron({ app, hostPidFile, timeoutMs = 5_000, listDescendants = listOwnedDescendants }) {
   if (!app) return;
   const owner = app.process();
   const ownerLabel = `Electron PID ${owner?.pid ?? "unknown"}`;
@@ -138,40 +138,16 @@ export async function shutdownElectron({ app, hostPidFile, diagnosticsFile, time
   let ownerCloseObserved = Boolean(owner?.closed);
   let ownerExitAt;
   let ownerCloseAt = ownerCloseObserved ? Date.now() : undefined;
-  let ownerStderrTail = "";
   owner?.once("exit", () => { ownerExitAt = Date.now(); });
   if (owner && !owner.closed) owner.once("close", () => { ownerCloseObserved = true; ownerCloseAt = Date.now(); });
-  owner?.stderr?.on("data", chunk => { ownerStderrTail = `${ownerStderrTail}${chunk.toString()}`.slice(-8_192); });
   const failures = [];
   let descendants = [];
   let descendantSnapshotError;
   try { descendants = await boundedStage(`Electron child-process snapshot (${ownerLabel})`, () => listDescendants(owner?.pid), timeoutMs); }
   catch (error) { descendantSnapshotError = error; }
-  let closePromise;
   try {
-    try {
-      // Let the CDP evaluation reply before requesting shutdown: destroying the
-      // execution context during app.quit() can strand the evaluate response.
-      // ElectronApplication.close() also calls app.quit() and waits on a close
-      // event, so keep this to exactly one explicit quit request.
-      await boundedStage(`Electron quit scheduling (${ownerLabel})`, () => app.evaluate(({ app: electronApp }) => {
-        const quit = electronApp.quit.bind(electronApp);
-        electronApp.quit = () => {
-          electronApp.quit = quit;
-          setImmediate(() => {
-            process.getBuiltinModule("inspector").close();
-            quit();
-          });
-        };
-      }), timeoutMs);
-      closePromise = Promise.resolve().then(() => app.close());
-      closePromise.catch(() => {});
-    } catch (error) {
-      const targetClosed = /Target (?:page|context|browser).*has been closed|Electron application has been closed/i.test(error.message);
-      if (!targetClosed || !await waitForChildExit(owner, 100)) {
-        failures.push(error instanceof E2EStageError ? error : new Error(`Electron app.quit request (${ownerLabel}) failed: ${error.message}`, { cause: error }));
-      }
-    }
+    const closePromise = Promise.resolve().then(() => app.close());
+    closePromise.catch(() => {});
     if (!await waitForChildExit(owner, timeoutMs)) failures.push(new E2EStageError(`Electron OS process exit (${ownerLabel})`, timeoutMs));
     const hostPid = await readPid(hostPidFile);
     if (await waitForPidExit(hostPid, 500) === false) failures.push(new E2EStageError(`Agent host shutdown (PID ${hostPid}, owner ${ownerLabel})`, timeoutMs));
@@ -183,7 +159,10 @@ export async function shutdownElectron({ app, hostPidFile, diagnosticsFile, time
     if (descendantSnapshotError) failures.push(new Error(`could not snapshot Electron child processes (${ownerLabel}): ${descendantSnapshotError.message}`));
     if (failures.length === 0) {
       try { await boundedStage(`Playwright app.close (${ownerLabel})`, () => closePromise, 1_000); }
-      catch (error) { failures.push(error); }
+      catch (error) {
+        const targetClosed = /Target (?:page|context|browser).*has been closed|Electron application has been closed/i.test(error.message);
+        if (!targetClosed || owner?.exitCode !== 0 || owner?.signalCode !== null) failures.push(error);
+      }
     }
     if (failures.length === 0 && (owner?.exitCode !== 0 || owner?.signalCode !== null)) {
       failures.push(new Error(`Electron did not exit normally (${ownerLabel}): exitCode=${owner?.exitCode}, signalCode=${owner?.signalCode}`));
@@ -191,7 +170,6 @@ export async function shutdownElectron({ app, hostPidFile, diagnosticsFile, time
     if (failures.length === 0) return { ownerPid: owner?.pid, exitCode: owner?.exitCode, signalCode: owner?.signalCode,
       exitAfterMs: ownerExitAt === undefined ? undefined : ownerExitAt - ownerStartedAt,
       closeAfterMs: ownerCloseAt === undefined ? undefined : ownerCloseAt - ownerStartedAt,
-      inspectorWaitSeen: ownerStderrTail.includes("Waiting for the debugger to disconnect"),
       hostPid, descendants };
   } catch (error) {
     failures.push(error);
@@ -217,15 +195,6 @@ export async function shutdownElectron({ app, hostPidFile, diagnosticsFile, time
   if (primary) {
     if (failures.length > 1) primary.message += `; cleanup errors: ${failures.slice(1).map(error => error.message).join("; ")}`;
     primary.message += `; owner process state: pid=${owner?.pid ?? "unknown"}, exitCode=${owner?.exitCode}, signalCode=${owner?.signalCode}, exitAfterMs=${ownerExitAt === undefined ? "pending" : ownerExitAt - ownerStartedAt}, closeObserved=${ownerCloseObserved}, closeAfterMs=${ownerCloseAt === undefined ? "pending" : ownerCloseAt - ownerStartedAt}`;
-    if (ownerStderrTail) primary.message += `; Electron stderr tail: ${ownerStderrTail.trim()}`;
-    if (diagnosticsFile) {
-      try {
-        const trace = await boundedStage("shutdown diagnostic read", () => readFile(diagnosticsFile, "utf8"), 500);
-        primary.message += `; lifecycle trace: ${trace.trim() || "(empty)"}`;
-      } catch (error) {
-        if (error.code !== "ENOENT") primary.message += `; lifecycle trace unavailable: ${error.message}`;
-      }
-    }
     throw primary;
   }
 }

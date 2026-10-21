@@ -8,7 +8,7 @@ import {
   type HostToMain,
   type IpcResult,
 } from "../protocol/messages.js";
-import { createHostBridge, traceE2EShutdown, type HostBridge } from "./host-bridge.js";
+import { createHostBridge, type HostBridge } from "./host-bridge.js";
 
 let mainWindow: BrowserWindow | undefined;
 let quitting = false;
@@ -194,31 +194,15 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", (event) => {
-  traceE2EShutdown("electron.before-quit", { quitting });
   if (quitting) {
-    traceE2EShutdown("electron.before-quit-allowed");
     return;
   }
   event.preventDefault();
   quitting = true;
-  traceE2EShutdown("electron.before-quit-prevented");
   void bridge.shutdown().catch((error: unknown) => {
-    process.exitCode = 1;
-    traceE2EShutdown("electron.host-shutdown-failed", {
-      message: error instanceof Error ? error.message : String(error),
-    });
+    console.error("Agent host shutdown failed; continuing application exit after reporting the cleanup error.", error);
   }).finally(() => {
-    traceE2EShutdown("electron.host-shutdown-finished");
     app.quit();
   });
 });
-
-app.on("will-quit", () => traceE2EShutdown("electron.will-quit"));
-app.on("quit", (event, exitCode) => {
-  traceE2EShutdown("electron.quit", { exitCode });
-  if (process.env["CHIVGENT_DESKTOP_E2E_SHUTDOWN_TRACE_FILE"] !== undefined) {
-    setTimeout(() => traceE2EShutdown("electron.post-quit-resources", { resources: process.getActiveResourcesInfo() }), 250);
-  }
-});
-process.on("exit", code => traceE2EShutdown("electron.process-exit", { code }));
 
