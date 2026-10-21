@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PermissionPolicy } from "../src/permissions.js";
+import { ShellApprovalGate } from "../src/shell/approval.js";
 
 const harness = vi.hoisted(() => {
   const stream = () => ({
@@ -131,6 +133,17 @@ describe("CLI terminal UI wiring", () => {
   it("honors an explicit modern permission mode", async () => {
     expect(await main(["--permission-mode", "workspace", "--no-session", "--no-extensions"])).toBe(0);
     expect(harness.createLocalSession.mock.calls[0]?.[0].permissionPolicy).toMatchObject({ mode: "workspace" });
+  });
+
+  it("wires detailed approval decisions into the modern shell permission policy", async () => {
+    expect(await main(["--permission-mode", "workspace", "--no-session", "--no-extensions"])).toBe(0);
+    const config = harness.createLocalSession.mock.calls[0]?.[0];
+    const gate = config?.shellApproval as ShellApprovalGate;
+    const policy = config?.permissionPolicy as PermissionPolicy;
+    gate.setHandler(async () => ({ approved: false, reason: "unreviewable" }));
+
+    await expect(policy.authorizeShell("curl https://example.test", "network"))
+      .resolves.toMatchObject({ approved: false, reason: "unreviewable" });
   });
 
   it("passes an explicitly configured search provider to the REPL", async () => {

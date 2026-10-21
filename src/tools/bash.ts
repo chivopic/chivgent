@@ -1,7 +1,7 @@
 import type { Tool, ToolContext, ToolOutput } from "./tool.js";
 import { validateTimeoutSeconds } from "../shell/local.js";
 import { createShellOperations, type ShellBackend } from "../shell/factory.js";
-import type { ShellApproval } from "../shell/approval.js";
+import { approvalWasGranted, type ApprovalDecision, type ShellApproval } from "../shell/approval.js";
 import type { ShellScope } from "../permissions.js";
 import { OutputAccumulator } from "../shell/output.js";
 import { formatSize, type TruncationResult } from "../shell/truncate.js";
@@ -66,7 +66,7 @@ export interface ShellAuthorizeRequest {
   readonly backend?: string;
   readonly signal?: AbortSignal;
 }
-export type ShellAuthorize = (request: ShellAuthorizeRequest) => Promise<boolean>;
+export type ShellAuthorize = (request: ShellAuthorizeRequest) => Promise<boolean | ApprovalDecision>;
 
 export interface BashToolOptions {
   readonly cwd: string;
@@ -173,7 +173,7 @@ export class BashTool implements Tool {
       throw error;
     }
 
-    let approved: boolean;
+    let approved: boolean | ApprovalDecision;
     try {
       if (this.authorize !== undefined) {
         approved = await this.authorize({
@@ -194,8 +194,15 @@ export class BashTool implements Tool {
       return { content: "Shell command denied: approval failed.", isError: true };
     }
     if (context.signal?.aborted) throw new ShellAbortError();
-    if (!approved) {
-      return { content: "Shell command denied by user.", isError: true };
+    if (!approvalWasGranted(approved)) {
+      const reason = typeof approved === "object" ? approved.reason : "user";
+      const messages = {
+        user: "Shell command denied by user.",
+        cancelled: "Shell command approval was cancelled.",
+        unavailable: "Shell command denied: approval is unavailable.",
+        unreviewable: "Shell command denied: command cannot be safely displayed for approval. Shorten it or remove terminal control characters and try again.",
+      } as const;
+      return { content: messages[reason], isError: true };
     }
 
     const output = new OutputAccumulator({

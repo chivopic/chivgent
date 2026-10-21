@@ -115,7 +115,7 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
             request.justification ? `Reason requested by model: ${request.justification}` : undefined,
           ),
         } : {
-          approve: (command, signal, context) => config.shellApproval?.approve(command, signal, context) ?? Promise.resolve(false),
+          approve: (command, signal, context) => config.shellApproval?.approveDecision(command, signal, context) ?? Promise.resolve({ approved: false, reason: "unavailable" }),
         }),
       })] : []),
       ...(extensions?.registeredTools ?? []).map((entry) => entry.tool),

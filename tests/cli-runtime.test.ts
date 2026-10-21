@@ -150,6 +150,55 @@ describe("local CLI session setup", () => {
       .toMatchObject({ properties: { scope: { enum: ["workspace", "network", "host"] } } });
   });
 
+  it("passes a typed denial from the shell gate to the next provider request", async () => {
+    const llm = new FakeLLMClient([
+      assistant("", [{ id: "shell", name: "bash", arguments: { command: "curl https://example.test" } }]),
+      assistant("The command could not be reviewed."),
+    ]);
+    const gate = new ShellApprovalGate();
+    gate.setHandler(async () => ({ approved: false, reason: "unreviewable" }));
+    const session = createLocalSession({
+      options: parseCliArgs(["--allow-shell"], {}),
+      cwd: process.cwd(),
+      llm,
+      shellApproval: gate,
+      restored: { resumed: false },
+    });
+
+    await session.prompt("Run the command");
+
+    const toolResult = session.messages.find(message => message.role === "tool" && message.toolName === "bash");
+    expect(toolResult?.content).toContain("command cannot be safely displayed");
+    expect(llm.requests[1]?.messages).toContainEqual(expect.objectContaining({
+      role: "tool",
+      content: expect.stringContaining("command cannot be safely displayed"),
+    }));
+  });
+
+  it("reports a missing shell approval channel as unavailable to the provider", async () => {
+    const llm = new FakeLLMClient([
+      assistant("", [{ id: "shell", name: "bash", arguments: { command: "npm test" } }]),
+      assistant("Approval is unavailable."),
+    ]);
+    const gate = new ShellApprovalGate();
+    const session = createLocalSession({
+      options: parseCliArgs(["--allow-shell"], {}),
+      cwd: process.cwd(),
+      llm,
+      shellApproval: gate,
+      restored: { resumed: false },
+    });
+
+    await session.prompt("Run the command");
+
+    expect(session.messages.find(message => message.role === "tool" && message.toolName === "bash")?.content)
+      .toBe("Shell command denied: approval is unavailable.");
+    expect(llm.requests[1]?.messages).toContainEqual(expect.objectContaining({
+      role: "tool",
+      content: "Shell command denied: approval is unavailable.",
+    }));
+  });
+
   it("identifies the agent without inventing a backend model", async () => {
     const llm = new FakeLLMClient([assistant("Done")]);
     const session = createLocalSession({

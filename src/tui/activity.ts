@@ -6,6 +6,8 @@ import { displayWidth, fitLine, terminalText } from "./text.js";
 const MAX_DIFF_LINES = 6;
 const MAX_DIFF_SNIPPET_LINES = 4;
 const MAX_DETAIL_LINE = 120;
+const MAX_APPROVAL_COMMAND_CHARS = 8_192;
+const MAX_APPROVAL_DISPLAY_LINES = 64;
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 function short(value: string, width: number): string {
@@ -155,19 +157,29 @@ export function approvalPreview(
   options: { readonly wrap?: boolean } = {},
 ): string {
   const width = Math.max(12, columns - 1);
-  const visibleLines = options.wrap === true
-    ? wrapText(terminalText(command), Math.max(1, width - 4))
-    : terminalText(command).split("\n");
-  const truncated = options.wrap !== true && visibleLines.length > 8;
-  const lines = [
+  const shell = options.wrap !== true;
+  const visibleLines = shell
+    ? wrapShellCommand(terminalText(command), width).lines
+    : wrapText(terminalText(command), Math.max(1, width - 4));
+  const truncated = shell && !commandReviewable(command, columns);
+  const prefix = [
     `  ${context}`,
     "  ──────────────────────────────────────────",
-    ...visibleLines.slice(0, options.wrap === true ? visibleLines.length : 8).map(line => `  │ ${line}`),
-    ...(truncated ? [`  │ … ${visibleLines.length - 8} more lines hidden`] : []),
-    "  ──────────────────────────────────────────",
-    "  Approve once? [y/N]  ·  Enter deny  ·  Ctrl+C cancel",
+    ...(shell ? ["  │=source line", "  ↳=visual wrap"] : []),
   ];
-  return `\n${lines.map(line => short(line, width)).join("\n")}\n`;
+  const contentLines = shell
+    ? visibleLines.slice(0, MAX_APPROVAL_DISPLAY_LINES)
+    : visibleLines.map(line => `  │ ${line}`);
+  const lines = [
+    ...prefix,
+    ...contentLines,
+    ...(truncated ? ["  │ Command cannot be safely displayed; approval unavailable."] : []),
+    "  ──────────────────────────────────────────",
+    ...(truncated ? ["  Approval unavailable. Shorten the command."] : ["  Approve once? [y/N]  ·  Enter deny  ·  Ctrl+C cancel"]),
+  ];
+  const contentStart = prefix.length;
+  const contentEnd = contentStart + contentLines.length;
+  return `\n${lines.map((line, index) => index >= contentStart && index < contentEnd ? line : short(line, width)).join("\n")}\n`;
 }
 
 /** Word-wraps a single-line value so an approval shows all of it. */
@@ -227,9 +239,35 @@ export function colorizeActivity(lines: readonly string[], enabled: boolean): st
  * suffixes while still offering "y" would make the approval meaningless.
  */
 export function commandReviewable(command: string, columns: number): boolean {
+  if (columns < 13) return false;
   if (command !== terminalText(command)) return false;
-  const width = Math.max(12, columns - 1);
-  const lines = command.split("\n");
-  return lines.length <= 8 &&
-    lines.every(line => fitLine(`  │ ${line}`, width) === `  │ ${line}`);
+  if (command.length > MAX_APPROVAL_COMMAND_CHARS) return false;
+  const layout = wrapShellCommand(command, Math.max(12, columns - 1));
+  return layout.reviewable && layout.lines.length <= MAX_APPROVAL_DISPLAY_LINES;
+}
+
+/** Wrap without changing command whitespace; visible markers distinguish spaces, wraps and source newlines. */
+function wrapShellCommand(command: string, width: number): { readonly lines: readonly string[]; readonly reviewable: boolean } {
+  const lines: string[] = [];
+  for (const sourceLine of command.split("\n")) {
+    let line = "";
+    let used = 0;
+    let prefix = "  │ ";
+    for (const { segment } of graphemes.segment(sourceLine)) {
+      const size = Math.max(displayWidth(segment), [...segment].reduce((sum, codePoint) => sum + displayWidth(codePoint), 0));
+      if (line.length > 0 && used + size > width - displayWidth(prefix)) {
+        lines.push(prefix + line);
+        line = "";
+        used = 0;
+        prefix = "  ↳ ";
+      }
+      if (size > width - displayWidth(prefix)) {
+        return { lines: ["  │ Command contains a character too wide to display safely."], reviewable: false };
+      }
+      line += segment;
+      used += size;
+    }
+    lines.push(prefix + line);
+  }
+  return { lines, reviewable: true };
 }

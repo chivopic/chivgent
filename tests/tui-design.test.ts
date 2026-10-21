@@ -107,10 +107,23 @@ describe("TUI activity presentation", () => {
   it("keeps a command's full contents reviewable or refuses to ask for approval", () => {
     expect(commandReviewable("npm test", 80)).toBe(true);
     expect(commandReviewable("echo \x1b[2J hidden", 80)).toBe(false);
-    expect(commandReviewable("x".repeat(500), 80)).toBe(false);
-    expect(commandReviewable("echo ok\n".repeat(9), 80)).toBe(false);
-    const preview = approvalPreview("echo ok\n".repeat(9), 50);
-    expect(preview).toContain("more lines hidden");
+    expect(commandReviewable("x".repeat(5_000), 80)).toBe(false);
+    expect(commandReviewable("echo ok\n".repeat(65), 80)).toBe(false);
+    expect(commandReviewable("x".repeat(512), 13)).toBe(true);
+    expect(commandReviewable("x".repeat(513), 13)).toBe(false);
+    expect(commandReviewable("x".repeat(8_192), 240)).toBe(true);
+    expect(commandReviewable("x".repeat(8_193), 240)).toBe(false);
+    expect(commandReviewable("\u1100".repeat(30), 52)).toBe(false);
+    expect(commandReviewable("echo ok", 8)).toBe(false);
+    expect(commandReviewable("echo ok", 13)).toBe(true);
+    const preview = approvalPreview("echo  two\\\nlines", 20);
+    expect(preview).toContain("  │=source line");
+    expect(preview).toContain("  ↳=visual wrap");
+    expect(preview).toContain("  │ echo  two\\");
+    expect(preview).toContain("  │ lines");
+    expect(approvalPreview("x".repeat(5_000), 20)).not.toContain("Approve once?");
+    expect(approvalPreview("echo \x1b[2J hidden", 52)).not.toContain("\x1b[2J");
+    expect(approvalPreview("echo x  ", 52)).toContain("  │ echo x  \n");
     for (const line of preview.trim().split("\n")) {
       expect(line.length).toBeLessThan(55);
     }
