@@ -260,14 +260,6 @@ function applyEvent(
   }
 }
 
-function settleStreaming(items: readonly TimelineItem[], runId?: string): readonly TimelineItem[] {
-  return items.map((item) =>
-    item.kind === "assistant" && item.streaming && (runId === undefined || item.runId === runId)
-      ? { ...item, streaming: false }
-      : item,
-  );
-}
-
 function settleInterrupted(items: readonly TimelineItem[], runId?: string): readonly TimelineItem[] {
   return items.map((item) => {
     if (item.kind === "assistant" && item.streaming && (runId === undefined || item.runId === runId)) {

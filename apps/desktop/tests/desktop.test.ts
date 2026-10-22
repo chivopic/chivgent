@@ -276,7 +276,7 @@ describe("composer and scroll", () => {
     expect(reduceDesk(state, { type: "agent", runId: "run-missing-end", sequence: 8, event: { type: "tool_execution_end", toolCallId: "call-open", content: "late result" } })).toBe(state);
 
     const hydrated = reduceDesk(initialDeskState, { type: "hydrate", snapshot: {
-      hostInstanceId: "host-hydrate", sessionId: "session-hydrate", sequence: 7,
+      hostInstanceId: "host-hydrate", sessionId: "session-hydrate", projectPath: "/tmp/project", sequence: 8,
       events: [
         { sequence: 1, runId: "run-missing-end", event: { type: "tool_execution_start", toolCallId: "call-open", toolName: "read_file" } },
         { sequence: 2, runId: "run-missing-end", event: { type: "tool_execution_update", toolCallId: "call-open", content: "partial" } },
@@ -285,13 +285,21 @@ describe("composer and scroll", () => {
         { sequence: 5, runId: "run-missing-end", event: { type: "tool_execution_start", toolCallId: "call-error", toolName: "search_text" } },
         { sequence: 6, runId: "run-missing-end", event: { type: "tool_execution_end", toolCallId: "call-error", content: "error output", isError: true } },
         { sequence: 7, runId: "run-missing-end", event: { type: "agent_end", status: "completed" } },
+        { sequence: 8, runId: "run-other", event: { type: "tool_execution_start", toolCallId: "call-open", toolName: "read_file" } },
       ],
-      runs: [{ runId: "run-missing-end", prompt: "检查项目", status: "completed" }],
+      runs: [
+        { runId: "run-missing-end", prompt: "检查项目", status: "completed" },
+        { runId: "run-other", prompt: "读取另一个文件", status: "running" },
+      ],
+      incomplete: false,
+      corruption: null,
     } });
-    expect(hydrated.phase).toBe("completed");
+    expect(hydrated.phase).toBe("running");
+    expect(hydrated.runId).toBe("run-other");
     expect(hydrated.items.find((item) => item.kind === "tool" && item.toolCallId === "call-open")).toMatchObject({ status: "unknown", output: expect.stringContaining("partial\n执行结果未知") });
     expect(hydrated.items.find((item) => item.kind === "tool" && item.toolCallId === "call-done")).toMatchObject({ status: "done", output: "done output" });
     expect(hydrated.items.find((item) => item.kind === "tool" && item.toolCallId === "call-error")).toMatchObject({ status: "error", output: "error output" });
+    expect(hydrated.items.find((item) => item.kind === "tool" && item.toolCallId === "call-open" && item.runId === "run-other")).toMatchObject({ status: "running" });
   });
 
   it("does not submit while an IME composition is confirming", () => {
