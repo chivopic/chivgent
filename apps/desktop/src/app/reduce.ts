@@ -250,9 +250,7 @@ function applyEvent(
       return {
         ...next,
         phase: phaseFromAgent(event.status),
-        items: event.status === "completed"
-          ? settleStreaming(next.items, runId)
-          : settleInterrupted(next.items, runId),
+        items: settleInterrupted(next.items, runId),
         notice: event.status === "error"
           ? event.error ?? "运行失败。"
           : next.notice,
