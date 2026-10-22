@@ -208,6 +208,78 @@ describe("App submit flow", () => {
     expect(api.start).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a broadcast-accepted run active when the invoke promise later rejects", async () => {
+    let fail!: (error: Error) => void;
+    respond = vi.fn(() => new Promise((_, reject) => { fail = reject; }));
+    let tree = await renderApp();
+    find(tree, "composer").props.onChange({ target: { value: "accepted before invoke failure" } });
+    tree = await renderApp();
+    const pending = findType(tree, "form").props.onSubmit({ preventDefault() {} });
+    const requestId = (api.start as ReturnType<typeof vi.fn>).mock.calls[0]?.[0].requestId as string;
+
+    publishEvent({ type: "started", requestId, runId: "accepted-run", replayed: false });
+    tree = await renderApp();
+    fail(new Error("invoke timed out after host accepted"));
+    await pending;
+    tree = await renderApp();
+    expect(find(tree, "run-status").props.children).toBe("运行中");
+    expect(find(tree, "composer").props.value).toBe("");
+
+    publishEvent({ type: "event", hostInstanceId: "test-host", sessionId: "test-session", runId: "accepted-run", sequence: 1, event: { type: "agent_end", status: "completed" } });
+    tree = await renderApp();
+    expect(find(tree, "run-status").props.children).toBe("已完成");
+    expect(find(tree, "notice")).toBeNull();
+  });
+
+  it("keeps a broadcast-accepted run active after a host_unavailable result", async () => {
+    let finish!: (value: any) => void;
+    respond = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
+    let tree = await renderApp();
+    find(tree, "composer").props.onChange({ target: { value: "accepted prompt" } });
+    tree = await renderApp();
+    const pending = findType(tree, "form").props.onSubmit({ preventDefault() {} });
+    const requestId = (api.start as ReturnType<typeof vi.fn>).mock.calls[0]?.[0].requestId as string;
+    tree = await renderApp();
+    find(tree, "composer").props.onChange({ target: { value: "newer draft" } });
+    tree = await renderApp();
+    publishEvent({ type: "started", requestId, runId: "accepted-run", replayed: false });
+    finish({ ok: false, code: "host_unavailable", message: "Agent host 没有在时限内回应。" });
+    await pending;
+    tree = await renderApp();
+    expect(find(tree, "run-status").props.children).toBe("运行中");
+    expect(find(tree, "composer").props.value).toBe("newer draft");
+
+    publishEvent({ type: "event", hostInstanceId: "test-host", sessionId: "test-session", runId: "accepted-run", sequence: 1, event: { type: "agent_end", status: "completed" } });
+    tree = await renderApp();
+    expect(find(tree, "run-status").props.children).toBe("已完成");
+    expect(api.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores an old start acknowledgement after switching projects", async () => {
+    let finish!: (value: any) => void;
+    respond = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
+    let tree = await renderApp();
+    api.initialize = vi.fn(async () => ({ ok: true, value: { type: "initialized" } }));
+    find(tree, "composer").props.onChange({ target: { value: "accepted prompt" } });
+    tree = await renderApp();
+    const pending = findType(tree, "form").props.onSubmit({ preventDefault() {} });
+    const requestId = (api.start as ReturnType<typeof vi.fn>).mock.calls[0]?.[0].requestId as string;
+    publishEvent({ type: "started", requestId, runId: "accepted-run", replayed: false });
+    publishEvent({ type: "event", hostInstanceId: "test-host", sessionId: "test-session", runId: "accepted-run", sequence: 1, event: { type: "agent_end", status: "completed" } });
+    tree = await renderApp();
+    find(tree, "composer").props.onChange({ target: { value: "draft for another project" } });
+    tree = await renderApp();
+    api.selectProject = vi.fn(async () => ({ ok: true, value: { type: "project-selected", path: "/tmp/other-project" } }));
+    findByClass(tree, "new-task").props.onClick();
+    tree = await renderApp();
+
+    finish({ ok: true, value: { type: "started", runId: "accepted-run" } });
+    await pending;
+    tree = await renderApp();
+    expect(find(tree, "composer").props.value).toBe("draft for another project");
+    expect(find(tree, "run-status").props.children).toBe("就绪");
+  });
+
   it("keeps an unknown draft when IPC rejects and clears the pending state", async () => {
     respond = vi.fn(async () => { throw new Error("invoke timed out"); });
     let tree = await renderApp();
@@ -291,6 +363,17 @@ function findByLabel(node: any, label: string): any | null {
   if (typeof node.type === "function") return findByLabel(node.type(node.props), label);
   for (const child of [node.props?.children].flat(Infinity)) {
     const result = findByLabel(child, label);
+    if (result !== null) return result;
+  }
+  return null;
+}
+
+function findByClass(node: any, className: string): any | null {
+  if (node === null || node === undefined || typeof node !== "object") return null;
+  if (node.props?.className === className) return node;
+  if (typeof node.type === "function") return findByClass(node.type(node.props), className);
+  for (const child of [node.props?.children].flat(Infinity)) {
+    const result = findByClass(child, className);
     if (result !== null) return result;
   }
   return null;
