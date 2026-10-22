@@ -36,10 +36,17 @@ only when those tools are registered, plus process-local permission policy and
 extension contributions. This is inspired by Codex's layered instructions, but
 tool access remains enforced by chivgent's runtime, not by text.
 
-The agent identifies itself as **chivgent**, not as an unverifiable underlying
-provider model. A provider/model selection shown by the CLI is configuration,
-not proof of which backend implementation served a request. Model-specific
-wire formats remain the responsibility of the Provider adapter.
+The agent identifies itself as **chivgent**. When asked which model it uses,
+it also reports the current configured provider and model, in the user's
+language. This is configuration, not proof of which backend implementation
+served a request. An absent model is reported as not configured, never guessed.
+[`modelSelectionPrompt`](../src/prompts.ts) includes only provider and model
+data, without credentials or endpoint URLs. The local runtime resolves it for
+each request, so CLI/TUI provider changes and new or resumed sessions use the
+current selection. The desktop runtime uses its selected configuration through
+the same local runtime; evals include it in both requests and prompt fingerprints.
+The resolved prompt is included in context budgeting. Model-specific wire
+formats remain the responsibility of the Provider adapter.
 
 ### Context management
 

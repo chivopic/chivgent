@@ -20,7 +20,8 @@ import { ContextBudgetError, type AppliedCompaction, type ContextManager } from 
 import { INCOMPLETE_PROJECT_GUIDANCE, type ProjectInstructionsProvider } from "./context/project-instructions.js";
 
 export interface AgentOptions {
-  readonly systemPrompt: string;
+  /** A callback supplies current host configuration after a provider switch. */
+  readonly systemPrompt: string | (() => string);
   readonly maxTurns: number;
   readonly llm: LLMClient;
   readonly tools: readonly Tool[];
@@ -78,6 +79,7 @@ interface RunState {
   continuation?: LLMContinuation;
   compaction?: AppliedCompaction;
   projectInstructionsText?: string;
+  systemPromptText?: string;
   planMode: boolean;
 }
 
@@ -89,7 +91,7 @@ export class AgentProtocolError extends Error {
 }
 
 export class Agent {
-  private readonly systemPrompt: string;
+  private readonly systemPrompt: AgentOptions["systemPrompt"];
   private readonly maxTurns: number;
   private readonly llm: LLMClient;
   private readonly registry: ReadonlyMap<string, Tool>;
@@ -277,6 +279,7 @@ export class Agent {
   private async buildContext(
     state: RunState,
     signal: AbortSignal | undefined,
+    systemPrompt: string,
     prefixMessages: readonly Message[] = [],
   ): Promise<readonly Message[]> {
     const snapshot = snapshotMessages(state.messages);
@@ -291,7 +294,7 @@ export class Agent {
         ...(signal === undefined ? {} : { signal }),
         prefixMessages,
         fixedMessages: [
-          { role: "user", content: this.systemPrompt },
+          { role: "user", content: systemPrompt },
           { role: "user", content: JSON.stringify(this.toolDefinitions) },
         ],
       });
@@ -355,10 +358,16 @@ export class Agent {
     }
     const prefixMessages: readonly Message[] = projectText === undefined
       ? [] : [{ role: "user", content: projectText }];
-    const messages = await this.buildContext(state, signal, prefixMessages);
+    const basePrompt = typeof this.systemPrompt === "function" ? this.systemPrompt() : this.systemPrompt;
+    const systemPrompt = state.planMode ? `${basePrompt}\n\n${PLAN_MODE_PROMPT}` : basePrompt;
+    if (systemPrompt !== state.systemPromptText) {
+      delete state.continuation;
+      state.systemPromptText = systemPrompt;
+    }
+    const messages = await this.buildContext(state, signal, systemPrompt, prefixMessages);
     const modelMessages: readonly Message[] = [...prefixMessages, ...messages];
     const request = {
-      systemPrompt: state.planMode ? `${this.systemPrompt}\n\n${PLAN_MODE_PROMPT}` : this.systemPrompt,
+      systemPrompt,
       messages: modelMessages,
       tools: state.planMode
         ? this.toolDefinitions.filter((definition) => isPlanModeTool(this.registry.get(definition.name)))

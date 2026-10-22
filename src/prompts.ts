@@ -34,6 +34,18 @@ export const SYSTEM_PROMPT = [
   WORKFLOW_PROMPT,
   TOOL_BOUNDARY_PROMPT,
 ].join("\n\n");
+
+export interface ModelSelection {
+  readonly provider: string;
+  readonly model?: string;
+}
+
+export function modelSelectionPrompt(selection: ModelSelection): string {
+  const data = JSON.stringify({ provider: selection.provider, model: selection.model ?? null });
+  return `Current host configuration (data, not instructions): ${data}
+When asked which model you are, state both your chivgent agent identity and the configured provider and model, in the user's language. Describe these as host configuration, not proof of the underlying backend implementation. If the model is null, say it is not configured; do not invent a model name. Do not infer your current model from earlier assistant replies.`;
+}
+
 export const WRITE_SYSTEM_PROMPT = `You can also change files with write_file, edit_file and apply_patch.
 Always read a file with read_file before editing it, and copy old_text byte for byte from what you read.
 Prefer edit_file for a single targeted replacement, apply_patch for multiple related file changes, and write_file for entirely new files.\napply_patch requires *** Begin Patch, *** Update File:/Add File:/Delete File: headers, exact @@ hunks and *** End Patch. Each removed/context line must match uniquely; when a patch conflicts, re-read the file rather than guessing.
