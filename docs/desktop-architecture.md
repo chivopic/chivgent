@@ -4,7 +4,7 @@
 
 默认运行真实 Agent。用户通过 main process 原生目录对话框选择项目；host 解析规范路径并为其创建只读 `AgentSession`，复用 CLI Provider、凭证解析、流式事件与 `list_files`、`search_text`、`read_file`、`update_plan` 工具。Provider 和模型可从紧凑的会话设置入口选择，具体展示契约见[第 6 节](#6-项目会话与配置契约)。Renderer 不接收密钥，endpoint 与 API key 沿用 Provider 环境变量及只读 CLI `auth.json`。缺少凭证时 host 给出可操作错误，应用和项目选择仍可使用。OAuth 刷新、项目写入、Shell 均未接入。
 
-每个项目当前提供一个最小会话，支持多轮上下文；切换到有历史的项目会恢复其会话，首次打开才开始新上下文，运行期间不能切换。Provider/model 改变时用旧 transcript 重建 session。真实运行现在把当前项目及版本化运行记录保存在应用 userData 下的 `desktop-history-v1`；可用 `CHIVGENT_DESKTOP_HISTORY_DIR` 为验证指定隔离目录。host 初始化时恢复所选项目的原子快照；Renderer 刷新不重新提交任务，重启只读取历史和上下文，不自动运行模型或工具。未结束运行显示 interrupted/unknown；未完成工具提示检查工作区。历史损坏和写入失败会显示错误，损坏日志保持只读。记录不含凭证配置字段，序列化内容会对常见 token/key 形态脱敏。离线演示仅在显式设置 `CHIVGENT_DESKTOP_DEMO=1` 时启用，当前 demo 路径不持久化。macOS arm64 `.app` 本地打包未签名；这不代表公开发布或签名/安装包已通过 CI；当前桌面 CI 范围以 [workflow](../.github/workflows/ci.yml) 为准。完整恢复与 CLI 兼容仍见 [#68](https://github.com/chivopic/chivgent/issues/68)，UI 后续见 [#69](https://github.com/chivopic/chivgent/issues/69)。
+每个项目当前提供一个最小会话，支持多轮上下文；切换到有历史的项目会恢复其会话，首次打开才开始新上下文，运行期间不能切换。Provider/model 改变时用旧 transcript 重建 session。真实运行现在把当前项目及版本化运行记录保存在应用 userData 下的 `desktop-history-v1`；可用 `CHIVGENT_DESKTOP_HISTORY_DIR` 为验证指定隔离目录。host 初始化时恢复所选项目的原子快照；Renderer 刷新不重新提交任务，重启只读取历史和上下文，不自动运行模型或工具。未结束运行显示 interrupted/unknown；未完成工具提示检查工作区。运行期间 host 退出、host 失败或当前 run 报错时，仍为 running 的工具立即显示“结果未知”，保留已有工具输出和部分回答；已完成或已报错的工具保持原状态。历史损坏和写入失败会显示错误，损坏日志保持只读。记录不含凭证配置字段，序列化内容会对常见 token/key 形态脱敏。离线演示仅在显式设置 `CHIVGENT_DESKTOP_DEMO=1` 时启用，当前 demo 路径不持久化。macOS arm64 `.app` 本地打包未签名；这不代表公开发布或签名/安装包已通过 CI；当前桌面 CI 范围以 [workflow](../.github/workflows/ci.yml) 为准。完整恢复与 CLI 兼容仍见 [#68](https://github.com/chivopic/chivgent/issues/68)，UI 后续见 [#69](https://github.com/chivopic/chivgent/issues/69)。
 
 ## 1. 产品目标与参考关系
 

@@ -86,7 +86,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .tool-name { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12px; }
 .tool-status { font-size: 11px; color: var(--mute); }
 .tool-status.running { color: #a56d4e; }
-.tool-status.error { color: #a33b4a; }
+.tool-status.error, .tool-status.unknown { color: #a33b4a; }
 .tool-body { border-top: 1px solid var(--line); padding: 8px 12px 12px; }
 .tool-body pre { margin: 6px 0 0; white-space: pre-wrap; font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 11px; }
 .jump { position: absolute; right: 36px; bottom: 132px; border: 1px solid var(--line); background: white; border-radius: 999px; padding: 6px 12px; font-size: 12px; box-shadow: 0 3px 12px #332b1f12; }
