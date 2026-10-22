@@ -25,7 +25,7 @@ export interface ToolItem {
   readonly name: string;
   readonly argsText: string;
   readonly output: string;
-  readonly status: "running" | "done" | "error";
+  readonly status: "running" | "done" | "error" | "unknown";
 }
 
 export type TimelineItem = UserItem | AssistantItem | ToolItem;
@@ -87,13 +87,28 @@ export function reduceDesk(state: DeskState, action: DeskAction): DeskState {
       return { ...state, runId: action.runId, notice: null };
     case "run-error":
       if (state.phase !== "running" || state.runId !== action.runId) return state;
-      return action.cancelled
-        ? { ...state, items: settleStreaming(state.items), phase: "stopped", runId: null, notice: "运行已停止。" }
-        : { ...state, items: settleStreaming(state.items), phase: "error", notice: action.message };
+      {
+        const items = settleInterrupted(state.items, action.runId);
+        const hasUnknownTool = containsUnknownTool(items, action.runId);
+        return action.cancelled
+          ? { ...state, items, phase: "stopped", runId: null, notice: hasUnknownTool ? "运行已停止；未完成工具的执行结果未知，请检查工作区。" : "运行已停止。" }
+          : { ...state, items, phase: "error", notice: action.message };
+      }
     case "fail":
-      return { ...state, items: settleStreaming(state.items), phase: "error", notice: action.message };
+      return { ...state, items: settleInterrupted(state.items, state.runId ?? undefined), phase: "error", notice: action.message };
     case "cancelled":
-      return { ...state, items: settleStreaming(state.items), phase: "stopped", runId: null, notice: "运行已停止。" };
+      {
+        const items = settleInterrupted(state.items, state.runId ?? undefined);
+        return {
+          ...state,
+          items,
+          phase: "stopped",
+          runId: null,
+          notice: state.runId !== null && containsUnknownTool(items, state.runId)
+            ? "运行已停止；未完成工具的执行结果未知，请检查工作区。"
+            : "运行已停止。",
+        };
+      }
     case "agent":
       return applyEvent(state, action.runId, action.sequence, action.event, action.hostInstanceId, action.sessionId);
   }
@@ -113,9 +128,7 @@ function hydrateSnapshot(state: DeskState, snapshot: SessionSnapshot): DeskState
       next = {
         ...next,
         phase: "error",
-        items: next.items.map((item) => item.kind === "tool" && item.status === "running"
-          ? { ...item, status: "error", output: "执行结果未知，需要检查工作区。" }
-          : item.kind === "assistant" && item.streaming ? { ...item, streaming: false } : item),
+        items: settleInterrupted(next.items, run.runId),
         runId: null,
         notice: "运行中断，结果未知；请检查工作区。没有自动重放工具。",
       };
@@ -153,7 +166,7 @@ function applyHost(state: DeskState, status: HostStatus): DeskState {
       ...state,
       host: status,
       phase: "error",
-      items: settleStreaming(state.items),
+      items: settleInterrupted(state.items, state.runId ?? undefined),
       notice: status.message ?? "Agent host 已退出。进行中的运行结果未知。",
     };
   }
@@ -162,6 +175,7 @@ function applyHost(state: DeskState, status: HostStatus): DeskState {
       ...state,
       host: status,
       phase: state.phase === "running" ? "error" : state.phase,
+      items: state.phase === "running" ? settleInterrupted(state.items, state.runId ?? undefined) : state.items,
       notice: status.message ?? "Agent host 启动失败。",
     };
   }
@@ -217,7 +231,9 @@ function applyEvent(
       return {
         ...next,
         phase: phaseFromAgent(event.status),
-        items: settleStreaming(next.items, runId),
+        items: event.status === "completed"
+          ? settleStreaming(next.items, runId)
+          : settleInterrupted(next.items, runId),
         notice: event.status === "error"
           ? event.error ?? "运行失败。"
           : next.notice,
@@ -233,6 +249,27 @@ function settleStreaming(items: readonly TimelineItem[], runId?: string): readon
       ? { ...item, streaming: false }
       : item,
   );
+}
+
+function settleInterrupted(items: readonly TimelineItem[], runId?: string): readonly TimelineItem[] {
+  return items.map((item) => {
+    if (item.kind === "assistant" && item.streaming && (runId === undefined || item.runId === runId)) {
+      return { ...item, streaming: false };
+    }
+    if (item.kind === "tool" && item.status === "running" && runId !== undefined && item.runId === runId) {
+      const unknown = "执行结果未知，需要检查工作区。";
+      return {
+        ...item,
+        status: "unknown",
+        output: item.output.length > 0 ? `${item.output}\n${unknown}` : unknown,
+      };
+    }
+    return item;
+  });
+}
+
+function containsUnknownTool(items: readonly TimelineItem[], runId: string): boolean {
+  return items.some((item) => item.kind === "tool" && item.runId === runId && item.status === "unknown");
 }
 
 function appendDelta(state: DeskState, runId: string, turn: number, delta: string): DeskState {

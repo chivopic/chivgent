@@ -443,7 +443,7 @@ function ItemView(props: {
       </div>
     );
   }
-  const status = item.status === "running" ? "进行中" : item.status === "error" ? "出错" : "完成";
+  const status = item.status === "running" ? "进行中" : item.status === "unknown" ? "结果未知" : item.status === "error" ? "出错" : "完成";
   return (
     <article className="tool" data-testid="tool-activity">
       <button type="button" className="tool-head" onClick={props.onToggle} aria-expanded={props.open}>
