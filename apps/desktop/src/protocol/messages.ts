@@ -11,7 +11,8 @@ export const DESKTOP_PROTOCOL_VERSION = 1 as const;
 export const HOST_CAPABILITIES = ["project-select", "start", "interrupt"] as const;
 
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,80}$/;
-const MAX_PROMPT_LENGTH = 32_000;
+export const MAX_PROMPT_LENGTH = 32_000;
+export const MAX_MODEL_LENGTH = 160;
 const MAX_ACCEPTED_REQUESTS = 100;
 
 export type HostPhase = "starting" | "ready" | "failed" | "exited";
@@ -222,7 +223,7 @@ export function validateMainToHost(value: unknown): MainToHost | string {
         return `prompt exceeds ${MAX_PROMPT_LENGTH} characters.`;
       }
       if (record.provider !== undefined && (typeof record.provider !== "string" || !/^[a-z0-9-]{1,80}$/.test(record.provider))) return "provider is invalid.";
-      if (record.model !== undefined && (typeof record.model !== "string" || record.model.trim().length === 0 || record.model.length > 160)) return "model must be 1-160 non-empty characters.";
+      if (record.model !== undefined && (typeof record.model !== "string" || record.model.trim().length === 0 || record.model.length > MAX_MODEL_LENGTH)) return `model must be 1-${MAX_MODEL_LENGTH} non-empty characters.`;
       return {
         type: "start",
         requestId: record.requestId,

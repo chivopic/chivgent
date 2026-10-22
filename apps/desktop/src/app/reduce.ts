@@ -45,6 +45,7 @@ export interface DeskState {
 export type DeskAction =
   | { readonly type: "host"; readonly status: HostStatus }
   | { readonly type: "submit"; readonly text: string }
+  | { readonly type: "reject-submit"; readonly text: string; readonly message: string }
   | { readonly type: "started"; readonly runId: string }
   | { readonly type: "agent"; readonly hostInstanceId?: string; readonly sessionId?: string; readonly runId: string; readonly sequence: number; readonly event: AgentEventPayload }
   | { readonly type: "run-error"; readonly runId: string; readonly message: string; readonly cancelled?: boolean }
@@ -81,6 +82,24 @@ export function reduceDesk(state: DeskState, action: DeskAction): DeskState {
         notice: null,
         items: [...state.items, { kind: "user", id: `user-${state.items.length}`, text: action.text }],
       };
+    case "reject-submit": {
+      if (state.phase !== "running" || state.runId !== null) return state;
+      let rejectedIndex = -1;
+      for (let index = state.items.length - 1; index >= 0; index -= 1) {
+        const item = state.items[index];
+        if (item?.kind === "user" && item.text === action.text) {
+          rejectedIndex = index;
+          break;
+        }
+      }
+      return {
+        ...state,
+        phase: "error",
+        runId: null,
+        notice: action.message,
+        items: rejectedIndex < 0 ? state.items : state.items.filter((_, index) => index !== rejectedIndex),
+      };
+    }
     case "started":
       // An asynchronous ACK must not resurrect an already completed run.
       if (state.phase !== "running" || (state.runId !== null && state.runId !== action.runId)) return state;

@@ -1,0 +1,297 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const hooks = vi.hoisted(() => ({ slots: [] as unknown[], cursor: 0, effects: [] as Array<() => void>, mounted: false }));
+
+vi.mock("react", async () => {
+  const actual = await vi.importActual<typeof import("react")>("react");
+  function useState<T>(initial: T | (() => T)) {
+    const index = hooks.cursor++;
+    if (!(index in hooks.slots)) hooks.slots[index] = typeof initial === "function" ? (initial as () => T)() : initial;
+    return [hooks.slots[index] as T, (value: T | ((previous: T) => T)) => {
+      hooks.slots[index] = typeof value === "function" ? (value as (previous: T) => T)(hooks.slots[index] as T) : value;
+    }] as const;
+  }
+  return {
+    ...actual,
+    useState,
+    useReducer<S, A>(reducer: (state: S, action: A) => S, initial: S) {
+      const [state, setState] = useState(initial);
+      return [state, (action: A) => setState((previous: S) => reducer(previous, action))];
+    },
+    useRef<T>(initial: T) {
+      const [ref] = useState(() => ({ current: initial }));
+      return ref;
+    },
+    useEffect(effect: () => void) { if (!hooks.mounted) hooks.effects.push(effect); },
+    useLayoutEffect() {},
+  };
+});
+
+import { App } from "../src/app/App.js";
+import { initialDeskState, reduceDesk } from "../src/app/reduce.js";
+import { validateMainToHost } from "../src/protocol/messages.js";
+
+interface StartPayload { requestId: string; prompt: string; provider?: string; model?: string }
+interface TestApi {
+  start: (payload: StartPayload) => Promise<any>;
+  initialize: () => Promise<any>;
+  selectProject: () => Promise<any>;
+  interrupt: () => Promise<any>;
+  onEvent: (listener: (message: any) => void) => () => void;
+  onHostStatus: (listener: (status: any) => void) => () => void;
+}
+
+describe("App submit flow", () => {
+  let api: TestApi;
+  let respond: (payload: StartPayload) => Promise<any>;
+  let publishEvent: (message: any) => void;
+
+  beforeEach(() => {
+    hooks.slots = [];
+    hooks.cursor = 0;
+    hooks.effects = [];
+    hooks.mounted = false;
+    let eventListener: ((message: any) => void) | undefined;
+    let statusListener: ((status: any) => void) | undefined;
+    publishEvent = (message) => eventListener?.(message);
+    respond = async () => ({ ok: true, value: { type: "started", runId: "accepted-run" } });
+    api = {
+      start: vi.fn(async (payload: StartPayload) => {
+        const validated = validateMainToHost({ type: "start", ...payload });
+        if (typeof validated === "string") return { ok: false, code: "bad_request", message: validated };
+        return respond(payload);
+      }),
+      initialize: vi.fn(async () => {
+        statusListener?.({ phase: "ready" });
+        eventListener?.({ type: "initialized", requestId: "boot", protocolVersion: 1, hostInstanceId: "test-host", capabilities: ["real-agent"], defaultProvider: "openai", snapshot: { hostInstanceId: "test-host", sessionId: "test-session", projectPath: "/tmp/test-project", sequence: 0, events: [], runs: [], incomplete: false, corruption: null } });
+        return { ok: true, value: { type: "initialized" } };
+      }),
+      selectProject: vi.fn(async () => ({ ok: false, code: "cancelled", message: "cancelled" })),
+      interrupt: vi.fn(async () => ({ ok: true, value: { type: "interrupted" } })),
+      onEvent: vi.fn((listener) => { eventListener = listener; return () => {}; }),
+      onHostStatus: vi.fn((listener) => { statusListener = listener; return () => {}; }),
+    };
+    vi.stubGlobal("window", { chivgent: api });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("keeps a prompt after a history write rejection and allows a corrected retry", async () => {
+    respond = vi.fn()
+      .mockResolvedValueOnce({ ok: false, code: "history_write_failed", message: "历史保存失败，未开始运行。" })
+      .mockResolvedValueOnce({ ok: true, value: { type: "started", runId: "accepted-run" } });
+    const original = "Please fix the parser issue.";
+    let tree = await renderApp();
+    find(tree, "composer").props.onChange({ target: { value: original } });
+    tree = await renderApp();
+    await findType(tree, "form").props.onSubmit({ preventDefault() {} });
+    tree = await renderApp();
+
+    expect(find(tree, "composer").props.value).toBe(original);
+    expect(find(tree, "notice").props.children).toContain("历史保存失败");
+    expect(find(tree, "user-message")).toBeNull();
+
+    const corrected = "Please fix the parser issue near the closing brace.";
+    find(tree, "composer").props.onChange({ target: { value: corrected } });
+    tree = await renderApp();
+    await findType(tree, "form").props.onSubmit({ preventDefault() {} });
+    tree = await renderApp();
+    expect(api.start).toHaveBeenCalledTimes(2);
+    expect(find(tree, "composer").props.value).toBe("");
+    expect(find(tree, "user-message").props.children).toBe(corrected);
+  });
+
+  it("warns at 32001 characters and leaves the prompt unchanged without sending", async () => {
+    let tree = await renderApp();
+    const prompt = "x".repeat(32_001);
+    find(tree, "composer").props.onChange({ target: { value: prompt } });
+    tree = await renderApp();
+    expect(find(tree, "composer-limit").props.children).toContain("32000");
+    expect(find(tree, "send").props.disabled).toBe(true);
+    expect(find(tree, "composer").props.value).toBe(prompt);
+    expect(api.start).not.toHaveBeenCalled();
+    expect(validateMainToHost({ type: "start", requestId: "edge", prompt: "x".repeat(32_000) })).toMatchObject({ type: "start" });
+    expect(validateMainToHost({ type: "start", requestId: "edge", prompt })).toBe("prompt exceeds 32000 characters.");
+  });
+
+  it("submits the 32000-character prompt through the App callback", async () => {
+    let tree = await renderApp();
+    const prompt = "x".repeat(32_000);
+    find(tree, "composer").props.onChange({ target: { value: prompt } });
+    tree = await renderApp();
+    await findType(tree, "form").props.onSubmit({ preventDefault() {} });
+    expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ prompt }));
+  });
+
+  it("submits a 160-character model through the App callback", async () => {
+    let tree = await renderApp();
+    findByText(tree, "设置").props.onClick();
+    tree = await renderApp();
+    findByLabel(tree, "Model").props.onChange({ target: { value: "m".repeat(160) } });
+    tree = await renderApp();
+    find(tree, "composer").props.onChange({ target: { value: "valid prompt" } });
+    tree = await renderApp();
+    await findType(tree, "form").props.onSubmit({ preventDefault() {} });
+    expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ prompt: "valid prompt", model: "m".repeat(160) }));
+    expect(validateMainToHost({ type: "start", requestId: "edge", prompt: "ok", model: "m".repeat(160) })).toMatchObject({ type: "start" });
+  });
+
+  it("gives a pre-send warning at 161 model characters", async () => {
+    let tree = await renderApp();
+    findByText(tree, "设置").props.onClick();
+    tree = await renderApp();
+    findByLabel(tree, "Model").props.onChange({ target: { value: "m".repeat(161) } });
+    tree = await renderApp();
+    find(tree, "composer").props.onChange({ target: { value: "valid prompt" } });
+    tree = await renderApp();
+    expect(find(tree, "composer-limit").props.children).toContain("160");
+    expect(find(tree, "send").props.disabled).toBe(true);
+    await findType(tree, "form").props.onSubmit({ preventDefault() {} });
+    expect(api.start).not.toHaveBeenCalled();
+    expect(find(tree, "composer").props.value).toBe("valid prompt");
+  });
+
+  it("does not replace a newer draft while a rejected start is pending", async () => {
+    let finish!: (value: any) => void;
+    respond = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
+    let tree = await renderApp();
+    find(tree, "composer").props.onChange({ target: { value: "original prompt" } });
+    tree = await renderApp();
+    const pending = findType(tree, "form").props.onSubmit({ preventDefault() {} });
+    tree = await renderApp();
+    find(tree, "composer").props.onChange({ target: { value: "newer draft" } });
+    finish({ ok: false, code: "history_write_failed", message: "历史保存失败，未开始运行" });
+    await pending;
+    tree = await renderApp();
+    expect(find(tree, "composer").props.value).toBe("newer draft");
+  });
+
+  it("clears only the submitted draft after acceptance and preserves a newer draft", async () => {
+    let finish!: (value: any) => void;
+    respond = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
+    let tree = await renderApp();
+    find(tree, "composer").props.onChange({ target: { value: "accepted prompt" } });
+    tree = await renderApp();
+    const pending = findType(tree, "form").props.onSubmit({ preventDefault() {} });
+    tree = await renderApp();
+    find(tree, "composer").props.onChange({ target: { value: "draft for next run" } });
+    finish({ ok: true, value: { type: "started", runId: "accepted-run" } });
+    await pending;
+    tree = await renderApp();
+    expect(find(tree, "composer").props.value).toBe("draft for next run");
+    expect(api.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends only once when submit is triggered twice before the first acknowledgement", async () => {
+    let finish!: (value: any) => void;
+    respond = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
+    let tree = await renderApp();
+    find(tree, "composer").props.onChange({ target: { value: "one run only" } });
+    tree = await renderApp();
+    const form = findType(tree, "form");
+    form.props.onSubmit({ preventDefault() {} });
+    form.props.onSubmit({ preventDefault() {} });
+    expect(api.start).toHaveBeenCalledTimes(1);
+    finish({ ok: true, value: { type: "started", runId: "accepted-run" } });
+    await renderApp();
+  });
+
+  it("keeps an unknown-timeout draft visible without automatically retrying", async () => {
+    respond = vi.fn(async () => ({ ok: false, code: "host_unavailable", message: "Agent host 没有在时限内回应。" }));
+    let tree = await renderApp();
+    find(tree, "composer").props.onChange({ target: { value: "uncertain prompt" } });
+    tree = await renderApp();
+    await findType(tree, "form").props.onSubmit({ preventDefault() {} });
+    tree = await renderApp();
+    expect(find(tree, "composer").props.value).toBe("uncertain prompt");
+    expect(find(tree, "notice").props.children).toContain("结果未知");
+    expect(api.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an unknown draft when IPC rejects and clears the pending state", async () => {
+    respond = vi.fn(async () => { throw new Error("invoke timed out"); });
+    let tree = await renderApp();
+    find(tree, "composer").props.onChange({ target: { value: "invoke uncertain" } });
+    tree = await renderApp();
+    await findType(tree, "form").props.onSubmit({ preventDefault() {} });
+    tree = await renderApp();
+    expect(find(tree, "composer").props.value).toBe("invoke uncertain");
+    expect(find(tree, "notice").props.children).toContain("结果未知");
+    expect(find(tree, "send").props.disabled).toBe(false);
+    expect(api.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not restore an accepted run's prompt after a later run error", async () => {
+    let tree = await renderApp();
+    find(tree, "composer").props.onChange({ target: { value: "accepted before credentials failed" } });
+    tree = await renderApp();
+    await findType(tree, "form").props.onSubmit({ preventDefault() {} });
+    tree = await renderApp();
+    expect(find(tree, "composer").props.value).toBe("");
+    publishEvent({ type: "error", requestId: "accepted-request", runId: "accepted-run", code: "run_error", message: "缺少模型凭证。" });
+    tree = await renderApp();
+    expect(find(tree, "composer").props.value).toBe("");
+    expect(find(tree, "notice").props.children).toContain("缺少模型凭证");
+  });
+
+  it("ignores a rejection action after the run has been acknowledged", () => {
+    const submitted = reduceDesk(initialDeskState, { type: "submit", text: "already accepted" });
+    const started = reduceDesk(submitted, { type: "started", runId: "run-accepted" });
+    expect(reduceDesk(started, { type: "reject-submit", text: "already accepted", message: "late rejection" })).toBe(started);
+  });
+});
+
+async function renderApp(): Promise<any> {
+  hooks.cursor = 0;
+  let tree = App();
+  for (const effect of hooks.effects.splice(0)) effect();
+  hooks.mounted = true;
+  for (let turn = 0; turn < 5; turn += 1) await Promise.resolve();
+  hooks.cursor = 0;
+  tree = App();
+  return tree;
+}
+
+function find(node: any, testId: string): any | null {
+  if (node === null || node === undefined || typeof node !== "object") return null;
+  if (node.props?.["data-testid"] === testId) return node;
+  if (typeof node.type === "function") return find(node.type(node.props), testId);
+  for (const child of [node.props?.children].flat(Infinity)) {
+    const result = find(child, testId);
+    if (result !== null) return result;
+  }
+  return null;
+}
+
+function findType(node: any, type: string): any | null {
+  if (node === null || node === undefined || typeof node !== "object") return null;
+  if (node.type === type) return node;
+  if (typeof node.type === "function") return findType(node.type(node.props), type);
+  for (const child of [node.props?.children].flat(Infinity)) {
+    const result = findType(child, type);
+    if (result !== null) return result;
+  }
+  return null;
+}
+
+function findByText(node: any, text: string): any | null {
+  if (node === null || node === undefined || typeof node !== "object") return null;
+  if (node.props?.children === text) return node;
+  if (typeof node.type === "function") return findByText(node.type(node.props), text);
+  for (const child of [node.props?.children].flat(Infinity)) {
+    const result = findByText(child, text);
+    if (result !== null) return result;
+  }
+  return null;
+}
+
+function findByLabel(node: any, label: string): any | null {
+  if (node === null || node === undefined || typeof node !== "object") return null;
+  if (node.props?.["aria-label"] === label) return node;
+  if (typeof node.type === "function") return findByLabel(node.type(node.props), label);
+  for (const child of [node.props?.children].flat(Infinity)) {
+    const result = findByLabel(child, label);
+    if (result !== null) return result;
+  }
+  return null;
+}

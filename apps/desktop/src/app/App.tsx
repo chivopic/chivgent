@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useReducer, useRef, useState, type JSX } fr
 import { nextRequestId, shouldSubmitOnEnter } from "./input.js";
 import { initialDeskState, phaseLabel, reduceDesk, type TimelineItem } from "./reduce.js";
 import { isNearBottom } from "./scroll.js";
-import type { HostStatus, HostToMain, IpcResult } from "../protocol/messages.js";
+import { MAX_MODEL_LENGTH, MAX_PROMPT_LENGTH, type HostStatus, type HostToMain, type IpcResult } from "../protocol/messages.js";
 import leafMark from "./assets/chivgent-leaf-mark.png";
 
 interface DesktopApi {
@@ -41,6 +41,7 @@ export function App(): JSX.Element {
   const ignoreEnter = useRef(false);
   const runIdRef = useRef<string | null>(null);
   const pendingStartRef = useRef<string | null>(null);
+  const draftRevisionRef = useRef(0);
   const eventCursorRef = useRef({ hostInstanceId: "", sessionId: "", sequence: 0, refreshing: false });
   const providerDefaultAppliedRef = useRef(false);
   runIdRef.current = state.runId;
@@ -177,25 +178,50 @@ export function App(): JSX.Element {
 
   async function submit(): Promise<void> {
     const text = draft;
+    const draftRevision = draftRevisionRef.current;
     const api = window.chivgent;
-    if (api === undefined || projectPath.length === 0 || text.trim().length === 0 || state.phase === "running") {
+    if (api === undefined || projectPath.length === 0 || text.trim().length === 0 || state.phase === "running" || pendingStartRef.current !== null) {
       return;
     }
     if (state.host.phase !== "ready") {
       return;
     }
+    if (text.length > MAX_PROMPT_LENGTH || model.trim().length > MAX_MODEL_LENGTH) return;
     const requestId = nextRequestId();
     pendingStartRef.current = requestId;
     dispatch({ type: "submit", text });
-    setDraft("");
-    const result = await api.start({ requestId, prompt: text, provider, ...(model.trim() ? { model: model.trim() } : {}) });
+    let result: IpcResult<HostToMain>;
+    try {
+      result = await api.start({ requestId, prompt: text, provider, ...(model.trim() ? { model: model.trim() } : {}) });
+    } catch (error: unknown) {
+      if (pendingStartRef.current === requestId) {
+        pendingStartRef.current = null;
+        const detail = error instanceof Error ? error.message : "Agent host 没有回应。";
+        dispatch({ type: "fail", message: `启动结果未知。请先检查会话状态，再决定是否手动重试。${detail}` });
+      }
+      return;
+    }
     if (pendingStartRef.current !== requestId) return;
+    pendingStartRef.current = null;
     if (!result.ok) {
-      if (result.code === "cancelled") dispatch({ type: "cancelled" });
-      else dispatch({ type: "fail", message: result.message });
+      if (result.code === "cancelled" || result.code === "run_error") {
+        // These replies are sent after the host has accepted the run. Do not
+        // restore it as an unaccepted draft (for example, missing credentials).
+        if (draftRevisionRef.current === draftRevision) setDraft("");
+        if (result.code === "cancelled") dispatch({ type: "cancelled" });
+        else dispatch({ type: "fail", message: result.message });
+      } else if (isDefinitiveStartRejection(result.code)) {
+        dispatch({ type: "reject-submit", text, message: result.message });
+      } else {
+        const message = result.code === "host_unavailable"
+          ? `启动结果未知。请先检查会话状态，再决定是否手动重试。${result.message}`
+          : result.message;
+        dispatch({ type: "fail", message });
+      }
       return;
     }
     if (result.value.type === "started") {
+      if (draftRevisionRef.current === draftRevision) setDraft("");
       dispatch({ type: "started", runId: result.value.runId });
     }
   }
@@ -371,7 +397,10 @@ export function App(): JSX.Element {
             value={draft}
             placeholder="描述你想让 chivgent 做的事"
             disabled={state.host.phase !== "ready" || !projectPath}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => {
+              draftRevisionRef.current += 1;
+              setDraft(event.target.value);
+            }}
             onCompositionStart={() => {
               ignoreEnter.current = true;
             }}
@@ -396,6 +425,13 @@ export function App(): JSX.Element {
               }
             }}
           />
+          {(draft.length > MAX_PROMPT_LENGTH || model.trim().length > MAX_MODEL_LENGTH) && (
+            <div className="composer-limit" data-testid="composer-limit" role="alert">
+              {draft.length > MAX_PROMPT_LENGTH
+                ? `当前草稿 ${draft.length} / ${MAX_PROMPT_LENGTH} 个字符，请删减后再发送。`
+                : `模型名称超过 ${MAX_MODEL_LENGTH} 个字符，请在会话设置中修改。`}
+            </div>
+          )}
           <div className="composer-bar">
             {running ? (
               <button type="button" className="send stop" data-testid="stop" aria-label="停止当前运行" onClick={() => void stop()}>
@@ -407,7 +443,7 @@ export function App(): JSX.Element {
                 className="send"
                 data-testid="send"
                 aria-label="发送消息"
-                disabled={state.host.phase !== "ready" || !projectPath || draft.trim().length === 0}
+                disabled={state.host.phase !== "ready" || !projectPath || draft.trim().length === 0 || draft.length > MAX_PROMPT_LENGTH || model.trim().length > MAX_MODEL_LENGTH || pendingStartRef.current !== null}
               >
                 <span aria-hidden="true">↑</span>
               </button>
@@ -417,6 +453,10 @@ export function App(): JSX.Element {
       </main>
     </div>
   );
+}
+
+function isDefinitiveStartRejection(code: string): boolean {
+  return ["bad_request", "busy", "history_write_failed", "project_required", "request_conflict", "request_log_full"].includes(code);
 }
 
 function ItemView(props: {
