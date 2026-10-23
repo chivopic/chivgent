@@ -71,7 +71,7 @@ const server = createServer(async (request, response) => {
     requests.push(body);
     assert.equal(body.model, "desktop-fixture");
     assert.deepEqual(body.tools.map((tool) => tool.function.name).sort(),
-      ["list_files", "read_file", "search_text", "update_plan"]);
+      ["list_files", "question", "read_file", "search_text", "update_plan"]);
     response.writeHead(200, { "Content-Type": "text/event-stream" });
     const send = (delta, finish = null) => response.write(`data: ${JSON.stringify({
       id: `fixture-${requests.length}`, object: "chat.completion.chunk",
