@@ -250,9 +250,7 @@ function applyEvent(
       return {
         ...next,
         phase: phaseFromAgent(event.status),
-        items: event.status === "completed"
-          ? settleStreaming(next.items, runId)
-          : settleInterrupted(next.items, runId),
+        items: settleInterrupted(next.items, runId),
         notice: event.status === "error"
           ? event.error ?? "运行失败。"
           : next.notice,
@@ -260,14 +258,6 @@ function applyEvent(
     default:
       return next;
   }
-}
-
-function settleStreaming(items: readonly TimelineItem[], runId?: string): readonly TimelineItem[] {
-  return items.map((item) =>
-    item.kind === "assistant" && item.streaming && (runId === undefined || item.runId === runId)
-      ? { ...item, streaming: false }
-      : item,
-  );
 }
 
 function settleInterrupted(items: readonly TimelineItem[], runId?: string): readonly TimelineItem[] {
