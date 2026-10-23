@@ -139,10 +139,39 @@ it("keeps multiline question and option text visible above the answer prompt in 
       expect(screen.visible().join("\n")).toContain("answer>");
     });
     expect(screen.history().every(line => displayWidth(line) <= 20)).toBe(true);
-    console.log("ACTUAL XTERM QUESTION FRAME\n" + screen.visible().join("\n"));
     screen.input.write("2\r");
     await vi.waitFor(() => expect(session.messages.some(message => message.role === "assistant" && message.content === "Multiline choice recorded.")).toBe(true));
     expect(session.messages.some(message => message.role === "tool" && message.toolCallId === "ask-multiline" && message.content.includes('"Careful path"'))).toBe(true);
+    screen.input.write("\x04");
+    expect(await done).toBe(0);
+  } finally { screen.input.end(); await done; screen.dispose(); vi.unstubAllEnvs(); }
+});
+
+it("Ctrl+C aborts a pending question without leaking a partial answer into the next prompt", async () => {
+  vi.stubEnv("TERM", "xterm-256color");
+  const screen = terminalHarness(80, 20);
+  const llm = new FakeLLMClient([
+    assistant("", [{ id: "question-cancel", name: "question", arguments: { questions: [{ id: "q", header: "Pick", question: "Which direction?", options: [{ label: "A" }, { label: "B" }] }] } }]),
+    assistant("Next prompt completed."),
+  ]);
+  const session = new AgentSession({ id: "question-cancel-session", agent: {
+    systemPrompt: "test", maxTurns: 4, llm, tools: [new QuestionTool(new QuestionBroker())], workspace, streaming: false,
+  } });
+  const endings: string[] = [];
+  session.subscribe(event => { if (event.type === "agent_end") endings.push(event.status); });
+  const done = runRepl({ session, ...screen, stderr: screen.output, tui: true, inlineComposer: true });
+  try {
+    screen.input.write("choose\r");
+    await vi.waitFor(() => expect(screen.bytes()).toContain("answer>"));
+    screen.input.write("1");
+    screen.input.write("\x03");
+    await vi.waitFor(() => expect(endings).toEqual(["aborted"]));
+    expect(llm.requests).toHaveLength(1);
+    screen.input.write("again\r");
+    await vi.waitFor(() => expect(endings).toEqual(["aborted", "completed"]));
+    expect(llm.requests).toHaveLength(2);
+    expect(llm.requests[1]?.messages.at(-1)).toEqual({ role: "user", content: "again" });
+    expect(session.messages.some(message => message.role === "tool" && message.toolCallId === "question-cancel" && message.content.includes('"A"'))).toBe(false);
     screen.input.write("\x04");
     expect(await done).toBe(0);
   } finally { screen.input.end(); await done; screen.dispose(); vi.unstubAllEnvs(); }

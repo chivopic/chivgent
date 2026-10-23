@@ -72,6 +72,66 @@ describe("structured questions", () => {
     expect(await broker.ask({ runId: "run-2", toolCallId: "call-2" }, input, current)).toEqual({ status: "answered", answers: [{ questionId: "q", value: "B" }] });
   });
 
+  it("cancels an ignored-signal presenter immediately and isolates its late reply from the next request", async () => {
+    const broker = new QuestionBroker();
+    const input = { questions: [{ id: "q", header: "Pick", question: "Choose?", options: [{ label: "A" }, { label: "B" }] }] };
+    const controller = new AbortController();
+    let releaseLate: (() => void) | undefined;
+    const oldPresenter: QuestionPresenter = prompt => new Promise(resolve => {
+      releaseLate = () => resolve({ ...prompt, answers: [{ questionId: "q", value: "A" }] });
+    });
+    const oldAsk = broker.ask({ runId: "run-old", toolCallId: "call-old" }, input, oldPresenter, controller.signal);
+    controller.abort();
+    await expect(oldAsk).resolves.toEqual({ status: "cancelled", reason: "aborted" });
+
+    const current = await broker.ask(
+      { runId: "run-current", toolCallId: "call-current" },
+      input,
+      async prompt => ({ ...prompt, answers: [{ questionId: "q", value: "B" }] }),
+    );
+    expect(current).toEqual({ status: "answered", answers: [{ questionId: "q", value: "B" }] });
+    releaseLate?.();
+    await new Promise(resolve => setImmediate(resolve));
+    expect(current).toEqual({ status: "answered", answers: [{ questionId: "q", value: "B" }] });
+  });
+
+  it("does not restart the model or accept a late answer after the run is aborted", async () => {
+    let resolveLate: (() => void) | undefined;
+    let presenterEntered: (() => void) | undefined;
+    const entered = new Promise<void>(resolve => { presenterEntered = resolve; });
+    const llm = new FakeLLMClient([
+      assistant("", [{ id: "ask-aborted", name: "question", arguments: { questions: [questions[0]] } }]),
+      assistant("", [{ id: "ask-next", name: "question", arguments: { questions: [questions[0]] } }]),
+      assistant("Next run completed."),
+    ]);
+    const tool = new QuestionTool(new QuestionBroker());
+    const agent = new Agent({ systemPrompt: "system", maxTurns: 3, llm, tools: [tool], workspace, streaming: false });
+    const controller = new AbortController();
+    const firstRun = agent.run("first run", {
+      signal: controller.signal,
+      questionPresenter: prompt => new Promise(resolve => {
+        presenterEntered?.();
+        resolveLate = () => resolve({ ...prompt, answers: [{ questionId: "mode", value: "Careful" }] });
+      }),
+    });
+    await entered;
+    controller.abort();
+    const aborted = await firstRun;
+    expect(aborted.status).toBe("aborted");
+    expect(llm.requests).toHaveLength(1);
+
+    const completed = await agent.run("next run", { questionPresenter: async prompt => ({
+      ...prompt, answers: [{ questionId: "mode", value: "Quick" }],
+    }) });
+    expect(completed.status).toBe("completed");
+    expect(llm.requests).toHaveLength(3);
+    expect(completed.messages.some(message => message.role === "tool" && message.toolCallId === "ask-next" && message.content.includes('"Quick"'))).toBe(true);
+    resolveLate?.();
+    await new Promise(resolve => setImmediate(resolve));
+    expect(llm.requests).toHaveLength(3);
+    expect(aborted.messages.some(message => message.role === "tool" && message.content.includes('"Careful"'))).toBe(false);
+  });
+
   it("returns distinct cancellation and unavailable results without waiting for a channel", async () => {
     const broker = new QuestionBroker();
     const binding = { runId: "run", toolCallId: "call" };
