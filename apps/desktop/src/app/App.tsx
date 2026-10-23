@@ -41,7 +41,9 @@ export function App(): JSX.Element {
   const ignoreEnter = useRef(false);
   const runIdRef = useRef<string | null>(null);
   const pendingStartRef = useRef<string | null>(null);
+  const acceptedStartRef = useRef<string | null>(null);
   const draftRevisionRef = useRef(0);
+  const startDraftRevisionRef = useRef(0);
   const eventCursorRef = useRef({ hostInstanceId: "", sessionId: "", sequence: 0, refreshing: false });
   const providerDefaultAppliedRef = useRef(false);
   runIdRef.current = state.runId;
@@ -81,6 +83,8 @@ export function App(): JSX.Element {
         // Broadcast can arrive before the invoke ACK; claim this run only
         // when it belongs to the currently pending request.
         if (message.requestId === pendingStartRef.current) {
+          acceptedStartRef.current = message.requestId;
+          if (draftRevisionRef.current === startDraftRevisionRef.current) setDraft("");
           dispatch({ type: "started", runId: message.runId });
         }
       } else if (message.type === "event") {
@@ -189,6 +193,8 @@ export function App(): JSX.Element {
     if (text.length > MAX_PROMPT_LENGTH || model.trim().length > MAX_MODEL_LENGTH) return;
     const requestId = nextRequestId();
     pendingStartRef.current = requestId;
+    acceptedStartRef.current = null;
+    startDraftRevisionRef.current = draftRevision;
     dispatch({ type: "submit", text });
     let result: IpcResult<HostToMain>;
     try {
@@ -196,6 +202,7 @@ export function App(): JSX.Element {
     } catch (error: unknown) {
       if (pendingStartRef.current === requestId) {
         pendingStartRef.current = null;
+        if (acceptedStartRef.current === requestId) return;
         const detail = error instanceof Error ? error.message : "Agent host 没有回应。";
         dispatch({ type: "fail", message: `启动结果未知。请先检查会话状态，再决定是否手动重试。${detail}` });
       }
@@ -203,6 +210,7 @@ export function App(): JSX.Element {
     }
     if (pendingStartRef.current !== requestId) return;
     pendingStartRef.current = null;
+    if (acceptedStartRef.current === requestId && !result.ok) return;
     if (!result.ok) {
       if (result.code === "cancelled" || result.code === "run_error") {
         // These replies are sent after the host has accepted the run. Do not
@@ -236,6 +244,7 @@ export function App(): JSX.Element {
     }
     if (result.value.type === "project-selected") {
       pendingStartRef.current = null;
+      acceptedStartRef.current = null;
       setProjectPath(result.value.path);
       eventCursorRef.current = { hostInstanceId: "", sessionId: "", sequence: 0, refreshing: false };
       setRuntimeConfig(null);
