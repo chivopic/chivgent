@@ -23,7 +23,7 @@ const temporaryDirectories: string[] = [];
 const servers: SessionServer[] = [];
 const clients: RemoteSession[] = [];
 
-function fakeRemoteSocket(blocked = false, failWrites = false) {
+function fakeRemoteSocket(blocked = false, failWrites = false, asyncErrorAfterWrite = false) {
   const writes: Buffer[] = [];
   let destroyed = false;
   let ended = false;
@@ -46,13 +46,30 @@ function fakeRemoteSocket(blocked = false, failWrites = false) {
       if (failWrites) throw new Error("fake transport write failure");
       const bytes = Buffer.from(value);
       writes.push(bytes);
+      if (asyncErrorAfterWrite) {
+        queueMicrotask(() => {
+          const handlers = listeners.get("error");
+          if (handlers === undefined || handlers.size === 0) {
+            throw new Error("fake asynchronous write failure without an error listener");
+          }
+          for (const listener of handlers) {
+            listener(new Error("fake asynchronous write failure"));
+          }
+        });
+      }
       if (blocked) {
         this.writableLength += bytes.byteLength;
       }
       return !blocked;
     },
     end() { ended = true; },
-    destroy(this: { destroyed: boolean }) { destroyed = true; this.destroyed = true; },
+    destroy(this: { destroyed: boolean }) {
+      destroyed = true;
+      this.destroyed = true;
+      queueMicrotask(() => {
+        for (const listener of listeners.get("close") ?? []) listener();
+      });
+    },
   } as unknown as import("node:net").Socket;
   return {
     socket,
@@ -561,6 +578,50 @@ describe("SessionServer", () => {
     expect(slow.state().destroyed).toBe(true);
   });
 
+  it("drops current subscribers on encode failure and allows later clients to receive events", async () => {
+    const warnings: string[] = [];
+    const server = new SessionServer({
+      session: createSession(), socketPath: "/unused.sock", capabilities: [],
+      onWarning: (message) => warnings.push(message),
+    });
+    const first = fakeRemoteSocket();
+    const second = fakeRemoteSocket();
+    const internals = server as unknown as {
+      accept(socket: import("node:net").Socket): void;
+      broadcast(message: import("../src/remote/protocol.js").ServerMessage): void;
+      connections: Set<{ socket: import("node:net").Socket }>;
+    };
+    internals.accept(first.socket);
+    internals.accept(second.socket);
+    const cyclic = { type: "error", code: "agent_error", message: "bad" } as Record<string, unknown>;
+    cyclic["cycle"] = cyclic;
+
+    internals.broadcast(cyclic as unknown as import("../src/remote/protocol.js").ServerMessage);
+    expect(first.state().destroyed).toBe(true);
+    expect(second.state().destroyed).toBe(true);
+    expect(warnings[0]).toMatch(/^remote encode failure:/);
+
+    const later = fakeRemoteSocket();
+    internals.accept(later.socket);
+    const valid = { type: "error", code: "agent_error", message: "later event" } as const;
+    internals.broadcast(valid);
+    expect(later.state().writes).toHaveLength(1);
+    expect(later.state().destroyed).toBe(false);
+
+    const target = fakeRemoteSocket();
+    const bystander = fakeRemoteSocket();
+    internals.accept(target.socket);
+    internals.accept(bystander.socket);
+    const targetConnection = [...internals.connections].find((connection) => connection.socket === target.socket);
+    expect(targetConnection).toBeDefined();
+    (server as unknown as { send(connection: unknown, message: import("../src/remote/protocol.js").ServerMessage): void })
+      .send(targetConnection, cyclic as unknown as import("../src/remote/protocol.js").ServerMessage);
+    expect(target.state().destroyed).toBe(true);
+    expect(bystander.state().destroyed).toBe(false);
+    internals.broadcast(valid);
+    expect(bystander.state().writes).toHaveLength(1);
+  });
+
   it("best-effort sends bye then destroys a backpressured socket during close", async () => {
     const server = new SessionServer({
       session: createSession(), socketPath: "/unused.sock", capabilities: [], maxPendingBytes: 1,
@@ -611,16 +672,40 @@ describe("SessionServer", () => {
 
     internals.broadcast({ type: "error", code: "agent_error", message: "still healthy" });
 
-    const cyclic = { type: "error", code: "agent_error", message: "bad" } as Record<string, unknown>;
-    cyclic["cycle"] = cyclic;
-    internals.broadcast(cyclic as unknown as import("../src/remote/protocol.js").ServerMessage);
-
     expect(broken.state().destroyed).toBe(true);
     expect(healthy.state().writes).toHaveLength(1);
-    expect(warnings).toEqual([
-      "remote write failure: fake transport write failure",
-      expect.stringMatching(/^remote encode failure:/),
-    ]);
+    expect(warnings).toEqual(["remote write failure: fake transport write failure"]);
+  });
+
+  it("keeps an error listener until close when a pending write fails after destroy", async () => {
+    const message = { type: "error", code: "agent_error", message: "queued write" } as const;
+    const server = new SessionServer({
+      session: createSession(), socketPath: "/unused.sock", capabilities: [],
+    });
+    const socket = fakeRemoteSocket(false, false, true);
+    const internals = server as unknown as {
+      accept(socket: import("node:net").Socket): void;
+      broadcast(message: import("../src/remote/protocol.js").ServerMessage): void;
+      drop(connection: unknown): void;
+      connections: Set<unknown>;
+    };
+    internals.accept(socket.socket);
+
+    internals.broadcast(message);
+    // The write schedules its async error. Destroy the connection before that
+    // callback runs, matching a separate backpressure/drop decision.
+    internals.drop([...internals.connections][0]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(socket.state()).toMatchObject({ destroyed: true, listenerCount: 0 });
+  });
+
+  it("rejects non-positive, fractional, and non-finite send budgets", () => {
+    for (const maxPendingBytes of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => new SessionServer({
+        session: createSession(), socketPath: "/unused.sock", capabilities: [], maxPendingBytes,
+      })).toThrow(RangeError);
+    }
   });
 
   it("refuses a second prompt while one is running, without disturbing it", async () => {

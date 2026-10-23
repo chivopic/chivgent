@@ -44,7 +44,8 @@ interface Connection {
   greeted: boolean;
   closed: boolean;
   ending: boolean;
-  detach: () => void;
+  detachInput: () => void;
+  detachTerminal: () => void;
 }
 
 /**
@@ -61,7 +62,15 @@ export class SessionServer {
   private controller: AbortController | undefined;
   private unsubscribe: (() => void) | undefined;
 
-  constructor(private readonly options: SessionServerOptions) {}
+  private readonly options: SessionServerOptions;
+
+  constructor(options: SessionServerOptions) {
+    if (options.maxPendingBytes !== undefined &&
+      (!Number.isSafeInteger(options.maxPendingBytes) || options.maxPendingBytes <= 0)) {
+      throw new RangeError("maxPendingBytes must be a positive safe integer.");
+    }
+    this.options = options;
+  }
 
   get socketPath(): string {
     return this.options.socketPath;
@@ -132,7 +141,8 @@ export class SessionServer {
       greeted: false,
       closed: false,
       ending: false,
-      detach: () => undefined,
+      detachInput: () => undefined,
+      detachTerminal: () => undefined,
     };
     this.connections.add(connection);
     socket.setNoDelay(true);
@@ -155,12 +165,19 @@ export class SessionServer {
     // A client going away is ordinary: it removes a subscriber and nothing
     // else. The run in flight belongs to the session, not to the connection.
     const onError = (): void => this.drop(connection);
-    const onClose = (): void => this.drop(connection);
+    const onClose = (): void => {
+      if (!connection.closed) {
+        this.drop(connection);
+      }
+      connection.detachTerminal();
+    };
     socket.on("data", onData);
     socket.on("error", onError);
     socket.on("close", onClose);
-    connection.detach = () => {
+    connection.detachInput = () => {
       socket.off("data", onData);
+    };
+    connection.detachTerminal = () => {
       socket.off("error", onError);
       socket.off("close", onClose);
     };
@@ -172,7 +189,9 @@ export class SessionServer {
     }
     connection.closed = true;
     this.connections.delete(connection);
-    connection.detach();
+    connection.detachInput();
+    // Keep the error listener until close: a pending write may report its
+    // failure asynchronously after destroy() has been requested.
     connection.socket.destroy();
   }
 
@@ -278,6 +297,9 @@ export class SessionServer {
       encoded = encodeMessage(message);
     } catch (error: unknown) {
       this.warn("encode", error);
+      for (const connection of [...this.connections]) {
+        this.drop(connection);
+      }
       return;
     }
     for (const connection of [...this.connections]) {
@@ -291,6 +313,7 @@ export class SessionServer {
       encoded = encodeMessage(message);
     } catch (error: unknown) {
       this.warn("encode", error);
+      this.drop(connection);
       return;
     }
     this.write(connection, encoded);
