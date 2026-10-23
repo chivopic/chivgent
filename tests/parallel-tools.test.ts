@@ -4,8 +4,10 @@ import type { AgentEvent } from "../src/events.js";
 import { ReadFileTool } from "../src/tools/read-file.js";
 import { ListFilesTool } from "../src/tools/list-files.js";
 import { SearchTextTool } from "../src/tools/search-text.js";
+import { ReadShellOutputTool } from "../src/tools/read-shell-output.js";
+import { ShellOutputStore } from "../src/shell/output-store.js";
 import { EditFileTool } from "../src/tools/edit-file.js";
-import { isParallelReadTool, MAX_PARALLEL_READS } from "../src/tools/parallel.js";
+import { isParallelReadTool, isPlanModeTool, MAX_PARALLEL_READS } from "../src/tools/parallel.js";
 import type { Tool } from "../src/tools/tool.js";
 import type { Workspace } from "../src/workspace.js";
 import { assistant, FakeLLMClient, readOnlyWorkspaceWrites } from "./fakes.js";
@@ -62,6 +64,19 @@ function makeAgent(llm: FakeLLMClient, workspace: Workspace, tools: readonly Too
 const readCall = (id: string) => ({ id, name: "read_file", arguments: { path: `${id}.ts` } });
 
 describe("parallel built-in read tool scheduling", () => {
+  it("allows session output reads in Plan Mode while keeping them exclusive", () => {
+    const reader = new ReadShellOutputTool(new ShellOutputStore());
+    const agent = new Agent({
+      systemPrompt: "test",
+      maxTurns: 1,
+      llm: new FakeLLMClient([]),
+      tools: [reader],
+      workspace: makeWorkspace(async () => slice("")),
+    });
+    expect(agent.toolNames).toContain("read_shell_output");
+    expect(isPlanModeTool(reader)).toBe(true);
+    expect(isParallelReadTool(reader)).toBe(false);
+  });
   it("overlaps reads and commits tool messages in call order, not completion order", async () => {
     const first = deferred();
     const second = deferred();

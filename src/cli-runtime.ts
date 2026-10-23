@@ -15,6 +15,8 @@ import { PermissionWorkspace, type PermissionPolicy, type ShellScope } from "./p
 import { createShellOperations } from "./shell/factory.js";
 import type { SessionStore } from "./session-store.js";
 import { BashTool } from "./tools/bash.js";
+import { ReadShellOutputTool } from "./tools/read-shell-output.js";
+import { ShellOutputStore } from "./shell/output-store.js";
 import { ApplyPatchTool } from "./tools/apply-patch.js";
 import { EditFileTool } from "./tools/edit-file.js";
 import { ListFilesTool } from "./tools/list-files.js";
@@ -54,6 +56,7 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
   const modernPolicy = config.permissionPolicy !== undefined;
   const allowWrites = modernPolicy || options.allowWrites;
   const allowShell = modernPolicy || options.allowShell;
+  const shellOutputStore = allowShell ? new ShellOutputStore() : undefined;
   const webSearchBackend = options.webSearch === undefined
     ? undefined
     : new SearxngBackend({
@@ -97,6 +100,7 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
       ...(allowWrites ? [new WriteFileTool(), new EditFileTool(), new ApplyPatchTool()] : []),
       ...(allowShell ? [new BashTool({
         cwd,
+        outputStore: shellOutputStore!,
         allowWrites,
         allowNetwork: modernPolicy ? config.permissionPolicy!.shellNetwork : options.shellNetwork,
         backend: options.shellBackend,
@@ -118,10 +122,14 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
         } : {
           approve: (command, signal, context) => config.shellApproval?.approveDecision(command, signal, context) ?? Promise.resolve({ approved: false, reason: "unavailable" }),
         }),
-      })] : []),
+      }), new ReadShellOutputTool(shellOutputStore!)] : []),
       ...(extensions?.registeredTools ?? []).map((entry) => entry.tool),
     ],
     workspace: modernPolicy ? new PermissionWorkspace(cwd, config.permissionPolicy!) : new LocalWorkspace(cwd, { allowWrites: options.allowWrites }),
+    ...(shellOutputStore === undefined ? {} : {
+      clearSessionData: () => shellOutputStore.clear(),
+      closeSessionData: () => shellOutputStore.close(),
+    }),
     ...(modernPolicy && extensions !== undefined ? {
       authorizeToolCall: (name: string, args: unknown, signal?: AbortSignal) =>
         extensions.registeredTools.some((entry) => entry.tool.name === name)

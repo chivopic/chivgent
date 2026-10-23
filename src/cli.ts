@@ -82,6 +82,7 @@ const BUILT_IN_TOOL_NAMES = [
   "edit_file",
   "apply_patch",
   "bash",
+  "read_shell_output",
   "web_search",
 ] as const;
 
@@ -467,6 +468,7 @@ async function runOnce(
     return 1;
   } finally {
     process.off("SIGINT", interrupt);
+    await session.close();
   }
 }
 
@@ -553,8 +555,10 @@ async function serveSession(
       error instanceof SocketPathTooLongError
     ) {
       process.stderr.write(`${error.message}\n`);
+      await session.close();
       return 1;
     }
+    await session.close();
     throw error;
   }
 
@@ -585,6 +589,7 @@ async function serveSession(
 
   process.stderr.write("\nStopping.\n");
   await server.close();
+  await session.close();
   return 0;
 }
 

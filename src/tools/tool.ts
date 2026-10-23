@@ -26,6 +26,8 @@ export interface ToolContext {
 export interface ToolOutput {
   readonly content: string;
   readonly isError: boolean;
+  /** Typed shell output capability; deliberately not an extensible metadata bag. */
+  readonly shellOutput?: { readonly id: string; readonly state: "complete" | "incomplete" | "unavailable"; readonly totalLines: number };
 }
 
 /** An intentional, user-safe failure message from a tool (including extensions). */

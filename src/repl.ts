@@ -1288,6 +1288,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         try {
           const next = await options.sessionOptions?.create?.(outcome.title);
           if (next === undefined) throw new Error("Session creation is unavailable.");
+          await activeSession.close();
           activeSession = next;
           write(`Started a new session${next.title ? ` · ${next.title}` : ""}. Previous session saved.\n`);
         } catch (error: unknown) { write(`Could not start a new session: ${error instanceof Error ? error.message : String(error)}\n`); }
@@ -1304,6 +1305,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
           } else {
             const next = await options.sessionOptions?.resume?.(id);
             if (next === undefined) throw new Error(`Unknown session in this workspace: ${id}`);
+            await activeSession.close();
             activeSession = next;
             write(`Resumed saved session${next.title ? ` · ${next.title}` : ""}.\n`);
           }
@@ -1361,6 +1363,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     options.shellApproval?.setHandler(undefined);
     readline.close();
     tuiInput?.dispose();
+    await activeSession.close();
   }
   return interrupted ? 130 : 0;
 }

@@ -75,6 +75,10 @@ export class AgentSession {
     });
   }
 
+  async close(): Promise<void> {
+    await this.agent.close();
+  }
+
   get messages(): readonly Message[] {
     return this.transcript;
   }
@@ -198,6 +202,7 @@ export class AgentSession {
   clear(): void {
     if (this.promptInProgress) throw new Error("Cannot clear a session while a prompt is running.");
     if (this.controlInProgress) throw new Error("Cannot clear a session while another session operation is running.");
+    this.agent.clearSessionData();
     this.transcript = [];
     this.compaction = undefined;
     this.promptCount = 0;

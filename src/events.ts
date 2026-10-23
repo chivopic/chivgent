@@ -109,6 +109,7 @@ export interface ToolExecutionEndEvent {
   readonly toolName: string;
   readonly content: string;
   readonly isError: boolean;
+  readonly shellOutput?: { readonly id: string; readonly state: "complete" | "incomplete" | "unavailable"; readonly totalLines: number };
 }
 
 /** An authoritative checklist snapshot from a successful update_plan tool. */

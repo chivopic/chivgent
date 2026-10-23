@@ -106,7 +106,7 @@ The backend is a SearXNG instance with its JSON API enabled. The token comes fro
 
 ## How it fits together
 
-You type in the terminal. chivgent calls the provider you picked. File tools stay inside the current directory. The shell runs in a sandbox and does not receive your provider keys. On the default start, the shell is off until you turn it on.
+You type in the terminal. chivgent calls the provider you picked. File tools stay inside the current directory. The shell runs in a sandbox and does not receive your provider keys. On the default start, the shell is off until you turn it on. Truncated shell output can be read by its session output ID with `read_shell_output`; the ID is not a file path and expires with its session.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/fit-dark.svg">
