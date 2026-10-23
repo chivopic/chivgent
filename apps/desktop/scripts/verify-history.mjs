@@ -47,7 +47,7 @@ const server = createServer(async (request, response) => {
     assert.equal(request.headers.authorization, 'Bearer fixture-key');
     let raw = ''; for await (const chunk of request) raw += chunk;
     const body = JSON.parse(raw); requests.push(body);
-    assert.deepEqual(body.tools.map(t => t.function.name).sort(), ['list_files', 'read_file', 'search_text', 'update_plan']);
+    assert.deepEqual(body.tools.map(t => t.function.name).sort(), ['list_files', 'question', 'read_file', 'search_text', 'update_plan']);
     response.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const send = (delta, finish = null) => response.write(`data: ${JSON.stringify({ id: 'history-fixture', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`);
     const last = body.messages.at(-1);

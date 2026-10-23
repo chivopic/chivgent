@@ -102,6 +102,11 @@ clients continue receiving the ordered stream, and the session run continues.
 Shutdown sends `bye` on a best-effort basis, then destroys attached sockets so
 a client that has stopped reading cannot hold server close open.
 
+The first structured `question` tool is handled only by the local simple REPL
+and rich TUI. A served session or remote attachment has no answer channel in
+this release; the tool returns an explicit unavailable result rather than
+waiting for input that cannot arrive.
+
 Attaching does not replay history; the session log already holds that. The
 protocol is JSON Lines over a Unix socket, one object per line, the same shape
 `--json` writes.
@@ -113,4 +118,3 @@ person attaching cannot see the flags you typed. The boundary is filesystem
 permissions — sockets live in an owner-only directory under `CHIVGENT_HOME` —
 and there is no TCP listener. For another machine, forward the socket over SSH
 so that authentication is SSH's job.
-

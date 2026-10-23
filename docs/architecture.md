@@ -36,6 +36,29 @@ only when those tools are registered, plus process-local permission policy and
 extension contributions. This is inspired by Codex's layered instructions, but
 tool access remains enforced by chivgent's runtime, not by text.
 
+### Structured questions
+
+The built-in `question` tool pauses its current Agent run while the local REPL
+collects bounded single-choice, multiple-choice, or free-text answers. The
+question broker binds each response to the current run and tool call; it accepts
+one complete answer set and returns a paired tool result before the Provider is
+called again. Invalid fields are rejected before the prompt is shown, and an
+empty answer is never converted to a default choice. Cancelling a question
+returns an explicit cancelled tool result; Ctrl+C aborts the run. Closing input
+or running without a local question presenter returns unavailable immediately.
+
+The simple REPL and rich TUI use the same input stream as shell approval, but
+only while the Agent is awaiting the question. The rich TUI temporarily hands
+input to the question prompt, then restores its composer. Question answers are
+requirements only; they cannot change permission mode, approve a write or shell
+command, or start execution after Plan Mode. Plan Mode exposes only the exact
+built-in question implementation alongside its existing read tools and
+`update_plan`; question remains an exclusive tool and never joins parallel
+reads. Headless and remote paths do not have a question presenter in this
+release and receive an unavailable result rather than waiting. The Desktop host has
+no presenter in this release and returns an unavailable tool result immediately
+without opening UI.
+
 The agent identifies itself as **chivgent**. When asked which model it uses,
 it also reports the current configured provider and model, in the user's
 language. This is configuration, not proof of which backend implementation
@@ -313,9 +336,11 @@ src/
     bash.ts                      Shell command execution
     read-shell-output.ts         Session-local ranged spill reader
     web-search.ts                Permission-gated, bounded web search
+    question.ts                  Structured requirements question
   websearch/
     backend.ts                   WebSearchBackend contract and SearXNG adapter
   prompts.ts                     The instructions the agent runs under
+  questions.ts                   Bounded question validation and run broker
   evals/
     task.ts                      Task definitions and their validation
     fixture.ts                   A fresh workspace copy per attempt
@@ -351,4 +376,3 @@ tests/                           Provider, loop, and workspace tests
 evals/                           Eval tasks and their fixtures
 docs/                            Architecture and learning notes
 ```
-

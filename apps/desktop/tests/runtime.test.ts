@@ -46,13 +46,20 @@ function fixture() {
             return { message: { role: "assistant", content: last.content, toolCalls: [] } };
           }
           const prompt = last?.role === "user" ? last.content : "";
+          if (prompt === "question") {
+            return { message: { role: "assistant", content: "", toolCalls: [{
+              id: `question-${++call}`, name: "question", arguments: { questions: [{
+                id: "choice", header: "Approach", question: "Which approach?", options: [{ label: "Fast" }, { label: "Careful" }],
+              }] },
+            }] } };
+          }
           const path = prompt === "escape" ? "../outside.txt" : prompt === "symlink" ? "escape.txt" : "facts.txt";
           return { message: { role: "assistant", content: "Reading selected project.", toolCalls: [{
             id: `read-${++call}`, name: "read_file", arguments: { path, start_line: 1, line_count: 20 },
           }] } };
         } }),
       });
-      expect(result.session.toolNames.slice().sort()).toEqual(["list_files", "read_file", "search_text", "update_plan"]);
+      expect(result.session.toolNames.slice().sort()).toEqual(["list_files", "question", "read_file", "search_text", "update_plan"]);
       return result;
     },
   });
@@ -91,6 +98,29 @@ describe("desktop real runtime", () => {
     }
     expect(readdirSync(f.first).sort()).toEqual(["escape.txt", "facts.txt"]);
     expect(readdirSync(f.root).sort()).toEqual(["first project 中文", "outside.txt", "second"]);
+    await f.service.shutdown();
+  });
+
+  it("returns an immediate unavailable result without waiting for UI or adding capabilities", async () => {
+    const f = fixture();
+    await select(f.service, f.messages, f.first);
+    const events = await run(f.service, f.messages, "desktop-question", "question");
+
+    const firstRequest = f.requests[0];
+    expect(firstRequest?.tools.map(tool => tool.name).sort()).toEqual([
+      "list_files", "question", "read_file", "search_text", "update_plan",
+    ]);
+    expect(firstRequest?.tools.map(tool => tool.name)).not.toContain("bash");
+    expect(firstRequest?.tools.map(tool => tool.name)).not.toContain("write_file");
+    expect(f.requests).toHaveLength(2);
+    expect(f.requests[1]?.messages.at(-1)).toMatchObject({
+      role: "tool", toolName: "question", isError: true,
+      content: expect.stringContaining("unavailable"),
+    });
+    expect(events).toContainEqual(expect.objectContaining({ event: expect.objectContaining({
+      type: "tool_execution_end", toolName: "question", isError: true, content: expect.stringContaining("unavailable"),
+    }) }));
+    expect(events.at(-1)).toMatchObject({ event: { type: "agent_end", status: "completed" } });
     await f.service.shutdown();
   });
 

@@ -1,5 +1,6 @@
 import type { Workspace } from "../workspace.js";
 import type { PlanUpdate } from "./update-plan.js";
+import type { Question, QuestionOutcome } from "../questions.js";
 
 export interface ToolDefinition {
   readonly name: string;
@@ -21,6 +22,8 @@ export interface ToolContext {
   readonly onUpdate?: (content: string) => void;
   /** Successful control-tool plans reach the event stream, not the filesystem. */
   readonly onPlanUpdate?: (update: PlanUpdate) => void;
+  /** Present only for the exact built-in question tool. */
+  readonly requestQuestion?: (questions: readonly Question[]) => Promise<QuestionOutcome>;
 }
 
 export interface ToolOutput {

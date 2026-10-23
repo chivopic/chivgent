@@ -67,7 +67,7 @@ describe("local CLI session setup", () => {
       llm: new FakeLLMClient([]),
       restored: { resumed: false },
     });
-    expect(session.toolNames).toEqual(["list_files", "search_text", "read_file", "update_plan"]);
+    expect(session.toolNames).toEqual(["list_files", "search_text", "read_file", "update_plan", "question"]);
   });
 
   it("adds write and shell tools only when enabled", () => {
@@ -78,7 +78,7 @@ describe("local CLI session setup", () => {
       restored: { resumed: false },
     });
     expect(session.toolNames).toEqual([
-      "list_files", "search_text", "read_file", "update_plan", "write_file", "edit_file", "apply_patch", "bash", "read_shell_output",
+      "list_files", "search_text", "read_file", "update_plan", "question", "write_file", "edit_file", "apply_patch", "bash", "read_shell_output",
     ]);
   });
 
