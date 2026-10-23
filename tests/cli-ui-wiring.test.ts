@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PermissionPolicy } from "../src/permissions.js";
 import { ShellApprovalGate } from "../src/shell/approval.js";
+import type { ProviderControl } from "../src/repl.js";
+import type { ModelSelection } from "../src/prompts.js";
 
 const harness = vi.hoisted(() => {
   const stream = () => ({
@@ -107,6 +109,16 @@ describe("CLI terminal UI wiring", () => {
     });
     expect(harness.createLocalSession.mock.calls[0]?.[0].permissionPolicy).toBeUndefined();
     expect(harness.runRepl.mock.calls[0]?.[0].banner).not.toContain("session-test");
+  });
+
+  it.each([{ flags: [] }, { flags: ["--simple"] }])("reads the live provider control for model identity with flags $flags", async ({ flags }) => {
+    expect(await main([...flags, "--no-session", "--no-extensions", "--provider", "deepseek", "--model", "deepseek-chat"])).toBe(0);
+    const selection = harness.createLocalSession.mock.calls[0]?.[0].modelSelection as () => ModelSelection;
+    const control = harness.runRepl.mock.calls[0]?.[0].providers as ProviderControl;
+    expect(selection()).toMatchObject({ provider: "deepseek", model: "deepseek-chat" });
+    vi.spyOn(control, "provider", "get").mockReturnValue("openai-compatible");
+    vi.spyOn(control, "model", "get").mockReturnValue("switched-model");
+    expect(selection()).toMatchObject({ provider: "openai-compatible", model: "switched-model" });
   });
 
   it("keeps explicit --tui working with redirected stdout", async () => {

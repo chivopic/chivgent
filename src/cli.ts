@@ -294,10 +294,16 @@ export async function main(argv: readonly string[]): Promise<number> {
     : undefined;
   permissionPolicy?.setApproval((action, signal, context) => shellApproval?.approveDecision(action, signal, context) ?? Promise.resolve({ approved: false, reason: "unavailable" }));
 
+  const providerControl = interactive ? new InteractiveProvider(options, llm) : undefined;
+  const modelSelection = () => ({
+    provider: providerControl?.provider ?? options.provider,
+    model: providerControl === undefined ? options.model : providerControl.model,
+  });
   const session = createLocalSession({
     options,
     cwd,
     llm,
+    modelSelection,
     ...(shellApproval === undefined ? {} : { shellApproval }),
     ...(permissionPolicy === undefined ? {} : { permissionPolicy }),
     ...(registry === undefined ? {} : { extensions: registry }),
@@ -357,8 +363,6 @@ export async function main(argv: readonly string[]): Promise<number> {
     return serveSession(options, session);
   }
 
-  const providerControl = interactive ? new InteractiveProvider(options, llm) : undefined;
-
   if (interactive) {
     try {
       return await runRepl({
@@ -384,7 +388,7 @@ export async function main(argv: readonly string[]): Promise<number> {
           list: async () => (await store.list({ cwd })).map(({ id, title }) => ({ id, ...(title === undefined ? {} : { title }) })),
           create: async (title) => {
             await store.flush?.();
-            const next = createLocalSession({ options, cwd, llm, ...(shellApproval === undefined ? {} : { shellApproval }), ...(permissionPolicy === undefined ? {} : { permissionPolicy }), ...(registry === undefined ? {} : { extensions: registry }), restored: { resumed: false }, store });
+            const next = createLocalSession({ options, cwd, llm, modelSelection, ...(shellApproval === undefined ? {} : { shellApproval }), ...(permissionPolicy === undefined ? {} : { permissionPolicy }), ...(registry === undefined ? {} : { extensions: registry }), restored: { resumed: false }, store });
             await next.initialize();
             if (title) await next.rename(title);
             attachSession(next);
@@ -394,7 +398,7 @@ export async function main(argv: readonly string[]): Promise<number> {
             await store.flush?.();
             const record = await store.read(id);
             if (record === undefined || record.header.cwd !== cwd) return undefined;
-            const next = createLocalSession({ options, cwd, llm, ...(shellApproval === undefined ? {} : { shellApproval }), ...(permissionPolicy === undefined ? {} : { permissionPolicy }), ...(registry === undefined ? {} : { extensions: registry }), restored: { id, messages: record.messages, compaction: record.compaction, promptCount: record.promptCount, usage: record.usage, title: record.title, planMode: record.planMode, resumed: true }, store });
+            const next = createLocalSession({ options, cwd, llm, modelSelection, ...(shellApproval === undefined ? {} : { shellApproval }), ...(permissionPolicy === undefined ? {} : { permissionPolicy }), ...(registry === undefined ? {} : { extensions: registry }), restored: { id, messages: record.messages, compaction: record.compaction, promptCount: record.promptCount, usage: record.usage, title: record.title, planMode: record.planMode, resumed: true }, store });
             attachSession(next);
             return next;
           },

@@ -8,6 +8,8 @@ import { createConfiguredClient } from "../providers/client.js";
 import {
   SHELL_SYSTEM_PROMPT,
   SYSTEM_PROMPT,
+  modelSelectionPrompt,
+  type ModelSelection,
   WRITE_SYSTEM_PROMPT,
 } from "../prompts.js";
 import { formatFailures, formatTable, toJsonReport } from "./report.js";
@@ -41,8 +43,8 @@ attempts rather than a verdict, and that is not something to gate a merge on.
 `;
 
 
-function buildSystemPrompt(capabilities: readonly Capability[]): string {
-  const sections = [SYSTEM_PROMPT];
+function buildSystemPrompt(capabilities: readonly Capability[], selection: ModelSelection): string {
+  const sections = [SYSTEM_PROMPT, modelSelectionPrompt(selection)];
   if (capabilities.includes("writes")) {
     sections.push(WRITE_SYSTEM_PROMPT);
   }
@@ -110,7 +112,7 @@ async function main(argv: readonly string[]): Promise<number> {
     model: cliOptions.model ?? "unknown",
     capabilities: options.capabilities,
     ...(options.attempts === undefined ? {} : { attemptsOverride: options.attempts }),
-    systemPrompts: tasks.map((task) => `${task.name}\n${buildSystemPrompt(task.capabilities)}`),
+    systemPrompts: tasks.map((task) => `${task.name}\n${buildSystemPrompt(task.capabilities, cliOptions)}`),
   });
 
   if (options.dryRun) {
@@ -148,7 +150,7 @@ async function main(argv: readonly string[]): Promise<number> {
       results.push(
         await runTask(task, {
           createClient: () => llm,
-          systemPrompt: buildSystemPrompt(task.capabilities),
+          systemPrompt: buildSystemPrompt(task.capabilities, cliOptions),
           capabilities: options.capabilities,
           ...(options.attempts === undefined ? {} : { attempts: options.attempts }),
           onAttempt: (result) => {

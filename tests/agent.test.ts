@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentEvent } from "../src/events.js";
 import { Agent, AgentProtocolError } from "../src/agent.js";
+import { ContextManager } from "../src/context/context-manager.js";
 import { ListFilesTool } from "../src/tools/list-files.js";
 import { ReadFileTool } from "../src/tools/read-file.js";
 import { SearchTextTool } from "../src/tools/search-text.js";
@@ -75,6 +76,37 @@ function createAgent(
 }
 
 describe("Agent", () => {
+  it("drops provider continuation when the resolved system prompt changes", async () => {
+    let prompt = "first configuration";
+    const llm = new FakeLLMClient([
+      assistant("", [{ id: "change", name: "change_config", arguments: {} }], { previousResponseId: "old" }),
+      assistant("Done"),
+    ]);
+    const agent = new Agent({
+      systemPrompt: () => prompt, maxTurns: 2, llm, workspace,
+      tools: [tool("change_config", async () => {
+        prompt = "next configuration";
+        return { content: "Changed", isError: false };
+      })],
+    });
+    await agent.run("Change the configuration");
+    expect(llm.requests[0]?.systemPrompt).toBe("first configuration");
+    expect(llm.requests[1]?.systemPrompt).toBe("next configuration");
+    expect(llm.requests[1]?.continuation).toBeUndefined();
+    expect(llm.requests[1]?.messages.at(-1)).toMatchObject({ role: "tool", content: "Changed" });
+  });
+
+  it("budgets the resolved system prompt before sending a provider request", async () => {
+    const llm = new FakeLLMClient([assistant("Should not be sent")]);
+    const agent = new Agent({
+      systemPrompt: () => "large configuration ".repeat(1_000),
+      maxTurns: 1, llm, tools: [], workspace,
+      contextManager: new ContextManager({ contextWindow: 1_000 }),
+    });
+    await expect(agent.run("Which model?")).rejects.toThrow(/context|budget/i);
+    expect(llm.requests).toHaveLength(0);
+  });
+
   it("finishes when the assistant returns text without tool calls", async () => {
     const llm = new FakeLLMClient([assistant("Final answer")]);
 

@@ -98,7 +98,10 @@ describe("desktop real runtime", () => {
     const f = fixture();
     await select(f.service, f.messages, f.first);
     await run(f.service, f.messages, "first", "remember this project");
+    expect(f.requests[0]?.systemPrompt).toContain('"provider":"openai-compatible","model":"fixture-model"');
     await run(f.service, f.messages, "next", "follow up", "different-model");
+    expect(f.requests.at(-2)?.systemPrompt).toContain('"provider":"openai-compatible","model":"different-model"');
+    expect(f.requests.at(-2)?.systemPrompt).not.toContain("fixture-model");
     expect(f.requests.at(-2)?.messages).toContainEqual(expect.objectContaining({ role: "user", content: "remember this project" }));
     expect(JSON.stringify(f.requests.at(-2)?.messages)).toContain("first-project-fact");
     await select(f.service, f.messages, f.second, "project-second");

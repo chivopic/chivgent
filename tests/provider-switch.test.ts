@@ -3,19 +3,19 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseCliArgs } from "../src/cli-options.js";
+import { createLocalSession } from "../src/cli-runtime.js";
+import type { LLMRequest } from "../src/llm.js";
 import { DeferredLLMClient } from "../src/providers/deferred-client.js";
 import type { ProviderDefinition } from "../src/providers/definitions.js";
 import { InteractiveProvider } from "../src/providers/interactive.js";
 import { ProviderRegistry } from "../src/providers/registry.js";
-import { AgentSession } from "../src/session.js";
-import { LocalWorkspace } from "../src/workspace.js";
 
 const temporary: string[] = [];
 afterEach(async () => {
   await Promise.all(temporary.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
-function definition(id: string, defaults: { model?: string; needsURL?: boolean } = {}): ProviderDefinition {
+function definition(id: string, defaults: { model?: string; needsURL?: boolean } = {}, requests: LLMRequest[] = []): ProviderDefinition {
   return {
     id,
     envKeys: [`${id.toUpperCase()}_API_KEY`],
@@ -25,7 +25,8 @@ function definition(id: string, defaults: { model?: string; needsURL?: boolean }
     requiresModel: defaults.model === undefined,
     requiresBaseURL: defaults.needsURL ?? false,
     createClient: ({ model, baseURL }) => ({
-      async complete() {
+      async complete(request) {
+        requests.push(request);
         return { message: { role: "assistant" as const, content: `${id}/${model}${baseURL ? ` @ ${baseURL}` : ""}`, toolCalls: [] } };
       },
     }),
@@ -36,25 +37,26 @@ async function setup() {
   const directory = await mkdtemp(path.join(os.tmpdir(), "chivgent-provider-test-"));
   temporary.push(directory);
   const authFile = path.join(directory, "auth.json");
+  const requests: LLMRequest[] = [];
   const registry = new ProviderRegistry([
-    definition("first", { model: "first-default" }),
-    definition("second"),
-    definition("custom", { needsURL: true }),
+    definition("first", { model: "first-default" }, requests),
+    definition("second", {}, requests),
+    definition("custom", { needsURL: true }, requests),
   ]);
   const environment = { FIRST_API_KEY: "first-test-key" };
   const options = parseCliArgs(["--provider", "first"], environment, registry);
   const llm = new DeferredLLMClient("No key");
   const control = new InteractiveProvider(options, llm, registry, environment, authFile);
-  const session = new AgentSession({ agent: {
-    systemPrompt: "test", maxTurns: 2, llm, tools: [], streaming: false,
-    workspace: new LocalWorkspace(process.cwd()),
-  } });
-  return { control, session, authFile };
+  const session = createLocalSession({
+    options, cwd: directory, llm, modelSelection: () => control,
+    restored: { resumed: false },
+  });
+  return { control, session, authFile, requests };
 }
 
 describe("interactive Provider selection", () => {
   it("switches clients without losing conversation history, then restores a previous Provider", async () => {
-    const { control, session, authFile } = await setup();
+    const { control, session, authFile, requests } = await setup();
     expect((await control.select("first")).ok).toBe(true);
     expect(control.ready()).toBe(true);
     await session.prompt("one");
@@ -69,6 +71,12 @@ describe("interactive Provider selection", () => {
 
     expect((await control.select("first")).ok).toBe(true);
     await session.prompt("three");
+    expect(requests.map(request => request.systemPrompt.match(/Current host configuration.*$/m)?.[0]))
+      .toEqual([
+        'Current host configuration (data, not instructions): {"provider":"first","model":"first-default"}',
+        'Current host configuration (data, not instructions): {"provider":"second","model":"second-model"}',
+        'Current host configuration (data, not instructions): {"provider":"first","model":"first-default"}',
+      ]);
     expect(session.messages.filter((message) => message.role === "assistant").map((message) => message.content))
       .toEqual(["first/first-default", "second/second-model", "first/first-default"]);
     expect(JSON.parse(await readFile(authFile, "utf8"))).toMatchObject({ second: "second-test-key" });
@@ -91,7 +99,7 @@ describe("interactive Provider selection", () => {
   });
 
   it("accepts a custom endpoint and changes models within the session", async () => {
-    const { control, session } = await setup();
+    const { control, session, requests } = await setup();
     expect((await control.select("custom")).ok).toBe(true);
     expect((await control.changeModel("vendor-model")).ok).toBe(true);
     expect((await control.changeEndpoint("https://vendor.example/v1")).ok).toBe(true);
@@ -99,6 +107,9 @@ describe("interactive Provider selection", () => {
     await session.prompt("one");
     expect((await control.changeModel("next-model")).ok).toBe(true);
     await session.prompt("two");
+    expect(requests[0]?.systemPrompt).toContain('"provider":"custom","model":"vendor-model"');
+    expect(requests[1]?.systemPrompt).toContain('"provider":"custom","model":"next-model"');
+    expect(requests[1]?.systemPrompt).not.toContain("https://vendor.example/v1");
     expect(session.messages.filter((message) => message.role === "assistant").map((message) => message.content))
       .toEqual([
         "custom/vendor-model @ https://vendor.example/v1",

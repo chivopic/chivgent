@@ -8,7 +8,7 @@ import type { LLMClient } from "./llm.js";
 import type { Message } from "./messages.js";
 import type { AppliedCompaction } from "./context/context-manager.js";
 import type { UsageTotal } from "./providers/usage.js";
-import { MODERN_SHELL_SYSTEM_PROMPT, modernPermissionPrompt, SHELL_SYSTEM_PROMPT, SYSTEM_PROMPT, WEB_SEARCH_SYSTEM_PROMPT, WRITE_SYSTEM_PROMPT } from "./prompts.js";
+import { MODERN_SHELL_SYSTEM_PROMPT, modernPermissionPrompt, modelSelectionPrompt, type ModelSelection, SHELL_SYSTEM_PROMPT, SYSTEM_PROMPT, WEB_SEARCH_SYSTEM_PROMPT, WRITE_SYSTEM_PROMPT } from "./prompts.js";
 import { AgentSession } from "./session.js";
 import { ShellApprovalGate } from "./shell/approval.js";
 import { PermissionWorkspace, type PermissionPolicy, type ShellScope } from "./permissions.js";
@@ -30,6 +30,7 @@ interface LocalSessionConfig {
   readonly options: CliOptions;
   readonly cwd: string;
   readonly llm: LLMClient;
+  readonly modelSelection?: () => ModelSelection;
   readonly extensions?: ExtensionRegistry;
   readonly restored: {
     readonly id?: string;
@@ -78,7 +79,7 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
   });
 
   const agent: Omit<AgentOptions, "onEvent"> = {
-    systemPrompt: prompt.join("\n"),
+    systemPrompt: () => [...prompt, modelSelectionPrompt(config.modelSelection?.() ?? options)].join("\n"),
     maxTurns: options.maxTurns,
     llm,
     tools: [

@@ -3,10 +3,63 @@ import { parseCliArgs } from "../src/cli-options.js";
 import { createLocalSession } from "../src/cli-runtime.js";
 import { PermissionPolicy } from "../src/permissions.js";
 import { WEB_SEARCH_SYSTEM_PROMPT, WRITE_SYSTEM_PROMPT } from "../src/prompts.js";
-import { assistant, FakeLLMClient } from "./fakes.js";
+import { assistant, FakeLLMClient, FakeStreamingLLMClient } from "./fakes.js";
 import { ShellApprovalGate } from "../src/shell/approval.js";
 
 describe("local CLI session setup", () => {
+  it.each([false, true])("supplies configured model identity to the provider (streaming: %s)", async (streaming) => {
+    const llm = streaming ? new FakeStreamingLLMClient([assistant("Done")]) : new FakeLLMClient([assistant("Done")]);
+    const session = createLocalSession({
+      options: parseCliArgs(["--provider", "deepseek", "--model", "deepseek-chat", "--api-key", "private-test-key"], {}),
+      cwd: "/workspace", llm, restored: { resumed: false },
+    });
+
+    await session.prompt("你是什么模型？");
+
+    const prompt = llm.requests[0]?.systemPrompt ?? "";
+    expect(prompt).toContain('"provider":"deepseek","model":"deepseek-chat"');
+    expect(prompt).toContain("state both your chivgent agent identity and the configured provider and model");
+    expect(prompt).toContain("not proof of the underlying backend implementation");
+    expect(prompt).not.toContain("private-test-key");
+  });
+
+  it("refreshes model identity after a switch and uses current configuration on resume", async () => {
+    const options = parseCliArgs(["--provider", "deepseek", "--model", "old-model"], {});
+    const llm = new FakeLLMClient([assistant("Done"), assistant("Done"), assistant("Done")]);
+    let selection = { provider: "deepseek", model: "deepseek-chat" };
+    const session = createLocalSession({
+      options, cwd: "/workspace", llm, restored: { resumed: false },
+      modelSelection: () => selection,
+    });
+    await session.prompt("Which model?");
+    expect(llm.requests[0]?.systemPrompt).toContain('"provider":"deepseek","model":"deepseek-chat"');
+
+    selection = { provider: "openai-compatible", model: "vendor-next" };
+    await session.prompt("And now?");
+    expect(llm.requests[1]?.systemPrompt).toContain('"provider":"openai-compatible","model":"vendor-next"');
+    expect(llm.requests[1]?.systemPrompt).not.toContain("deepseek-chat");
+
+    const resumed = createLocalSession({
+      options: parseCliArgs(["--provider", "deepseek", "--model", "resume-model"], {}),
+      cwd: "/workspace", llm, restored: { resumed: true, messages: session.messages },
+    });
+    await resumed.prompt("Which model now?");
+    expect(llm.requests[2]?.systemPrompt).toContain('"provider":"deepseek","model":"resume-model"');
+    expect(llm.requests[2]?.systemPrompt).not.toContain("vendor-next");
+    expect(llm.requests[2]?.messages).toContainEqual({ role: "user", content: "And now?" });
+  });
+
+  it("marks a missing configured model as unknown instead of inventing one", async () => {
+    const llm = new FakeLLMClient([assistant("Done")]);
+    const session = createLocalSession({
+      options: parseCliArgs(["--provider", "openai-compatible"], {}),
+      cwd: "/workspace", llm, restored: { resumed: false },
+    });
+    await session.prompt("Which model?");
+    expect(llm.requests[0]?.systemPrompt).toContain('"provider":"openai-compatible","model":null');
+    expect(llm.requests[0]?.systemPrompt).toContain("If the model is null, say it is not configured");
+  });
+
   it("exposes read tools and the permission-free plan control by default", () => {
     const session = createLocalSession({
       options: parseCliArgs([], {}),
