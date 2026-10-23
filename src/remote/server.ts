@@ -32,12 +32,20 @@ export interface SessionServerOptions {
   /** Named in the handshake so an attaching client can see what it gets. */
   readonly capabilities: readonly string[];
   readonly onWarning?: (message: string) => void;
+  /** Maximum bytes buffered for one remote client. Defaults to 4 MiB. */
+  readonly maxPendingBytes?: number;
 }
+
+export const DEFAULT_MAX_PENDING_BYTES = 4 * 1024 * 1024;
 
 interface Connection {
   readonly socket: Socket;
   readonly decoder: LineDecoder;
   greeted: boolean;
+  closed: boolean;
+  ending: boolean;
+  detachInput: () => void;
+  detachTerminal: () => void;
 }
 
 /**
@@ -54,7 +62,15 @@ export class SessionServer {
   private controller: AbortController | undefined;
   private unsubscribe: (() => void) | undefined;
 
-  constructor(private readonly options: SessionServerOptions) {}
+  private readonly options: SessionServerOptions;
+
+  constructor(options: SessionServerOptions) {
+    if (options.maxPendingBytes !== undefined &&
+      (!Number.isSafeInteger(options.maxPendingBytes) || options.maxPendingBytes <= 0)) {
+      throw new RangeError("maxPendingBytes must be a positive safe integer.");
+    }
+    this.options = options;
+  }
 
   get socketPath(): string {
     return this.options.socketPath;
@@ -99,11 +115,16 @@ export class SessionServer {
   async close(): Promise<void> {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
-    for (const connection of this.connections) {
-      this.send(connection, { type: "bye", reason: "server shutting down" });
-      connection.socket.end();
+    for (const connection of [...this.connections]) {
+      if (!connection.ending) {
+        this.send(connection, { type: "bye", reason: "server shutting down" });
+        connection.ending = true;
+        connection.socket.end();
+      }
+      // A peer that stopped reading can keep end() buffered indefinitely.
+      // The final frame is best effort; destroying the socket lets close drain.
+      this.drop(connection);
     }
-    this.connections.clear();
 
     const server = this.server;
     this.server = undefined;
@@ -118,11 +139,18 @@ export class SessionServer {
       socket,
       decoder: new LineDecoder(),
       greeted: false,
+      closed: false,
+      ending: false,
+      detachInput: () => undefined,
+      detachTerminal: () => undefined,
     };
     this.connections.add(connection);
     socket.setNoDelay(true);
 
-    socket.on("data", (chunk: Buffer) => {
+    const onData = (chunk: Buffer): void => {
+      if (connection.ending || connection.closed || socket.destroyed) {
+        return;
+      }
       let lines: string[];
       try {
         lines = connection.decoder.push(chunk);
@@ -133,22 +161,50 @@ export class SessionServer {
         return;
       }
       for (const line of lines) {
+        if (connection.ending || connection.closed || socket.destroyed) {
+          break;
+        }
         this.handleLine(connection, line);
       }
-    });
+    };
 
     // A client going away is ordinary: it removes a subscriber and nothing
     // else. The run in flight belongs to the session, not to the connection.
-    socket.on("error", () => this.drop(connection));
-    socket.on("close", () => this.drop(connection));
+    const onError = (): void => this.drop(connection);
+    const onClose = (): void => {
+      if (!connection.closed) {
+        this.drop(connection);
+      }
+      connection.detachTerminal();
+    };
+    socket.on("data", onData);
+    socket.on("error", onError);
+    socket.on("close", onClose);
+    connection.detachInput = () => {
+      socket.off("data", onData);
+    };
+    connection.detachTerminal = () => {
+      socket.off("error", onError);
+      socket.off("close", onClose);
+    };
   }
 
   private drop(connection: Connection): void {
+    if (connection.closed) {
+      return;
+    }
+    connection.closed = true;
     this.connections.delete(connection);
+    connection.detachInput();
+    // Keep the error listener until close: a pending write may report its
+    // failure asynchronously after destroy() has been requested.
     connection.socket.destroy();
   }
 
   private handleLine(connection: Connection, line: string): void {
+    if (connection.ending || connection.closed || connection.socket.destroyed) {
+      return;
+    }
     const parsed = parseLine(line);
     if ("error" in parsed) {
       this.fail(connection, "bad_message", parsed.error);
@@ -240,27 +296,68 @@ export class SessionServer {
   ): void {
     this.send(connection, { type: "error", code, message });
     this.send(connection, { type: "bye", reason: code });
+    connection.ending = true;
     connection.socket.end();
-    this.connections.delete(connection);
   }
 
   private broadcast(message: ServerMessage): void {
+    let encoded: string;
+    try {
+      encoded = encodeMessage(message);
+    } catch (error: unknown) {
+      this.warn("encode", error);
+      for (const connection of [...this.connections]) {
+        this.drop(connection);
+      }
+      return;
+    }
     for (const connection of [...this.connections]) {
-      this.send(connection, message);
+      this.write(connection, encoded);
     }
   }
 
   private send(connection: Connection, message: ServerMessage): void {
-    if (connection.socket.destroyed) {
+    let encoded: string;
+    try {
+      encoded = encodeMessage(message);
+    } catch (error: unknown) {
+      this.warn("encode", error);
+      this.drop(connection);
+      return;
+    }
+    this.write(connection, encoded);
+  }
+
+  private write(connection: Connection, encoded: string): void {
+    const { socket } = connection;
+    if (connection.closed || connection.ending || socket.destroyed) {
+      return;
+    }
+    const frameBytes = Buffer.byteLength(encoded, "utf8");
+    const maxPendingBytes = this.options.maxPendingBytes ?? DEFAULT_MAX_PENDING_BYTES;
+    const pendingBytes = socket.writableLength;
+    // A single frame larger than the budget is not queued; disconnecting
+    // avoids silently losing part of an event stream and pretending it is whole.
+    if (frameBytes > maxPendingBytes || pendingBytes + frameBytes > maxPendingBytes) {
+      this.options.onWarning?.(
+        `remote client exceeded the ${maxPendingBytes}-byte pending-send budget (pending ${pendingBytes} bytes, next frame ${frameBytes} bytes); disconnecting that client`,
+      );
+      this.drop(connection);
       return;
     }
     try {
-      connection.socket.write(encodeMessage(message));
-    } catch {
-      // A write that fails means the peer is gone; dropping it here keeps a
-      // broken client from turning into a failed run.
+      // `writableLength` accounts for bytes accepted by the socket but not
+      // flushed. There is no separate application-side send queue.
+      socket.write(encoded);
+    } catch (error: unknown) {
+      this.warn("write", error);
       this.drop(connection);
     }
+  }
+
+  private warn(kind: "encode" | "write", error: unknown): void {
+    const detail = error instanceof Error ? error.message : String(error);
+    this.options.onWarning?.(`remote ${kind} failure: ${detail}`);
   }
 }
 
