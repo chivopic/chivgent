@@ -23,6 +23,43 @@ const temporaryDirectories: string[] = [];
 const servers: SessionServer[] = [];
 const clients: RemoteSession[] = [];
 
+function fakeRemoteSocket(blocked = false, failWrites = false) {
+  const writes: Buffer[] = [];
+  let destroyed = false;
+  let ended = false;
+  const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+  const socket = {
+    writableLength: 0,
+    destroyed,
+    setNoDelay() {},
+    on(event: string, listener: (...args: unknown[]) => void) {
+      const handlers = listeners.get(event) ?? new Set();
+      handlers.add(listener);
+      listeners.set(event, handlers);
+      return this;
+    },
+    off(event: string, listener: (...args: unknown[]) => void) {
+      listeners.get(event)?.delete(listener);
+      return this;
+    },
+    write(this: { writableLength: number }, value: string | Uint8Array) {
+      if (failWrites) throw new Error("fake transport write failure");
+      const bytes = Buffer.from(value);
+      writes.push(bytes);
+      if (blocked) {
+        this.writableLength += bytes.byteLength;
+      }
+      return !blocked;
+    },
+    end() { ended = true; },
+    destroy(this: { destroyed: boolean }) { destroyed = true; this.destroyed = true; },
+  } as unknown as import("node:net").Socket;
+  return {
+    socket,
+    state: () => ({ destroyed, ended, writes, listenerCount: [...listeners.values()].reduce((n, set) => n + set.size, 0) }),
+  };
+}
+
 async function temporaryDirectory(): Promise<string> {
   const directory = await mkdtemp(path.join(tmpdir(), "chivgent-remote-"));
   temporaryDirectories.push(directory);
@@ -419,6 +456,171 @@ describe("SessionServer", () => {
     expect(second.map((event) => event.type)).toEqual(first.map((event) => event.type));
     expect(second[0]?.type).toBe("agent_start");
     expect(second.at(-1)?.type).toBe("agent_end");
+  });
+
+  it("drops only the connection whose queued UTF-8 bytes exceed its budget", () => {
+    const session = createSession();
+    const warnings: string[] = [];
+    const server = new SessionServer({
+      session,
+      socketPath: "/unused.sock",
+      capabilities: [],
+      maxPendingBytes: 100,
+      onWarning: (message) => warnings.push(message),
+    } as ConstructorParameters<typeof SessionServer>[0]);
+    const slow = fakeRemoteSocket(true);
+    const fast = fakeRemoteSocket();
+    const internals = server as unknown as {
+      accept(socket: import("node:net").Socket): void;
+      broadcast(message: import("../src/remote/protocol.js").ServerMessage): void;
+    };
+    internals.accept(slow.socket);
+    internals.accept(fast.socket);
+
+    const message = {
+      type: "event",
+      event: { type: "agent_start", turn: 1, prompt: "hello", maxTurns: 4 },
+    } as const;
+    internals.broadcast(message);
+    expect(slow.state().destroyed).toBe(false);
+    expect(fast.state().writes).toHaveLength(1);
+
+    // The encoded Unicode payload is counted in UTF-8 bytes. Together the
+    // frames exceed the budget even though each frame fits on its own.
+    internals.broadcast({ type: "error", code: "agent_error", message: "😀😀😀😀" });
+
+    expect(slow.state().destroyed).toBe(true);
+    expect(fast.state().writes).toHaveLength(2);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("pending-send budget");
+  });
+
+  it("accepts a frame exactly at the byte budget and closes before the next frame", () => {
+    const message = { type: "error", code: "agent_error", message: "boundary" } as const;
+    const budget = Buffer.byteLength(encodeMessage(message), "utf8");
+    const server = new SessionServer({
+      session: createSession(), socketPath: "/unused.sock", capabilities: [], maxPendingBytes: budget,
+    } as ConstructorParameters<typeof SessionServer>[0]);
+    const slow = fakeRemoteSocket(true);
+    const internals = server as unknown as {
+      accept(socket: import("node:net").Socket): void;
+      broadcast(message: import("../src/remote/protocol.js").ServerMessage): void;
+    };
+    internals.accept(slow.socket);
+
+    internals.broadcast(message);
+    expect(slow.state().writes).toHaveLength(1);
+    expect(slow.state().destroyed).toBe(false);
+    internals.broadcast(message);
+    expect(slow.state().destroyed).toBe(true);
+  });
+
+  it("lets the session finish and delivers the terminal event to a fast client", async () => {
+    const session = createSession();
+    const server = new SessionServer({
+      session, socketPath: "/unused.sock", capabilities: [], maxPendingBytes: 512,
+    } as ConstructorParameters<typeof SessionServer>[0]);
+    const slow = fakeRemoteSocket(true);
+    const fast = fakeRemoteSocket();
+    const internals = server as unknown as {
+      accept(socket: import("node:net").Socket): void;
+      broadcast(message: import("../src/remote/protocol.js").ServerMessage): void;
+      runPrompt(connection: unknown, text: string): Promise<void>;
+    };
+    internals.accept(slow.socket);
+    internals.accept(fast.socket);
+    const unsubscribe = session.subscribe((event) => {
+      internals.broadcast({ type: "event", event });
+    });
+
+    await internals.runPrompt({ socket: fast.socket }, "hello");
+    unsubscribe();
+
+    const frames = fast.state().writes.map((bytes) => JSON.parse(bytes.toString("utf8")) as {
+      type: string; event?: AgentEvent; status?: string;
+    });
+    expect(slow.state().destroyed).toBe(true);
+    expect(frames.some((frame) => frame.type === "event" && frame.event?.type === "agent_end")).toBe(true);
+    expect(frames.at(-1)).toMatchObject({ type: "result", status: "completed" });
+  });
+
+  it("disconnects a single frame larger than the complete pending-byte budget", () => {
+    const server = new SessionServer({
+      session: createSession(), socketPath: "/unused.sock", capabilities: [], maxPendingBytes: 100,
+    } as ConstructorParameters<typeof SessionServer>[0]);
+    const slow = fakeRemoteSocket(true);
+    const internals = server as unknown as {
+      accept(socket: import("node:net").Socket): void;
+      broadcast(message: import("../src/remote/protocol.js").ServerMessage): void;
+    };
+    internals.accept(slow.socket);
+
+    // This frame is under 100 JavaScript code units but over 100 UTF-8 bytes.
+    internals.broadcast({ type: "error", code: "agent_error", message: "😀".repeat(24) });
+
+    expect(slow.state().destroyed).toBe(true);
+  });
+
+  it("best-effort sends bye then destroys a backpressured socket during close", async () => {
+    const server = new SessionServer({
+      session: createSession(), socketPath: "/unused.sock", capabilities: [], maxPendingBytes: 1,
+    } as ConstructorParameters<typeof SessionServer>[0]);
+    const slow = fakeRemoteSocket(true);
+    const internals = server as unknown as { accept(socket: import("node:net").Socket): void };
+    internals.accept(slow.socket);
+
+    await server.close();
+
+    expect(slow.state()).toMatchObject({ destroyed: true, ended: true, listenerCount: 0 });
+  });
+
+  it("keeps a protocol-failed socket tracked until close can destroy it", async () => {
+    const server = new SessionServer({
+      session: createSession(), socketPath: "/unused.sock", capabilities: [], maxPendingBytes: 4096,
+    } as ConstructorParameters<typeof SessionServer>[0]);
+    const slow = fakeRemoteSocket(true);
+    const internals = server as unknown as {
+      accept(socket: import("node:net").Socket): void;
+      fail(connection: unknown, code: "bad_message", message: string): void;
+      connections: Set<unknown>;
+    };
+    internals.accept(slow.socket);
+    const connection = [...internals.connections][0];
+    internals.fail(connection, "bad_message", "bad message");
+    expect(slow.state().destroyed).toBe(false);
+
+    await server.close();
+
+    expect(slow.state()).toMatchObject({ destroyed: true, ended: true, listenerCount: 0 });
+  });
+
+  it("classifies transport write errors and isolates the failed client", () => {
+    const warnings: string[] = [];
+    const server = new SessionServer({
+      session: createSession(), socketPath: "/unused.sock", capabilities: [],
+      onWarning: (message) => warnings.push(message),
+    });
+    const broken = fakeRemoteSocket(false, true);
+    const healthy = fakeRemoteSocket();
+    const internals = server as unknown as {
+      accept(socket: import("node:net").Socket): void;
+      broadcast(message: import("../src/remote/protocol.js").ServerMessage): void;
+    };
+    internals.accept(broken.socket);
+    internals.accept(healthy.socket);
+
+    internals.broadcast({ type: "error", code: "agent_error", message: "still healthy" });
+
+    const cyclic = { type: "error", code: "agent_error", message: "bad" } as Record<string, unknown>;
+    cyclic["cycle"] = cyclic;
+    internals.broadcast(cyclic as unknown as import("../src/remote/protocol.js").ServerMessage);
+
+    expect(broken.state().destroyed).toBe(true);
+    expect(healthy.state().writes).toHaveLength(1);
+    expect(warnings).toEqual([
+      "remote write failure: fake transport write failure",
+      expect.stringMatching(/^remote encode failure:/),
+    ]);
   });
 
   it("refuses a second prompt while one is running, without disturbing it", async () => {

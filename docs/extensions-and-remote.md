@@ -89,6 +89,15 @@ belongs to the session rather than to whoever started it. A prompt sent while
 another is running is refused rather than queued, and a client that disconnects
 mid-run does not cancel it.
 
+Each attached client has a 4 MiB pending-send budget, including bytes already
+queued by its socket. If the next encoded JSONL frame would exceed that budget,
+or a single frame is larger than the budget, the server disconnects that client
+and reports the reason through its warning callback. It does not drop part of
+the stream and keep the client attached. Other clients continue receiving the
+ordered stream, and the session run continues. Shutdown sends `bye` on a
+best-effort basis, then destroys attached sockets so a client that has stopped
+reading cannot hold server close open.
+
 Attaching does not replay history; the session log already holds that. The
 protocol is JSON Lines over a Unix socket, one object per line, the same shape
 `--json` writes.
