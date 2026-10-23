@@ -2,7 +2,7 @@ import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { RemoteSession } from "../src/remote/client.js";
 import { FramingError, LineDecoder, encodeMessage, parseLine } from "../src/remote/framing.js";
 import { PROTOCOL_VERSION, parseClientMessage, parseServerMessage } from "../src/remote/protocol.js";
@@ -37,6 +37,10 @@ function fakeRemoteSocket(blocked = false, failWrites = false, asyncErrorAfterWr
       handlers.add(listener);
       listeners.set(event, handlers);
       return this;
+    },
+    emit(event: string, ...args: unknown[]) {
+      for (const listener of [...(listeners.get(event) ?? [])]) listener(...args);
+      return true;
     },
     off(event: string, listener: (...args: unknown[]) => void) {
       listeners.get(event)?.delete(listener);
@@ -396,6 +400,32 @@ describe("socket paths", () => {
 });
 
 describe("SessionServer", () => {
+  it("ignores same-chunk and later input after a protocol failure", async () => {
+    const prompt = vi.fn(async () => ({ status: "completed" as const, messages: [] }));
+    const session = {
+      id: "protocol-failure",
+      cwd: "/workspace",
+      turns: 0,
+      messages: [],
+      toolNames: [],
+      prompt,
+    } as unknown as AgentSession;
+    const server = new SessionServer({ session, socketPath: "/unused.sock", capabilities: [] });
+    const socket = fakeRemoteSocket();
+    const internals = server as unknown as { accept(socket: import("node:net").Socket): void };
+    internals.accept(socket.socket);
+    const hello = JSON.stringify({ type: "hello", version: PROTOCOL_VERSION });
+    const request = JSON.stringify({ type: "prompt", text: "must not execute" });
+
+    socket.socket.emit("data", Buffer.from(`not-json\n${hello}\n${request}\n`));
+    socket.socket.emit("data", Buffer.from(`${request}\n`));
+    await Promise.resolve();
+
+    expect(prompt).not.toHaveBeenCalled();
+    socket.socket.destroy();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  });
+
   it("hands the client a session summary and the tool names", async () => {
     const directory = await temporaryDirectory();
     const session = createSession();

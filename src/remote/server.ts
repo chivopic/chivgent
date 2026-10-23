@@ -148,6 +148,9 @@ export class SessionServer {
     socket.setNoDelay(true);
 
     const onData = (chunk: Buffer): void => {
+      if (connection.ending || connection.closed || socket.destroyed) {
+        return;
+      }
       let lines: string[];
       try {
         lines = connection.decoder.push(chunk);
@@ -158,6 +161,9 @@ export class SessionServer {
         return;
       }
       for (const line of lines) {
+        if (connection.ending || connection.closed || socket.destroyed) {
+          break;
+        }
         this.handleLine(connection, line);
       }
     };
@@ -196,6 +202,9 @@ export class SessionServer {
   }
 
   private handleLine(connection: Connection, line: string): void {
+    if (connection.ending || connection.closed || connection.socket.destroyed) {
+      return;
+    }
     const parsed = parseLine(line);
     if ("error" in parsed) {
       this.fail(connection, "bad_message", parsed.error);
