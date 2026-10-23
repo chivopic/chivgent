@@ -101,6 +101,8 @@ bound tool output instead. Compaction is disabled with `--no-compaction`.
 The eval runner owns the opt-in wiring for this path; task configuration and
 report behavior are documented in [Evals](evals.md).
 
+Shell output has a separate, session-local read path. `BashTool` keeps its bounded accumulator and spills truncated output into an owner-only private session directory. Raw chunks waiting for the first spill are capped at 64 KiB, including bytes removed by sanitization. After the spill is closed, the session registers a random output ID; the transcript carries only that typed ID and whether the saved bytes are complete. `read_shell_output` accepts an ID and a bounded line range, checks the file without following symlinks, sanitizes terminal controls, and reads at most 32 KiB of returned text and 5 MiB while locating lines. IDs expire after one hour of inactivity, are cleared by `/clear`, and are destroyed when the session is replaced or exits. A resumed session gets a fresh registry, so old transcript IDs return unavailable. Each output is capped at 5 MiB and each session at 20 MiB or 20 files; exceeding a cap is reported as incomplete when a mapping is retained, otherwise unavailable. Spill failures leave the shell command result and exit status intact and report the reference as unavailable. This path never changes the workspace boundary used by `read_file`.
+
 ### Runtime events
 
 The Agent Loop reports what it is doing through a typed event stream instead of
@@ -302,6 +304,7 @@ src/
     write-file.ts                Whole-file create and replace
     edit-file.ts                 Exact unique-match edit
     bash.ts                      Shell command execution
+    read-shell-output.ts         Session-local ranged spill reader
     web-search.ts                Permission-gated, bounded web search
   websearch/
     backend.ts                   WebSearchBackend contract and SearXNG adapter
@@ -334,6 +337,7 @@ src/
     local.ts                     Local spawn backend
     process.ts                   Process-group kill and exit handling
     output.ts                    Bounded streaming output accumulator
+    output-store.ts              Session-local shell spill IDs and bounded reads
     truncate.ts                  Tail truncation for command output
     sanitize.ts                  Control-character filtering
 tests/                           Provider, loop, and workspace tests

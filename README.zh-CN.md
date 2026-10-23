@@ -106,7 +106,7 @@ CHIVGENT_WEB_SEARCH_TOKEN=… chivgent --web-search https://search.example.com
 
 ## 它怎么接在一起
 
-你在终端里打字。chivgent 调用你选的模型。文件工具不出当前目录。shell 在沙箱里运行，拿不到你的模型 key。默认启动时，shell 要打开才出现。
+你在终端里打字。chivgent 调用你选的模型。文件工具不出当前目录。shell 在沙箱里运行，拿不到你的模型 key。默认启动时，shell 要打开才出现。被截断的命令输出会带有会话内的输出 ID，可用 `read_shell_output` 按行回读；ID 不是文件路径，会随会话结束失效。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/fit-zh-dark.svg">

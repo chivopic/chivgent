@@ -7,7 +7,7 @@ import type { LLMRequest } from "../src/llm.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
-function setup(prompts: string[], id?: string, title?: string) {
+function setup(prompts: string[], id?: string, title?: string, onClose?: () => void) {
   return new AgentSession({
     ...(id === undefined ? {} : { id }),
     ...(title === undefined ? {} : { title }),
@@ -15,6 +15,7 @@ function setup(prompts: string[], id?: string, title?: string) {
     agent: {
       systemPrompt: "test", tools: [], maxTurns: 1,
       workspace: new LocalWorkspace(process.cwd()),
+      ...(onClose === undefined ? {} : { closeSessionData: async () => { onClose(); } }),
       llm: {
         async complete(request: LLMRequest) {
           const message = request.messages.at(-1);
@@ -102,24 +103,28 @@ describe("default inline TUI composer in a real terminal", () => {
     vi.stubEnv("TERM", "xterm-256color");
     const screen = terminalHarness(75, 22);
     const prompts: string[] = [];
-    const result = runRepl({ session: setup(prompts), ...screen,
+    const closedSessions: string[] = [];
+    const result = runRepl({ session: setup(prompts, "initial", undefined, () => closedSessions.push("initial")), ...screen,
       tui: true, inlineComposer: true, stderr: screen.output,
       sessionOptions: {
-        create: async () => setup(prompts, "created-id-hidden-from-normal-output", "new topic"),
-        resume: async () => setup(prompts, "resumed-id-hidden-from-normal-output", "older topic"),
+        create: async () => setup(prompts, "created-id-hidden-from-normal-output", "new topic", () => closedSessions.push("new")),
+        resume: async () => setup(prompts, "resumed-id-hidden-from-normal-output", "older topic", () => closedSessions.push("resumed")),
       },
     });
     try {
       screen.input.write("/new new topic\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("Started a new session · new topic"));
+      expect(closedSessions).toEqual(["initial"]);
       screen.input.write("/resume selected-by-user\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("Resumed saved session · older topic"));
+      expect(closedSessions).toEqual(["initial", "new"]);
       expect(screen.bytes()).not.toContain("created-id-hidden-from-normal-output");
       expect(screen.bytes()).not.toContain("resumed-id-hidden-from-normal-output");
       screen.input.write("/session\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("id:        resumed-id-hidden-from-normal-output"));
       screen.input.write("\u0004");
       expect(await result).toBe(0);
+      expect(closedSessions).toEqual(["initial", "new", "resumed"]);
     } finally { screen.input.end(); await result; screen.dispose(); }
   });
 });

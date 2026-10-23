@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BashTool } from "../src/tools/bash.js";
 import { createLocalShellOperations } from "../src/shell/local.js";
+import { ReadShellOutputTool } from "../src/tools/read-shell-output.js";
 import type { Workspace } from "../src/workspace.js";
 
 const temporaryDirectories: string[] = [];
@@ -189,12 +190,13 @@ describe("BashTool", () => {
   it("truncates long output and keeps the full text on disk", async () => {
     const cwd = await temporaryDirectory();
 
-    const result = await new BashTool({
+    const bash = new BashTool({
       cwd, operations: createLocalShellOperations(), approve: async () => true,
       maxLines: 5,
       maxBytes: 10_000,
       tempDirectory: cwd,
-    }).execute(
+    });
+    const result = await bash.execute(
       { command: "for i in $(seq 1 50); do echo line $i; done" },
       { workspace: unusedWorkspace },
     );
@@ -204,11 +206,14 @@ describe("BashTool", () => {
     expect(result.content).not.toContain("line 1\n");
     expect(result.content).toContain("Showing lines 46-50 of 50");
 
-    const match = /Full output: (\S+?)\]/.exec(result.content);
-    expect(match).not.toBeNull();
-    const full = await readFile((match as RegExpExecArray)[1] as string, "utf8");
-    expect(full).toContain("line 1\n");
-    expect(full).toContain("line 50\n");
+    const id = /Output ID: ([0-9a-f-]+)/.exec(result.content)?.[1];
+    expect(id).toBeDefined();
+    const full = await new ReadShellOutputTool(bash.outputStore).execute(
+      { id, startLine: 1, lineCount: 50 }, { workspace: unusedWorkspace },
+    );
+    expect(full.content).toContain("line 1\n");
+    expect(full.content).toContain("line 50\n");
+    expect(full.content).toContain("Output complete");
   });
 
   it("rejects arguments it does not understand", async () => {
@@ -290,19 +295,24 @@ describe("BashTool", () => {
   it("keeps the spill file readable only by its owner", async () => {
     const cwd = await temporaryDirectory();
 
-    const result = await new BashTool({
+    const bash = new BashTool({
       cwd, operations: createLocalShellOperations(), approve: async () => true,
       maxLines: 2,
       maxBytes: 10_000,
       tempDirectory: cwd,
-    }).execute(
+    });
+    const result = await bash.execute(
       { command: "for i in $(seq 1 20); do echo secret $i; done" },
       { workspace: unusedWorkspace },
     );
 
-    const match = /Full output: (\S+?)\]/.exec(result.content);
-    expect(match).not.toBeNull();
-    const mode = statSync((match as RegExpExecArray)[1] as string).mode & 0o777;
-    expect(mode & 0o077).toBe(0);
+    const id = /Output ID: ([0-9a-f-]+)/.exec(result.content)?.[1];
+    expect(id).toBeDefined();
+    const outputDirectory = await bash.outputStore.getTempDirectory();
+    const file = path.join(outputDirectory, readdirSync(outputDirectory)[0] as string);
+    const directoryMode = statSync(outputDirectory).mode & 0o777;
+    const mode = statSync(file).mode & 0o777;
+    expect(directoryMode).toBe(0o700);
+    expect(mode).toBe(0o600);
   });
 });

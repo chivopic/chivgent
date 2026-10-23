@@ -4,6 +4,7 @@ import { createShellOperations, type ShellBackend } from "../shell/factory.js";
 import { approvalWasGranted, type ApprovalDecision, type ShellApproval } from "../shell/approval.js";
 import type { ShellScope } from "../permissions.js";
 import { OutputAccumulator } from "../shell/output.js";
+import { ShellOutputStore, type SavedOutputState } from "../shell/output-store.js";
 import { formatSize, type TruncationResult } from "../shell/truncate.js";
 import {
   ShellAbortError,
@@ -88,12 +89,13 @@ export interface BashToolOptions {
   readonly maxBytes?: number;
   readonly tempDirectory?: string;
   readonly throttleMs?: number;
+  readonly outputStore?: ShellOutputStore;
 }
 
 export class BashTool implements Tool {
   readonly name = "bash";
   readonly description =
-    "Run a shell command in the workspace root and return its combined stdout and stderr. Output is truncated to the last part of the run; the full output is written to a temp file when that happens. Not interactive: commands get no stdin.";
+    "Run a shell command in the workspace root and return its combined stdout and stderr. Truncated output can be read with read_shell_output using the session output ID. Not interactive: commands get no stdin.";
   readonly inputSchema: Readonly<Record<string, unknown>>;
 
   private readonly cwd: string;
@@ -105,8 +107,8 @@ export class BashTool implements Tool {
   private readonly approve: ShellApproval | undefined;
   private readonly maxLines?: number;
   private readonly maxBytes?: number;
-  private readonly tempDirectory?: string;
   private readonly throttleMs: number;
+  readonly outputStore: ShellOutputStore;
 
   constructor(options: BashToolOptions) {
     this.cwd = options.cwd;
@@ -123,11 +125,10 @@ export class BashTool implements Tool {
     if (options.maxBytes !== undefined) {
       this.maxBytes = options.maxBytes;
     }
-    if (options.tempDirectory !== undefined) {
-      this.tempDirectory = options.tempDirectory;
-    }
     this.throttleMs = options.throttleMs ?? OUTPUT_UPDATE_THROTTLE_MS;
+    this.outputStore = options.outputStore ?? new ShellOutputStore({ ...(options.tempDirectory === undefined ? {} : { tempDirectory: options.tempDirectory }) });
   }
+
 
   async execute(
     argumentsValue: unknown,
@@ -205,12 +206,13 @@ export class BashTool implements Tool {
       return { content: messages[reason], isError: true };
     }
 
+    let outputDirectory: string | undefined;
+    try { outputDirectory = await this.outputStore.getTempDirectory(); } catch { /* preserve the command result when storage is unavailable */ }
     const output = new OutputAccumulator({
       ...(this.maxLines === undefined ? {} : { maxLines: this.maxLines }),
       ...(this.maxBytes === undefined ? {} : { maxBytes: this.maxBytes }),
-      ...(this.tempDirectory === undefined
-        ? {}
-        : { tempDirectory: this.tempDirectory }),
+      maxSpillBytes: this.outputStore.maxBytesForNextOutput(),
+      ...(outputDirectory === undefined ? { allowSpill: false } : { tempDirectory: outputDirectory }),
     });
     const publish = createThrottledPublisher(
       output,
@@ -239,12 +241,13 @@ export class BashTool implements Tool {
         if (isAbortError(error)) {
           throw error;
         }
-        const text = await this.finish(output, publish, "");
+        const finished = await this.finish(output, publish, "");
+        const text = finished.text;
         if (error instanceof ShellTimeoutError) {
-          return { content: appendStatus(text, error.message), isError: true };
+          return { content: appendStatus(text, error.message), isError: true, ...(finished.shellOutput === undefined ? {} : { shellOutput: finished.shellOutput }) };
         }
         if (error instanceof ShellUnavailableError) {
-          return { content: appendStatus(text, error.message), isError: true };
+          return { content: appendStatus(text, error.message), isError: true, ...(finished.shellOutput === undefined ? {} : { shellOutput: finished.shellOutput }) };
         }
         return {
           content: appendStatus(
@@ -252,10 +255,12 @@ export class BashTool implements Tool {
             error instanceof Error ? error.message : "Command failed to start",
           ),
           isError: true,
+          ...(finished.shellOutput === undefined ? {} : { shellOutput: finished.shellOutput }),
         };
       }
 
-      const text = await this.finish(output, publish, "(no output)");
+      const finished = await this.finish(output, publish, "(no output)");
+      const text = finished.text;
       if (exitCode !== 0 && exitCode !== null) {
         const isNetworkBlocked = scope === "workspace" && operations.networkAccess === false && NETWORK_FAILURE_PATTERN.test(text);
         const status = isNetworkBlocked
@@ -264,15 +269,16 @@ export class BashTool implements Tool {
         return {
           content: appendStatus(text, status),
           isError: true,
+          ...(finished.shellOutput === undefined ? {} : { shellOutput: finished.shellOutput }),
         };
       }
-      return { content: text, isError: false };
+      return { content: text, isError: false, ...(finished.shellOutput === undefined ? {} : { shellOutput: finished.shellOutput }) };
     } finally {
       publish.cancel();
       // An aborted command still has an open spill file and a decoder holding
       // bytes; leaving them behind leaks a file descriptor per cancelled run.
       output.finish();
-      await output.close();
+      await output.discard();
     }
   }
 
@@ -280,12 +286,16 @@ export class BashTool implements Tool {
     output: OutputAccumulator,
     publish: ThrottledPublisher,
     emptyText: string,
-  ): Promise<string> {
+  ): Promise<{ text: string; shellOutput?: { id: string; state: SavedOutputState; totalLines: number } }> {
     output.finish();
     publish.cancel();
     publish.flush();
+    await output.close();
     const snapshot = output.snapshot();
-    return renderOutput(snapshot.content, snapshot.truncation, snapshot.fullOutputPath, emptyText);
+    if (!snapshot.truncation.truncated) return { text: renderOutput(snapshot.content, snapshot.truncation, undefined, emptyText) };
+    const reference = await this.outputStore.register(snapshot.fullOutputPath, snapshot.fullOutputBytes, snapshot.truncation.totalLines, snapshot.fullOutputComplete);
+    output.retain();
+    return { text: renderOutput(snapshot.content, snapshot.truncation, reference.id, emptyText, reference.state), shellOutput: { id: reference.id, state: reference.state, totalLines: snapshot.truncation.totalLines } };
   }
 }
 
@@ -356,8 +366,9 @@ function createThrottledPublisher(
 function renderOutput(
   content: string,
   truncation: TruncationResult,
-  fullOutputPath: string | undefined,
+  outputId: string | undefined,
   emptyText: string,
+  savedState?: SavedOutputState,
 ): string {
   const text = content.length > 0 ? content : emptyText;
   if (!truncation.truncated) {
@@ -372,8 +383,7 @@ function renderOutput(
     truncation.truncatedBy === "bytes"
       ? ` (${formatSize(truncation.maxBytes)} limit)`
       : "";
-  const full =
-    fullOutputPath === undefined ? "" : `. Full output: ${fullOutputPath}`;
+  const full = outputId === undefined ? ". Output ID unavailable (saving failed)" : `. Output ID: ${outputId} (saved: ${savedState ?? "unavailable"})`;
   return `${text}\n\n[${location}${reason}${full}]`;
 }
 

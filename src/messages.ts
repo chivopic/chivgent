@@ -23,4 +23,5 @@ export interface ToolResultMessage {
   readonly toolName: string;
   readonly content: string;
   readonly isError: boolean;
+  readonly shellOutput?: { readonly id: string; readonly state: "complete" | "incomplete" | "unavailable"; readonly totalLines: number };
 }

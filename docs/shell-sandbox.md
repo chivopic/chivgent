@@ -16,6 +16,10 @@ Scope availability follows the session configuration. Legacy flag sessions expos
 Interactive runs ask before every command; headless and socket-server runs deny
 commands unless `--approve-all-shell` was explicitly supplied.
 
+## Reading truncated command output
+
+When a bash result is truncated, it includes a session-local `Output ID` and a saved state. Use `read_shell_output` with that ID and a line range to inspect earlier output; it accepts no file path. Reads are limited to 200 lines, 32 KiB returned text, and 5 MiB scanned per request. The output is sanitized before it reaches the transcript. A saved state of `incomplete` means a storage cap was reached; `unavailable` means the spill could not be saved or the reference expired. Per-output storage is capped at 5 MiB and a session at 20 MiB or 20 outputs. IDs expire after one hour of inactivity and are removed on `/clear`, session replacement, and process exit. A resumed transcript cannot restore the in-memory mapping, so old IDs return unavailable. Saving or reading shell output does not widen `read_file`'s workspace boundary or grant shell access.
+
 ## Backend selection
 
 `--shell-backend auto|native|docker` selects the executor. `auto` uses the

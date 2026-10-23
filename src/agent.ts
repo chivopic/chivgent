@@ -37,6 +37,8 @@ export interface AgentOptions {
   readonly projectInstructions?: ProjectInstructionsProvider;
   /** Additional execution-time boundary for tools such as trusted extensions. */
   readonly authorizeToolCall?: (name: string, argumentsValue: unknown, signal?: AbortSignal) => Promise<boolean>;
+  readonly clearSessionData?: () => void;
+  readonly closeSessionData?: () => Promise<void>;
 }
 
 export interface AgentRunOptions {
@@ -100,6 +102,8 @@ export class Agent {
   private readonly contextManager?: ContextManager;
   private readonly projectInstructions?: ProjectInstructionsProvider;
   private readonly authorizeToolCall?: AgentOptions["authorizeToolCall"];
+  private readonly clearSessionDataCallback?: AgentOptions["clearSessionData"];
+  private readonly closeSessionDataCallback?: AgentOptions["closeSessionData"];
 
   constructor(options: AgentOptions) {
     if (!Number.isSafeInteger(options.maxTurns) || options.maxTurns <= 0) {
@@ -127,10 +131,20 @@ export class Agent {
       this.projectInstructions = options.projectInstructions;
     }
     this.authorizeToolCall = options.authorizeToolCall;
+    this.clearSessionDataCallback = options.clearSessionData;
+    this.closeSessionDataCallback = options.closeSessionData;
   }
 
   get toolNames(): readonly string[] {
     return [...this.registry.keys()];
+  }
+
+  clearSessionData(): void {
+    this.clearSessionDataCallback?.();
+  }
+
+  async close(): Promise<void> {
+    try { await this.closeSessionDataCallback?.(); } catch { /* session cleanup is best-effort */ }
   }
 
   async compactHistory(messages: readonly Message[], previous?: AppliedCompaction, signal?: AbortSignal) {
@@ -561,6 +575,7 @@ export class Agent {
       toolName: toolCall.name,
       content: output.content,
       isError: output.isError,
+      ...(output.shellOutput === undefined ? {} : { shellOutput: { ...output.shellOutput } }),
     });
 
     return {
@@ -569,6 +584,7 @@ export class Agent {
       toolName: toolCall.name,
       content: output.content,
       isError: output.isError,
+      ...(output.shellOutput === undefined ? {} : { shellOutput: { ...output.shellOutput } }),
     };
   }
 
@@ -724,7 +740,28 @@ function validateToolOutput(value: unknown): ToolOutput {
   ) {
     throw new TypeError("Tool returned an invalid output.");
   }
-  return { content: value.content, isError: value.isError };
+  const shellOutput = "shellOutput" in value ? value.shellOutput : undefined;
+  if (shellOutput !== undefined) {
+    if (typeof shellOutput !== "object" || shellOutput === null) throw new TypeError("Tool returned invalid shell output metadata.");
+    const metadata = shellOutput as Record<string, unknown>;
+    if (Object.keys(metadata).some((key) => !["id", "state", "totalLines"].includes(key)) ||
+        typeof metadata.id !== "string" || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(metadata.id) ||
+        typeof metadata.state !== "string" || !["complete", "incomplete", "unavailable"].includes(metadata.state) ||
+        !Number.isSafeInteger(metadata.totalLines) || (metadata.totalLines as number) < 0) {
+      throw new TypeError("Tool returned invalid shell output metadata.");
+    }
+  }
+  return {
+    content: value.content,
+    isError: value.isError,
+      ...(shellOutput === undefined ? {} : {
+        shellOutput: {
+          id: (shellOutput as Record<string, unknown>).id as string,
+          state: (shellOutput as Record<string, unknown>).state as "complete" | "incomplete" | "unavailable",
+          totalLines: (shellOutput as Record<string, unknown>).totalLines as number,
+        },
+      }),
+  };
 }
 
 function snapshotMessages(messages: readonly Message[]): readonly Message[] {
