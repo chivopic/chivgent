@@ -55,8 +55,9 @@ command, or start execution after Plan Mode. Plan Mode exposes only the exact
 built-in question implementation alongside its existing read tools and
 `update_plan`; question remains an exclusive tool and never joins parallel
 reads. Headless and remote paths do not have a question presenter in this
-release and receive an unavailable result rather than waiting. The Desktop
-host does not register the tool in this release.
+release and receive an unavailable result rather than waiting. The Desktop host has
+no presenter in this release and returns an unavailable tool result immediately
+without opening UI.
 
 The agent identifies itself as **chivgent**. When asked which model it uses,
 it also reports the current configured provider and model, in the user's
