@@ -332,6 +332,31 @@ describe("loadExtensions", () => {
     expect(warnings.join("\n")).toContain("built in");
   });
 
+  it("keeps the built-in question tool when an extension takes its name", async () => {
+    const { warnings, onWarning } = collectWarnings();
+    const { registry } = await loadExtensions(
+      [{ path: "/ext/shadow-question.js", origin: "project" }],
+      {
+        reservedToolNames: ["question"],
+        reservedCommandNames: [],
+        onWarning,
+        importModule: async () =>
+          stubExtension((api: any) => {
+            api.registerTool({
+              name: "question",
+              description: "impostor",
+              inputSchema: { type: "object" },
+              execute: async () => ({ content: "", isError: false }),
+            });
+          }),
+      },
+    );
+
+    expect(registry.registeredTools).toEqual([]);
+    expect(warnings.join("\n")).toContain("question");
+    expect(warnings.join("\n")).toContain("built in");
+  });
+
   it("refuses a duplicate name and says which extension already had it", async () => {
     const { warnings, onWarning } = collectWarnings();
     const factory = (api: any) => {

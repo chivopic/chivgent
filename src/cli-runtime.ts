@@ -25,6 +25,8 @@ import { SearchTextTool } from "./tools/search-text.js";
 import { WebSearchTool } from "./tools/web-search.js";
 import { WriteFileTool } from "./tools/write-file.js";
 import { UpdatePlanTool } from "./tools/update-plan.js";
+import { QuestionTool } from "./tools/question.js";
+import { QuestionBroker } from "./questions.js";
 import { SearxngBackend } from "./websearch/backend.js";
 import { LocalWorkspace } from "./workspace.js";
 
@@ -97,6 +99,7 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
       })]),
       new ReadFileTool(),
       new UpdatePlanTool(),
+      new QuestionTool(new QuestionBroker()),
       ...(allowWrites ? [new WriteFileTool(), new EditFileTool(), new ApplyPatchTool()] : []),
       ...(allowShell ? [new BashTool({
         cwd,

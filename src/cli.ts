@@ -84,6 +84,7 @@ const BUILT_IN_TOOL_NAMES = [
   "bash",
   "read_shell_output",
   "web_search",
+  "question",
 ] as const;
 
 /** Why --tui cannot run here, or undefined when it can. */

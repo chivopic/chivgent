@@ -18,6 +18,9 @@ import type { Workspace } from "./workspace.js";
 import { ContextCompactionError } from "./context/errors.js";
 import { ContextBudgetError, type AppliedCompaction, type ContextManager } from "./context/context-manager.js";
 import { INCOMPLETE_PROJECT_GUIDANCE, type ProjectInstructionsProvider } from "./context/project-instructions.js";
+import { randomUUID } from "node:crypto";
+import type { QuestionPresenter } from "./questions.js";
+import { QuestionTool } from "./tools/question.js";
 
 export interface AgentOptions {
   /** A callback supplies current host configuration after a provider switch. */
@@ -53,6 +56,7 @@ export interface AgentRunOptions {
   readonly compaction?: AppliedCompaction;
   /** Enforced in the execution path; provider tool schemas are filtered too. */
   readonly planMode?: boolean;
+  readonly questionPresenter?: QuestionPresenter;
 }
 
 export type AgentRunResult =
@@ -83,6 +87,8 @@ interface RunState {
   projectInstructionsText?: string;
   systemPromptText?: string;
   planMode: boolean;
+  readonly runId: string;
+  readonly questionPresenter?: QuestionPresenter;
 }
 
 export class AgentProtocolError extends Error {
@@ -176,6 +182,8 @@ export class Agent {
       seenToolCallIds: new Set<string>(),
       turnCount: 0,
       planMode: options.planMode === true,
+      runId: randomUUID(),
+      ...(options.questionPresenter === undefined ? {} : { questionPresenter: options.questionPresenter }),
       ...(options.compaction === undefined || JSON.stringify(history) !== originalHistory
         ? {} : { compaction: structuredClone(options.compaction) }),
     };
@@ -500,7 +508,7 @@ export class Agent {
     let output: ToolOutput;
 
     if (state.planMode && !isPlanModeTool(tool)) {
-      output = { content: `Plan Mode blocked tool: ${toolCall.name}. Only built-in read tools and update_plan can run.`, isError: true };
+      output = { content: `Plan Mode blocked tool: ${toolCall.name}. Only built-in read tools, update_plan, and question can run.`, isError: true };
     } else if (tool === undefined) {
       output = {
         content: `Unknown tool: ${toolCall.name}`,
@@ -540,6 +548,14 @@ export class Agent {
                   onPlanUpdate: (update: PlanUpdate) => {
                     this.emit({ type: "plan_update", turn, ...update });
                   },
+                } : {}),
+                ...(tool.constructor === QuestionTool ? {
+                  requestQuestion: (questions) => (tool as QuestionTool).broker.ask(
+                    { runId: state.runId, toolCallId: toolCall.id },
+                    { questions },
+                    state.questionPresenter,
+                    signal,
+                  ),
                 } : {}),
                 onUpdate: (content: string) => {
                   this.emit({
@@ -619,7 +635,7 @@ export class Agent {
 }
 
 const INTERRUPTED_TOOL_RESULT = "Tool execution interrupted before completion.";
-const PLAN_MODE_PROMPT = `Plan Mode is active. Investigate using available built-in read tools, then propose a concise plan or ask the user a question in natural language. Do not modify files or run commands. Use update_plan for a checklist when useful, then wait for the user to turn Plan Mode off with /plan off before carrying out changes.`;
+const PLAN_MODE_PROMPT = `Plan Mode is active. Investigate using available built-in read tools, ask structured requirement questions with question when an answer is needed, then propose a concise plan. Do not modify files or run commands. Use update_plan for a checklist when useful, then wait for the user to turn Plan Mode off with /plan off before carrying out changes.`;
 
 /**
  * Ensure every function call has a corresponding output before history is

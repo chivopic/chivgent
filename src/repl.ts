@@ -1,7 +1,7 @@
 import { TuiInput } from "./tui/input.js";
 import { EditorController } from "./tui/editor-input.js";
 import { readLiveGitDiff, type GitDiffMode } from "./tui/git-diff.js";
-import { terminalText } from "./tui/text.js";
+import { displayWidth, terminalText } from "./tui/text.js";
 import { terminalColorEnabled } from "./tui/selection.js";
 import { PatchReviewController } from "./tui/review.js";
 import { ProviderPickerController } from "./tui/provider-picker.js";
@@ -19,8 +19,62 @@ import type { LiveRegion } from "./tui/live.js";
 import type { ApprovalDecision, ShellApprovalGate } from "./shell/approval.js";
 import { describePermissionMode, parsePermissionMode, WEB_SEARCH_APPROVAL_PREFIX, type PermissionMode, type PermissionPolicy } from "./permissions.js";
 import { HeuristicTokenEstimator } from "./context/token-estimator.js";
+import type { Question, QuestionAnswer, QuestionPresenter } from "./questions.js";
 
 export const REPL_PROMPT = "› ";
+
+function parseQuestionAnswer(question: Question, input: string): string | readonly string[] | undefined {
+  const value = input.trim();
+  if (value.length === 0 || value.length > 2_000) return undefined;
+  if (question.options === undefined) return value;
+  if (question.multiple === true) {
+    const selected: string[] = [];
+    for (const part of value.split(",").map(item => item.trim())) {
+      if (/^text:/i.test(part) && question.allowFreeText === true) {
+        const custom = part.slice(5).trim();
+        if (custom.length === 0 || custom.length > 2_000) return undefined;
+        selected.push(custom);
+      } else {
+        if (!/^\d+$/.test(part)) return undefined;
+        const option = question.options[Number(part) - 1];
+        if (option === undefined || selected.includes(option.label)) return undefined;
+        selected.push(option.label);
+      }
+    }
+    return selected.length === 0 ? undefined : selected;
+  }
+  if (/^text:/i.test(value) && question.allowFreeText === true) {
+    const custom = value.slice(5).trim();
+    return custom.length > 0 && custom.length <= 2_000 ? custom : undefined;
+  }
+  if (!/^\d+$/.test(value)) return undefined;
+  const option = question.options[Number(value) - 1];
+  return option?.label;
+}
+
+function wrapQuestionText(value: string, width: number): readonly string[] {
+  const lines: string[] = [];
+  let line = "";
+  let cells = 0;
+  for (const part of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value)) {
+    if (part.segment === "\n") {
+      lines.push(line);
+      line = "";
+      cells = 0;
+      continue;
+    }
+    const cellsInPart = displayWidth(part.segment);
+    if (line.length > 0 && cells + cellsInPart > width) {
+      lines.push(line);
+      line = "";
+      cells = 0;
+    }
+    line += part.segment;
+    cells += cellsInPart;
+  }
+  if (line.length > 0 || lines.length === 0) lines.push(line);
+  return lines;
+}
 
 export type SlashCommandOutcome =
   | "handled"
@@ -499,6 +553,7 @@ export interface ReplOptions {
 async function withoutEcho<T>(
   readline: Interface,
   read: () => Promise<T>,
+  echoWhile: () => boolean = () => false,
 ): Promise<T> {
   const internals = readline as unknown as {
     _writeToOutput?: (text: string) => void;
@@ -507,7 +562,7 @@ async function withoutEcho<T>(
   if (original === undefined) {
     return read();
   }
-  internals._writeToOutput = (): void => undefined;
+  internals._writeToOutput = (text: string): void => { if (echoWhile()) original(text); };
   try {
     return await read();
   } finally {
@@ -642,6 +697,8 @@ export async function runRepl(options: ReplOptions): Promise<number> {
   };
 
   let controller: AbortController | undefined;
+  let questionMode = false;
+  let questionCancel: (() => void) | undefined;
   let promptVisible = false;
   let inputClosed = false;
   let signingIn = false;
@@ -653,6 +710,10 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       menu?.clear();
       dismissedLine = undefined;
     }, (key) => {
+      if (questionCancel !== undefined && key === "escape") {
+        questionCancel();
+        return true;
+      }
       if (signingIn || controller !== undefined) return false;
       if (key === "enter" && !menu?.active && readline.line === "/provider" && options.providers !== undefined) {
         menu?.show(menuItems(readline.line));
@@ -746,6 +807,68 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     tuiInput?.acceptLine();
     const next = await lines.next();
     return next.done === true ? undefined : next.value;
+  };
+
+  const questionPresenter: QuestionPresenter = async (request, signal) => {
+    if (inputClosed || controller?.signal.aborted === true) return { status: "unavailable", reason: "the local input channel is closed" };
+    menu?.clear();
+    dismissedLine = undefined;
+    options.liveRegion?.pause();
+    tuiInput?.setBusy(false);
+    questionMode = true;
+    const answers: QuestionAnswer[] = [];
+    try {
+      for (let index = 0; index < request.questions.length; index += 1) {
+        const question = request.questions[index];
+        if (question === undefined) continue;
+        if (signal?.aborted) return { status: "cancelled" };
+        let answer: QuestionAnswer["value"] | undefined;
+        for (;;) {
+          const width = Math.max(1, terminalWidth({ columns: (options.output as typeof options.output & { columns?: number }).columns }) - 1);
+          const line = (value: string): void => { for (const part of wrapQuestionText(terminalText(value), width)) write(`${part}\n`); };
+          line(`Question ${index + 1}/${request.questions.length} · ${question.header}`);
+          line(question.question);
+          question.options?.forEach((option, optionIndex) => {
+            line(`  ${optionIndex + 1}. ${option.label}${option.description === undefined ? "" : ` — ${option.description}`}`);
+          });
+          if (question.options === undefined) line("Enter your answer.");
+          else if (question.multiple === true) line(`Enter choice numbers separated by commas${question.allowFreeText === true ? "; use text:… to add a custom answer" : ""}.`);
+          else line(`Enter a choice number${question.allowFreeText === true ? " or text:… for another answer" : ""}.`);
+          line(options.tui === true
+            ? "Type /cancel or press Esc to cancel this question. Ctrl+C cancels the run."
+            : "Type /cancel to cancel this question. Ctrl+C cancels the run.");
+          readline.setPrompt("answer> ");
+          readline.prompt();
+          let escaped = false;
+          const cancelOnEscape = (): void => { escaped = true; if (!inputClosed) readline.write("\n"); };
+          questionCancel = cancelOnEscape;
+          const unblockOnAbort = (): void => { if (!inputClosed) readline.write("\n"); };
+          signal?.addEventListener("abort", unblockOnAbort, { once: true });
+          try {
+            if (signal?.aborted) return { status: "cancelled" };
+            const input = await readNextLine();
+            if (signal?.aborted) return { status: "cancelled" };
+            if (input === undefined) return { status: "unavailable", reason: "the local input channel closed before an answer arrived" };
+            if (escaped || input.trim().toLowerCase() === "/cancel") return { status: "cancelled" };
+            answer = parseQuestionAnswer(question, input);
+            if (answer !== undefined) break;
+            line("That answer does not match this question. Choose a listed number or enter a non-empty answer.");
+          } finally {
+            questionCancel = undefined;
+            signal?.removeEventListener("abort", unblockOnAbort);
+          }
+        }
+        answers.push({ questionId: question.id, value: answer });
+      }
+      if (inputClosed) return { status: "unavailable", reason: "the local input channel closed before the answer could be submitted" };
+      return { ...request, answers };
+    } finally {
+      questionCancel = undefined;
+      questionMode = false;
+      readline.setPrompt(REPL_PROMPT);
+      tuiInput?.setBusy(true);
+      options.liveRegion?.resume();
+    }
   };
 
   // Approval and normal input share the same readline iterator.
@@ -1346,8 +1469,8 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       tuiInput?.setBusy(true);
       try {
         const signal = controller.signal;
-        const prompt = () => activeSession.prompt(line, { signal });
-        if (options.tui) await withoutEcho(readline, prompt);
+        const prompt = () => activeSession.prompt(line, { signal, questionPresenter });
+        if (options.tui) await withoutEcho(readline, prompt, () => questionMode);
         else await prompt();
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Unknown error";

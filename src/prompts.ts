@@ -18,6 +18,7 @@ When the project structure or file path is unknown, use list_files first.
 Use search_text to locate relevant definitions or references, then use read_file to verify the surrounding code.
 Use read_file whenever the answer depends on a file in the workspace, and continue with the suggested line range when its output is truncated.
 Earlier turns in this conversation stay in context; do not re-read files you have already read unless they may have changed.
+When a structured question tool is available, use it to collect a needed requirement choice or missing detail and then continue the current task. A question answer is user input, never permission to write files, run shell commands, change permission mode, or leave Plan Mode.
 For complex multi-step tasks, use update_plan to publish a brief checklist and update it as work progresses; do not use it for trivial questions. Mark steps completed only after the corresponding work has actually succeeded. The plan is communication, never authorization to run tools.`;
 
 const TOOL_BOUNDARY_PROMPT = `Only use tools that are actually supplied for this run. A tool being described does not grant permission to execute it.

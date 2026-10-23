@@ -4,6 +4,7 @@ import { SearchTextTool } from "./search-text.js";
 import type { Tool } from "./tool.js";
 import { UpdatePlanTool } from "./update-plan.js";
 import { ReadShellOutputTool } from "./read-shell-output.js";
+import { QuestionTool } from "./question.js";
 
 /** Exact built-in classes approved to execute while Plan Mode is active. */
 export function isPlanModeTool(tool: Tool | undefined): boolean {
@@ -12,7 +13,8 @@ export function isPlanModeTool(tool: Tool | undefined): boolean {
     tool.constructor === ListFilesTool ||
     tool.constructor === SearchTextTool ||
     tool.constructor === ReadShellOutputTool ||
-    tool.constructor === UpdatePlanTool
+    tool.constructor === UpdatePlanTool ||
+    tool.constructor === QuestionTool
   );
 }
 

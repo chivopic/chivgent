@@ -3,6 +3,7 @@ import type { AgentEvent, AgentEventListener } from "./events.js";
 import type { Message } from "./messages.js";
 import { ContextCompactionError } from "./context/errors.js";
 import type { AppliedCompaction } from "./context/context-manager.js";
+import type { QuestionPresenter } from "./questions.js";
 import { transcriptHash } from "./transcript-hash.js";
 import { addUsage, type UsageTotal } from "./providers/usage.js";
 import {
@@ -212,7 +213,7 @@ export class AgentSession {
 
   async prompt(
     text: string,
-    options: { readonly signal?: AbortSignal } = {},
+    options: { readonly signal?: AbortSignal; readonly questionPresenter?: QuestionPresenter } = {},
   ): Promise<AgentRunResult> {
     if (this.promptInProgress || this.controlInProgress) {
       throw new Error("This session is already running a prompt.");
@@ -228,6 +229,7 @@ export class AgentSession {
           ...(this.compaction === undefined ? {} : { compaction: this.compaction }),
           planMode: this.planModeEnabled,
           ...(options.signal === undefined ? {} : { signal: options.signal }),
+          ...(options.questionPresenter === undefined ? {} : { questionPresenter: options.questionPresenter }),
         });
       } finally {
         // A Provider error still emits agent_end; flush that authoritative
