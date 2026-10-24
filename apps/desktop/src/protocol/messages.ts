@@ -8,7 +8,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 1 as const;
 
-export const HOST_CAPABILITIES = ["project-select", "start", "interrupt"] as const;
+export const HOST_CAPABILITIES = ["project-select", "start", "interrupt", "workspace-review"] as const;
 
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,80}$/;
 export const MAX_PROMPT_LENGTH = 32_000;
@@ -49,6 +49,12 @@ export interface InterruptRequest {
   readonly runId: string;
 }
 
+export interface WorkspaceReviewRequest {
+  readonly type: "workspace-review";
+  readonly requestId: string;
+  readonly projectPath: string;
+}
+
 export interface ShutdownRequest {
   readonly type: "shutdown";
   readonly requestId: string;
@@ -59,6 +65,7 @@ export type MainToHost =
   | SelectProjectRequest
   | StartRequest
   | InterruptRequest
+  | WorkspaceReviewRequest
   | ShutdownRequest;
 
 export interface InitializedMessage {
@@ -98,6 +105,14 @@ export interface ProjectSelectedMessage {
   readonly requestId: string;
   readonly path: string;
 }
+export interface WorkspaceReviewMessage {
+  readonly type: "workspace-review";
+  readonly requestId: string;
+  readonly projectPath: string;
+  readonly review: WorkspaceReviewData;
+}
+export type WorkspaceReviewFile = { readonly path: string; readonly kind: "text"; readonly content: string } | { readonly path: string; readonly kind: "binary" | "too-large" | "unsafe" | "unavailable" };
+export type WorkspaceReviewData = { readonly kind: "not-git" } | { readonly kind: "git"; readonly staged: string; readonly unstaged: string; readonly untracked: readonly WorkspaceReviewFile[]; readonly truncated: boolean };
 export interface RuntimeConfigMessage {
   readonly type: "runtime-config";
   readonly provider: string;
@@ -141,6 +156,7 @@ export interface DesktopEventMessage {
 export type HostToMain =
   | InitializedMessage
   | ProjectSelectedMessage
+  | WorkspaceReviewMessage
   | RuntimeConfigMessage
   | StartedMessage
   | InterruptedMessage
@@ -240,6 +256,9 @@ export function validateMainToHost(value: unknown): MainToHost | string {
         requestId: record.requestId,
         runId: record.runId,
       };
+    case "workspace-review":
+      if (typeof record.projectPath !== "string" || record.projectPath.length === 0 || record.projectPath.length > 4_096) return "projectPath must be a non-empty directory path.";
+      return { type: "workspace-review", requestId: record.requestId, projectPath: record.projectPath };
     default:
       return "Unknown host request type.";
   }
@@ -265,6 +284,8 @@ export function isHostToMain(value: unknown): value is HostToMain {
       );
     case "project-selected":
       return isRequestId(record.requestId) && typeof record.path === "string" && record.path.length > 0;
+    case "workspace-review":
+      return isRequestId(record.requestId) && typeof record.projectPath === "string" && isWorkspaceReview(record.review);
     case "runtime-config":
       return typeof record.provider === "string" && record.provider.length > 0 && typeof record.model === "string" && record.model.length > 0 && (record.baseURL === undefined || typeof record.baseURL === "string");
     case "started":
@@ -298,6 +319,14 @@ export function isHostToMain(value: unknown): value is HostToMain {
     default:
       return false;
   }
+}
+
+function isWorkspaceReview(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const item = value as Record<string, unknown>;
+  if (item.kind === "not-git") return true;
+  if (item.kind !== "git" || typeof item.staged !== "string" || typeof item.unstaged !== "string" || typeof item.truncated !== "boolean" || !Array.isArray(item.untracked)) return false;
+  return item.untracked.every((entry) => typeof entry === "object" && entry !== null && typeof (entry as { path?: unknown }).path === "string" && ["text", "binary", "too-large", "unsafe", "unavailable"].includes(String((entry as { kind?: unknown }).kind)) && ((entry as { kind?: unknown }).kind !== "text" || typeof (entry as { content?: unknown }).content === "string"));
 }
 
 export function acceptedRequestLimit(): number {

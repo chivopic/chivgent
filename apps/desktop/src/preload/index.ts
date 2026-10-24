@@ -7,6 +7,8 @@ export interface DesktopApi {
   selectProject(): Promise<IpcResult<unknown>>;
   start(payload: { requestId: string; prompt: string }): Promise<IpcResult<unknown>>;
   interrupt(payload: { requestId: string; runId: string }): Promise<IpcResult<unknown>>;
+  workspaceReview(payload: { requestId: string; projectPath: string }): Promise<IpcResult<unknown>>;
+  openWorkspaceFile(payload: { projectPath: string; relativePath: string }): Promise<IpcResult<unknown>>;
   onEvent(listener: (message: unknown) => void): () => void;
   onHostStatus(listener: (status: HostStatus) => void): () => void;
 }
@@ -16,6 +18,8 @@ const api: DesktopApi = {
   selectProject: () => ipcRenderer.invoke(IPC.selectProject),
   start: (payload) => ipcRenderer.invoke(IPC.start, payload),
   interrupt: (payload) => ipcRenderer.invoke(IPC.interrupt, payload),
+  workspaceReview: (payload) => ipcRenderer.invoke(IPC.workspaceReview, payload),
+  openWorkspaceFile: (payload) => ipcRenderer.invoke(IPC.openWorkspaceFile, payload),
   onEvent: (listener) => subscribe(IPC.event, listener, isHostToMain),
   onHostStatus: (listener) => subscribe(IPC.hostStatus, listener, isHostStatus),
 };

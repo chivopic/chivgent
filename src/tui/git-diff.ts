@@ -1,9 +1,6 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { realpath } from "node:fs/promises";
 import { terminalText } from "./text.js";
+import { readOnlyGit } from "../workspace/git-read.js";
 
-const execute = promisify(execFile);
 export type GitDiffMode = "working" | "staged";
 
 /**
@@ -11,31 +8,13 @@ export type GitDiffMode = "working" | "staged";
  * an external diff, textconv, or network. It does not grant the LLM execution.
  */
 export async function readLiveGitDiff(workspace: string, mode: GitDiffMode): Promise<string> {
-  const root = await realpath(workspace);
   const args = [
-    "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
-    "-c", "diff.external=",
     "--no-pager", "diff", "--no-ext-diff", "--no-textconv", "--no-color",
     "--no-renames", "--ignore-submodules=all",
     ...(mode === "staged" ? ["--cached"] : []), "--", ".",
   ];
   try {
-    const { stdout } = await execute("git", args, {
-      cwd: root,
-      shell: false,
-      windowsHide: true,
-      timeout: 7_000,
-      maxBuffer: 256 * 1024,
-      encoding: "utf8",
-      env: {
-        PATH: process.env.PATH,
-        GIT_CONFIG_NOSYSTEM: "1",
-        GIT_CONFIG_GLOBAL: "/dev/null",
-        GIT_OPTIONAL_LOCKS: "0",
-        GIT_TERMINAL_PROMPT: "0",
-        GIT_ATTR_NOSYSTEM: "1",
-      },
-    });
+    const stdout = await readOnlyGit(workspace, args, 256 * 1024);
     return terminalText(stdout);
   } catch (error: unknown) {
     const typed = error as NodeJS.ErrnoException & { killed?: boolean };
