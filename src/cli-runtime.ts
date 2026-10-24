@@ -49,6 +49,7 @@ interface LocalSessionConfig {
   readonly store?: SessionStore;
   readonly shellApproval?: ShellApprovalGate;
   readonly permissionPolicy?: PermissionPolicy;
+  readonly allowShellForPolicy?: boolean;
 }
 
 /** Assemble the local agent once; cli.ts handles only process and UI lifecycle. */
@@ -57,7 +58,7 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
   const prompt = [SYSTEM_PROMPT];
   const modernPolicy = config.permissionPolicy !== undefined;
   const allowWrites = modernPolicy || options.allowWrites;
-  const allowShell = modernPolicy || options.allowShell;
+  const allowShell = modernPolicy ? (config.allowShellForPolicy ?? true) : options.allowShell;
   const shellOutputStore = allowShell ? new ShellOutputStore() : undefined;
   const webSearchBackend = options.webSearch === undefined
     ? undefined

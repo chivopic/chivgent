@@ -1,12 +1,13 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC } from "../protocol/channels.js";
-import { isHostToMain, type HostStatus, type IpcResult } from "../protocol/messages.js";
+import { isHostToMain, type HostStatus, type IpcResult, type ApprovalRespondRequest } from "../protocol/messages.js";
 
 export interface DesktopApi {
   initialize(): Promise<IpcResult<unknown>>;
   selectProject(): Promise<IpcResult<unknown>>;
-  start(payload: { requestId: string; prompt: string }): Promise<IpcResult<unknown>>;
+  start(payload: { requestId: string; prompt: string; provider?: string; model?: string; permissionMode?: "read-only" | "ask-first" | "workspace" }): Promise<IpcResult<unknown>>;
   interrupt(payload: { requestId: string; runId: string }): Promise<IpcResult<unknown>>;
+  approvalRespond(payload: Omit<ApprovalRespondRequest, "type">): Promise<IpcResult<unknown>>;
   onEvent(listener: (message: unknown) => void): () => void;
   onHostStatus(listener: (status: HostStatus) => void): () => void;
 }
@@ -16,6 +17,7 @@ const api: DesktopApi = {
   selectProject: () => ipcRenderer.invoke(IPC.selectProject),
   start: (payload) => ipcRenderer.invoke(IPC.start, payload),
   interrupt: (payload) => ipcRenderer.invoke(IPC.interrupt, payload),
+  approvalRespond: (payload) => ipcRenderer.invoke(IPC.approvalRespond, payload),
   onEvent: (listener) => subscribe(IPC.event, listener, isHostToMain),
   onHostStatus: (listener) => subscribe(IPC.hostStatus, listener, isHostStatus),
 };
