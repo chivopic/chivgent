@@ -45,6 +45,7 @@ describe("App submit flow", () => {
   let api: TestApi;
   let respond: (payload: StartPayload) => Promise<any>;
   let publishEvent: (message: any) => void;
+  let publishStatus: (status: any) => void;
 
   beforeEach(() => {
     hooks.slots = [];
@@ -54,6 +55,7 @@ describe("App submit flow", () => {
     let eventListener: ((message: any) => void) | undefined;
     let statusListener: ((status: any) => void) | undefined;
     publishEvent = (message) => eventListener?.(message);
+    publishStatus = (status) => statusListener?.(status);
     respond = async () => ({ ok: true, value: { type: "started", runId: "accepted-run" } });
     api = {
       start: vi.fn(async (payload: StartPayload) => {
@@ -75,6 +77,17 @@ describe("App submit flow", () => {
   });
 
   afterEach(() => vi.unstubAllGlobals());
+
+  it("offers explicit host recovery that only initializes and restores a snapshot", async () => {
+    let tree = await renderApp();
+    publishStatus({ phase: "exited", message: "Agent host 已退出。进行中的运行结果未知。" });
+    tree = await renderApp();
+    const recover = findByLabel(tree, "重新连接并恢复会话");
+    expect(recover).not.toBeNull();
+    await recover.props.onClick();
+    expect(api.initialize).toHaveBeenCalledTimes(2);
+    expect(api.start).not.toHaveBeenCalled();
+  });
 
   it("keeps a prompt after a history write rejection and allows a corrected retry", async () => {
     respond = vi.fn()
