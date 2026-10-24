@@ -33,8 +33,12 @@ export interface HistoryEvent {
   readonly type: "event";
   readonly sequence: number;
   readonly runId: string;
-  readonly event: AgentEvent;
+  readonly event: AgentEvent | DesktopApprovalHistoryEvent;
 }
+
+export type DesktopApprovalHistoryEvent =
+  | { readonly type: "approval_requested"; readonly approvalId: string; readonly action: string; readonly context: string }
+  | { readonly type: "approval_decision"; readonly approvalId: string; readonly approved: boolean; readonly reason?: "user" | "cancelled" | "journal_failed" };
 
 export interface HistoryContext {
   readonly type: "context";

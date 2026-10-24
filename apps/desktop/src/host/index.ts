@@ -39,8 +39,8 @@ const service = new HostService({
   ...(demoMode ? {} : {
     historyDirectory: process.env["CHIVGENT_DESKTOP_HISTORY_DIR"],
     providerConfigDirectory: process.env["CHIVGENT_DESKTOP_CONFIG_DIR"],
-    createSession: async (cwd, provider, model, messages, compaction, profile) => {
-      return createDesktopSession({ cwd, provider, model, messages, compaction,
+    createSession: async (cwd, provider, model, messages, compaction, permissionMode, approval, profile) => {
+      return createDesktopSession({ cwd, provider, model, messages, compaction, permissionMode, approval,
         ...(profile === undefined ? {} : { desktopApiKey: profile.apiKey, baseURL: profile.baseURL }) });
     },
   }),

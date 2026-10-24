@@ -9,12 +9,17 @@ import {
   type IpcResult,
 } from "../protocol/messages.js";
 import { createHostBridge, type HostBridge } from "./host-bridge.js";
+import { routeApproval } from "./approval-routing.js";
+import { RendererLifecycle } from "./renderer-lifecycle.js";
 
 let mainWindow: BrowserWindow | undefined;
 let quitting = false;
 const bridge: HostBridge = createHostBridge();
+const pendingApprovals = new Map<string, Extract<HostToMain, { type: "approval" }>>();
+const rendererLifecycle = new RendererLifecycle();
 
 function createWindow(): BrowserWindow {
+  rendererLifecycle.markGone();
   const window = new BrowserWindow({
     width: 1180,
     height: 780,
@@ -36,6 +41,13 @@ function createWindow(): BrowserWindow {
     window.show();
   });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("render-process-gone", () => {
+    rendererLifecycle.markGone();
+    for (const approval of pendingApprovals.values()) {
+      void bridge.request({ type: "approval-respond", requestId: `renderer-gone-${randomUUID()}`, hostInstanceId: approval.hostInstanceId, sessionId: approval.sessionId, runId: approval.runId, approvalId: approval.approvalId, approved: false }).catch(() => {});
+    }
+    pendingApprovals.clear();
+  });
   window.webContents.on("will-navigate", (event) => {
     event.preventDefault();
   });
@@ -71,6 +83,7 @@ function assertSender(sender: Electron.WebContents): void {
 function installIpc(): void {
   ipcMain.handle(IPC.initialize, async (event) => {
     assertSender(event.sender);
+    rendererLifecycle.markReady();
     return callHost({ type: "initialize", requestId: `boot-${randomUUID()}` });
   });
   ipcMain.handle(IPC.selectProject, async (event) => {
@@ -109,6 +122,14 @@ function installIpc(): void {
       );
     }
     return callHost(request);
+  });
+  ipcMain.handle(IPC.approvalRespond, async (event, payload: unknown) => {
+    assertSender(event.sender);
+    const request = validateMainToHost({ ...(typeof payload === "object" && payload !== null ? payload : {}), type: "approval-respond" });
+    if (typeof request === "string" || request.type !== "approval-respond") return failure("bad_request", typeof request === "string" ? request : "Invalid approval response.");
+    const result = await callHost(request);
+    if (result.ok && result.value.type === "approval-responded") pendingApprovals.delete(request.approvalId);
+    return result;
   });
 }
 
@@ -178,6 +199,21 @@ app.whenReady().then(() => {
   process.env["CHIVGENT_DESKTOP_HISTORY_DIR"] ??= join(app.getPath("userData"), "desktop-history-v1");
   process.env["CHIVGENT_DESKTOP_CONFIG_DIR"] ??= join(app.getPath("userData"), "desktop-config-v1");
   bridge.onEvent((message) => {
+    if (message.type === "approval") {
+      routeApproval(
+        message,
+        () => rendererLifecycle.isAlive() && mainWindow !== undefined && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed(),
+        (approval) => pendingApprovals.set(approval.approvalId, approval),
+        (approval) => {
+          void bridge.request({ type: "approval-respond", requestId: `renderer-unavailable-${randomUUID()}`, hostInstanceId: approval.hostInstanceId, sessionId: approval.sessionId, runId: approval.runId, approvalId: approval.approvalId, approved: false }).catch(() => {});
+        },
+        (approval) => sendToRenderer(IPC.event, approval),
+      );
+      return;
+    }
+    if (message.type === "interrupted" && message.accepted) {
+      for (const [approvalId, approval] of pendingApprovals) if (approval.runId === message.runId) pendingApprovals.delete(approvalId);
+    }
     sendToRenderer(IPC.event, message);
   });
   bridge.onStatus((status: HostStatus) => {
