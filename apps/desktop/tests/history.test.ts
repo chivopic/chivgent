@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
-import { DesktopHistory } from "../src/host/history.js";
+import { DesktopHistory, saveLastProject } from "../src/host/history.js";
 import { HostService } from "../src/host/service.js";
 import type { HostToMain } from "../src/protocol/messages.js";
 
@@ -12,6 +12,43 @@ afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: 
 function temp(): string { const path = mkdtempSync(join(tmpdir(), "desktop-history-test-")); roots.push(path); return path; }
 
 describe("desktop versioned history", () => {
+  it("restarts from a temporary interrupted-session fixture using initialize only", async () => {
+    const root = temp();
+    const project = join(root, "project");
+    const historyDir = join(root, "history");
+    mkdirSync(project);
+    const canonicalProject = realpathSync(project);
+    const fixture = DesktopHistory.open(historyDir, canonicalProject);
+    fixture.saveRun({ type: "run", runId: "interrupted-run", prompt: "do not replay", status: "started" });
+    fixture.close();
+    saveLastProject(historyDir, canonicalProject);
+
+    const messages: HostToMain[] = [];
+    let promptCalls = 0;
+    const restartedHost = new HostService({
+      send: (message) => messages.push(message),
+      historyDirectory: historyDir,
+      createAgent: () => { throw new Error("unexpected demo fallback"); },
+      createSession: async () => {
+        return { provider: "openai", model: "fixture", session: {
+          messages: [], subscribe: () => () => {}, prompt: async () => { promptCalls += 1; },
+        } };
+      },
+    });
+
+    restartedHost.handle({ type: "initialize", requestId: "explicit-recovery" });
+
+    expect(messages[0]).toMatchObject({
+      type: "initialized",
+      requestId: "explicit-recovery",
+      snapshot: { projectPath: canonicalProject, run: { runId: "interrupted-run", status: "interrupted" } },
+    });
+    expect(promptCalls).toBe(0);
+    expect(messages[0]).not.toHaveProperty("permissions");
+    expect(messages[0]).not.toHaveProperty("approval");
+    await restartedHost.shutdown();
+  });
+
   it("uses one writer lock and refuses a second writer", () => {
     const dir = temp();
     const history = DesktopHistory.open(dir, "/tmp/project");
