@@ -79,6 +79,12 @@ function installIpc(): void {
     if (choice.canceled || choice.filePaths[0] === undefined) return failure("cancelled", "未选择项目目录。");
     return callHost({ type: "select-project", requestId: `project-${randomUUID()}`, path: choice.filePaths[0] });
   });
+  ipcMain.handle(IPC.saveProviderProfile, async (event, payload: unknown) => {
+    assertSender(event.sender);
+    const request = validateMainToHost({ ...(typeof payload === "object" && payload !== null ? payload : {}), type: "save-provider-profile" });
+    if (typeof request === "string" || request.type !== "save-provider-profile") return failure("bad_request", typeof request === "string" ? request : "Invalid Provider profile.");
+    return callHost(request);
+  });
   ipcMain.handle(IPC.start, async (event, payload: unknown) => {
     assertSender(event.sender);
     const request = validateMainToHost({
@@ -170,6 +176,7 @@ app.whenReady().then(() => {
   installMenu();
   installIpc();
   process.env["CHIVGENT_DESKTOP_HISTORY_DIR"] ??= join(app.getPath("userData"), "desktop-history-v1");
+  process.env["CHIVGENT_DESKTOP_CONFIG_DIR"] ??= join(app.getPath("userData"), "desktop-config-v1");
   bridge.onEvent((message) => {
     sendToRenderer(IPC.event, message);
   });

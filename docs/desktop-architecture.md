@@ -2,7 +2,7 @@
 
 更新：2026-10-19。状态：P1 首批真实只读运行已实现；#68 的单项目历史与最小恢复首批已实现，完整任务导航、旧 CLI 导入及 M1 后续能力仍未实现。
 
-默认运行真实 Agent。用户通过 main process 原生目录对话框选择项目；host 解析规范路径并为其创建只读 `AgentSession`，复用 CLI Provider、凭证解析、流式事件与 `list_files`、`search_text`、`read_file`、`update_plan` 工具。Provider 和模型可从紧凑的会话设置入口选择，具体展示契约见[第 6 节](#6-项目会话与配置契约)。Renderer 不接收密钥，endpoint 与 API key 沿用 Provider 环境变量及只读 CLI `auth.json`。缺少凭证时 host 给出可操作错误，应用和项目选择仍可使用。OAuth 刷新、项目写入、Shell 均未接入。
+默认运行真实 Agent。用户通过 main process 原生目录对话框选择项目；host 解析规范路径并为其创建只读 `AgentSession`，复用 CLI Provider、凭证解析、流式事件与 `list_files`、`search_text`、`read_file`、`update_plan` 工具。Provider、模型、兼容 endpoint 与 API key 可从会话设置配置。Renderer 只在密码输入框中短暂持有新输入；Node host 将 Provider 配置保存到应用 userData 的 `desktop-config-v1/provider-profiles.json`，目录权限为 0700、文件为 0600，状态读取不返回 key。配置不写入 CLI `auth.json`。环境 key 优先，其次 CLI `auth.json`，最后是该 Provider 的桌面 key。OAuth 刷新、项目写入、Shell 均未接入。
 
 每个项目当前提供一个最小会话，支持多轮上下文；切换到有历史的项目会恢复其会话，首次打开才开始新上下文，运行期间不能切换。Provider/model 改变时用旧 transcript 重建 session。真实运行现在把当前项目及版本化运行记录保存在应用 userData 下的 `desktop-history-v1`；可用 `CHIVGENT_DESKTOP_HISTORY_DIR` 为验证指定隔离目录。host 初始化时恢复所选项目的原子快照；Renderer 刷新不重新提交任务，重启只读取历史和上下文，不自动运行模型或工具。未结束运行显示 interrupted/unknown；未完成工具提示检查工作区。运行期间 host 退出、host 失败或当前 run 报错时，仍为 running 的工具立即显示“结果未知”，保留已有工具输出和部分回答；已完成或已报错的工具保持原状态。历史损坏和写入失败会显示错误，损坏日志保持只读。记录不含凭证配置字段，序列化内容会对常见 token/key 形态脱敏。离线演示仅在显式设置 `CHIVGENT_DESKTOP_DEMO=1` 时启用，当前 demo 路径不持久化。macOS arm64 `.app` 本地打包未签名；这不代表公开发布或签名/安装包已通过 CI；当前桌面 CI 范围以 [workflow](../.github/workflows/ci.yml) 为准。完整恢复与 CLI 兼容仍见 [#68](https://github.com/chivopic/chivgent/issues/68)，UI 后续见 [#69](https://github.com/chivopic/chivgent/issues/69)。
 
@@ -152,6 +152,8 @@ UI 叫“任务/会话”；内部沿用 Session 和 Run，对应 Thread/Turn �
 
 配置优先级：应用默认值 → 用户设置的项目默认值 → 会话覆盖 → 本次运行显式覆盖。项目默认值来自用户配置，仓库文本不能自行扩大权限；所有覆盖受宿主策略限制。
 
+桌面首次配置保存每个 Provider 的模型、key 与兼容 endpoint（仅 `openai-compatible` 可设置 endpoint）。已有 profile 更新模型或 endpoint 时可以留空 key，Node 侧保留原 key。key 位于应用 userData 的独立 profile 文件中，不写入会话历史或 CLI `auth.json`；运行时 key 解析仍是 Provider 环境变量 → CLI `auth.json` → 桌面 profile。Renderer 可写入 key，但只读取 Provider/model/endpoint/是否已配置的脱敏状态。配置文件损坏时，host 保持可启动并报告不含密钥的修复提示；首次恢复保存到独立 recovery 文件，原损坏文件保留，其他不可读取的 profile 需要重新录入。
+
 每次运行冻结有效配置：Provider、model、endpoint、cwd、工具写权限、Shell 启用/后端/网络策略、审批策略与上下文预算。快照只记录凭证引用，不保存密钥。
 
 界面将下一轮 Provider/model 选择与最近一次实际运行的有效配置分开展示：会话设置入口允许选择 Provider 和模型覆盖，切换 Provider 会清除模型覆盖；运行期间仍可打开设置查看当前有效配置，但不能修改选择。endpoint 与完整配置仅在设置详情中可见。项目名称是项目详情入口，详情显示 host 解析后的完整规范路径并提供复制；侧栏和对话标题不铺开重复路径。正常 Agent host 连接仅显示为可访问的状态点，连接详情按需打开；连接失败和其他需要用户处理的提示持续显示。
@@ -222,7 +224,7 @@ ShellApprovalGate 通过 host 的审批 broker 接入。审批显示命令、目
 
 BrowserWindow 开启 contextIsolation/sandbox，关闭 nodeIntegration。preload 暴露明确方法，主进程校验发送者与参数；Markdown 和链接按不可信内容处理。文件预览、diff、编辑器打开同样校验项目边界，不能成为任意文件读取通道。
 
-当前 P1 只读使用 CLI 的 environment 与 `auth.json` credential source；不支持 Desktop 内录入凭证、不写用户配置，也不调用 OAuth refresh。`openai` 和 `openai-compatible` 共用环境变量名 `OPENAI_API_KEY`，但面向不同的目标端点。桌面端只允许进程启动时选中的 Provider 使用该共享环境 Key；在界面中双向切换后，目标 Provider 只能读取自身的 `auth.json` 条目，以免将私有端点密钥发送给 OpenAI，或将 OpenAI 密钥发送给自定义端点。后续如增加 Desktop 凭证录入，须由主进程安全保存并确保 Renderer 不持有或回显密钥。
+Desktop 设置支持各 Provider 独立的桌面 API key；兼容 endpoint 只属于 `openai-compatible` profile。凭证按环境变量、CLI `auth.json`、桌面 profile 的顺序解析。`openai` 和 `openai-compatible` 共用环境变量名 `OPENAI_API_KEY`，但面向不同的目标端点。桌面端只允许进程启动时选中的 Provider 使用该共享环境 Key；切换到另一个 Provider 时，不会把启动 Provider 的环境 key 转给目标 Provider。桌面 profile 按 Provider 分开保存，Renderer 从不读取已保存的 key，提交后输入框清空，协议状态和历史都不含 key。配置位于应用 userData，不写入 CLI `auth.json`；文件是 owner-only 权限的明文 JSON，具备本机账户文件访问权的进程仍可读取。Desktop 不调用 OAuth refresh。
 
 首版不承诺新凭证自动写回 CLI 的明文 auth.json；界面说明保存范围。
 
@@ -265,10 +267,10 @@ worktree 首批只做创建、选择、任务绑定与可恢复清理；搬移�
 | P1 真实任务 | 首批已实现 | 最小 runtime、Provider/model 选择、目录授权、只读工具与流式会话 | `verify-readonly.mjs` 验证默认信息层级、路径详情/复制、设置与状态详情、真实 fake Provider 请求、read_file、多轮、取消、缺凭证恢复及窄窗布局；`verify-history.mjs` 验证刷新/重启/崩溃恢复、用户 Provider 选择、上下文与不自动重放；完整命令见下文 |
 | P2 执行控制 | 待实现 | 写入/网络/Shell 设置、审批、取消、关窗/退出、通知 | 允许命令能执行、拒绝无副作用；关窗任务继续；退出清理；新设置只作用下一轮 |
 | P3 历史与会话 | 单项目记录与恢复首批已实现；后续仍跟踪 [#68](https://github.com/chivopic/chivgent/issues/68) | 版本化历史、host 快照、模型上下文和运行/工具恢复已实现；完整任务导航、旧 CLI 导入、标题/归档和跨 host 幂等记录待实现 | 刷新不断任务；重启恢复且不重放工具；损坏/写失败可见；后续再验收 CLI 导入与任务导航 |
-| P4 本地可用版 / M1 | 待实现，UI 后续跟踪 [#69](https://github.com/chivopic/chivgent/issues/69) | 侧栏、设置、凭证、diff、预览、草稿、主题、安装完善 | 完成修复→审批→测试→检查 diff→重启继续；无源码依赖；CLI 回归通过 |
+| P4 本地可用版 / M1 | Provider 首次配置已实现；其他能力仍待实现 | 侧栏、diff、预览、草稿、主题、安装完善 | 完成修复→审批→测试→检查 diff→重启继续；无源码依赖；CLI 回归通过 |
 | P5 工作台 / M2 | 待实现 | 运行中介入、持久终端、review、worktree、并行任务 | 按上一节逐项关卡交付；共用能力进入 CLI 回归 |
 
-Desktop 凭证只读复用 CLI 的环境变量和 `auth.json` 解析；不写 `~/.chivgent`，不自动刷新 OAuth。切换 Provider 会清空手工填写的模型覆盖；切换模型或 Provider 时复用当前对话和 ContextManager 压缩检查点，避免长对话重新压缩丢失摘要。与运行关联的终态事件必须匹配当前 runId，迟到的确认不得重新打开已完成运行。离线真实-adapter E2E 使用 localhost fake Provider 与临时项目，不使用外部服务或模型额度。本地的 `verify-readonly.mjs`、`verify-history.mjs` 和 `verify-packaged.mjs` 会启动可见 Electron 窗口，默认拒绝运行；用户主动在本机验收时须显式传入 `--allow-ui`，例如 `node apps/desktop/scripts/verify-readonly.mjs --allow-ui [normal.png] [narrow.png]`。CI 只在 Linux Xvfb job 中自动运行，其他 `CI` 或 `DISPLAY` 环境不会单独解除拒绝。CI 的只读 E2E 连续运行 20 次以覆盖 teardown 稳定性。先 `npm run desktop:build`，再执行相应验收脚本；`npm run desktop:test` 使用临时目录与 fake LLM，不启动 Electron 窗口。单项目历史恢复首批已实现；完整项目/任务导航和旧 CLI 历史导入仍未实现。
+桌面配置使用应用 userData 下独立的 `desktop-config-v1`，不写 `~/.chivgent`；同一个只读 Agent 和 Provider runtime 继续负责请求。切换 Provider 会清空手工填写的模型覆盖；切换模型或 Provider 时复用当前对话和 ContextManager 压缩检查点，避免长对话重新压缩丢失摘要。与运行关联的终态事件必须匹配当前 runId，迟到的确认不得重新打开已完成运行。localhost fake Provider 测试使用临时项目和桌面 profile，不使用外部服务或模型额度。本地的 `verify-readonly.mjs`、`verify-history.mjs` 和 `verify-packaged.mjs` 会启动可见 Electron 窗口，默认拒绝运行；用户主动在本机验收时须显式传入 `--allow-ui`，例如 `node apps/desktop/scripts/verify-readonly.mjs --allow-ui [normal.png] [narrow.png]`。CI 只在 Linux Xvfb job 中自动运行，其他 `CI` 或 `DISPLAY` 环境不会单独解除拒绝。CI 的只读 E2E 连续运行 20 次以覆盖 teardown 稳定性。先 `npm run desktop:build`，再执行相应验收脚本；`npm run desktop:test` 使用临时目录与 fake Provider，不启动 Electron 窗口。单项目历史恢复首批已实现；完整项目/任务导航和旧 CLI 历史导入仍未实现。
 
 有副作用的 P2 依赖最小持久运行记录与保存失败门控，随 P2 先落地；P3 再完成历史界面、CLI 导入与剩余恢复能力。不能等到 P3 才知道 P2 的工具执行是否留有记录。
 
