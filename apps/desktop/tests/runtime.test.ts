@@ -1,11 +1,11 @@
-import { mkdtempSync, mkdirSync, realpathSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, readdirSync, rmSync, symlinkSync, writeFileSync, unlinkSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createDesktopSession } from "@chivgent/runtime/desktop-runtime.ts";
 import type { LLMRequest } from "@chivgent/llm.ts";
 import { HostService, type HostServiceOptions } from "../src/host/service.js";
-import type { HostToMain } from "../src/protocol/messages.js";
+import type { HostToMain, StartRequest } from "../src/protocol/messages.js";
 
 const temporaryRoots: string[] = [];
 afterEach(() => {
@@ -82,6 +82,110 @@ async function run(service: HostService, messages: HostToMain[], requestId: stri
 }
 
 describe("desktop real runtime", () => {
+  it("writes only after an explicit workspace mode and keeps an ask-first run closed without an approval channel", async () => {
+    const root = temporaryProject();
+    const target = join(root, "result.txt");
+    const makeSession = (permissionMode: "ask-first" | "workspace", approval?: (action: string, signal?: AbortSignal, context?: string) => Promise<boolean>) => createDesktopSession({
+      cwd: root, provider: "openai-compatible", model: "fixture", permissionMode, approval,
+      environment: { CHIVGENT_PROVIDER: "openai-compatible", OPENAI_API_KEY: "fixture-key", OPENAI_BASE_URL: "http://127.0.0.1:1/v1" },
+      authFile: join(root, "absent-auth.json"),
+      createClient: () => ({ async complete(request: LLMRequest) {
+        const last = request.messages.at(-1);
+        if (last?.role === "tool") return { message: { role: "assistant" as const, content: last.content, toolCalls: [] } };
+        return { message: { role: "assistant" as const, content: "", toolCalls: [{ id: "write-call", name: "write_file", arguments: { path: "result.txt", contents: "written\n" } }] } };
+      } }),
+    });
+    const workspace = await makeSession("workspace");
+    await workspace.session.prompt("write");
+    expect(readFileSync(target, "utf8")).toBe("written\n");
+    writeFileSync(target, "before\n");
+    const askFirst = await makeSession("ask-first");
+    await askFirst.session.prompt("write");
+    expect(readFileSync(target, "utf8")).toBe("before\n");
+    expect(askFirst.session.messages.at(-2)).toMatchObject({ role: "tool", isError: true, content: expect.stringContaining("approval was declined or unavailable") });
+  });
+
+  it("requires a correlated approval before a real file write and fails closed when approval journaling fails", async () => {
+    const root = temporaryProject();
+    const project = join(root, "project");
+    const historyDirectory = join(root, "history");
+    mkdirSync(project);
+    const target = join(project, "result.txt");
+    writeFileSync(target, "before\n");
+    const messages: HostToMain[] = [];
+    let requestNumber = 0;
+    const service = new HostService({
+      send: (message) => messages.push(message),
+      createAgent: () => { throw new Error("real session expected"); },
+      historyDirectory,
+      createSession: async (cwd, provider, model, history, _compaction, permissionMode, approval) => createDesktopSession({
+        cwd, provider, model, messages: history, permissionMode, approval,
+        environment: { CHIVGENT_PROVIDER: "openai-compatible", OPENAI_API_KEY: "fixture-key", OPENAI_BASE_URL: "http://127.0.0.1:1/v1" },
+        authFile: join(root, "absent-auth.json"),
+        createClient: () => ({ async complete(request) {
+          requestNumber += 1;
+          const last = request.messages.at(-1);
+          if (last?.role === "tool") return { message: { role: "assistant", content: last.content, toolCalls: [] } };
+          return { message: { role: "assistant", content: "", toolCalls: [{ id: `write-${requestNumber}`, name: "write_file", arguments: { path: "result.txt", contents: "after\n" } }] } };
+        } }),
+      }),
+    });
+    service.handle({ type: "select-project", requestId: "write-project", path: project });
+    await until(() => messages.some((message) => message.type === "project-selected"));
+    service.handle({ type: "start", requestId: "write-approved", prompt: "write", provider: "openai-compatible", model: "fixture", permissionMode: "ask-first" });
+    await until(() => messages.some((message) => message.type === "approval" || (message.type === "event" && message.event.type === "agent_end") || (message.type === "error" && message.runId !== undefined)));
+    const approval = messages.find((message) => message.type === "approval");
+    expect(approval, JSON.stringify(messages.slice(-8))).toBeDefined();
+    if (approval?.type !== "approval") throw new Error("Expected write approval.");
+    service.handle({ type: "initialize", requestId: "approval-snapshot" });
+    expect(messages.filter((message) => message.type === "initialized").at(-1)).toMatchObject({ snapshot: { pendingApprovals: [expect.objectContaining({ approvalId: approval.approvalId, runId: approval.runId })] } });
+    expect(readFileSync(target, "utf8")).toBe("before\n");
+    service.handle({ type: "approval-respond", requestId: "approve-write", hostInstanceId: approval.hostInstanceId, sessionId: approval.sessionId, runId: approval.runId, approvalId: approval.approvalId, approved: true });
+    await until(() => messages.some((message) => message.type === "event" && message.runId === approval.runId && message.event.type === "agent_end"));
+    service.handle({ type: "approval-respond", requestId: "approve-twice", hostInstanceId: approval.hostInstanceId, sessionId: approval.sessionId, runId: approval.runId, approvalId: approval.approvalId, approved: true });
+    expect(messages.at(-1)).toMatchObject({ type: "approval-responded", requestId: "approve-twice", accepted: false });
+    expect(readFileSync(target, "utf8")).toBe("after\n");
+    expect(messages.filter((message) => message.type === "approval")).toHaveLength(1);
+    const historyLog = join(historyDirectory, readdirSync(historyDirectory).find((name) => name.endsWith(".jsonl"))!);
+    expect(readFileSync(historyLog, "utf8")).toContain("approval_requested");
+    expect(readFileSync(historyLog, "utf8")).toContain("approval_decision");
+
+    writeFileSync(target, "before\n");
+    service.handle({ type: "start", requestId: "write-denied", prompt: "write denied", provider: "openai-compatible", model: "fixture", permissionMode: "ask-first" });
+    const deniedRun = messages.find((message) => message.type === "started" && message.requestId === "write-denied");
+    expect(deniedRun?.type).toBe("started");
+    if (deniedRun?.type !== "started") throw new Error("Denied run was not accepted.");
+    const denied = await untilValue(() => messages.find((message) => message.type === "approval" && message.runId === deniedRun.runId));
+    service.handle({ type: "approval-respond", requestId: "deny-write", hostInstanceId: denied.hostInstanceId, sessionId: denied.sessionId, runId: denied.runId, approvalId: denied.approvalId, approved: false });
+    await until(() => messages.some((message) => message.type === "event" && message.runId === denied.runId && message.event.type === "agent_end"));
+    await new Promise(setImmediate);
+    expect(readFileSync(target, "utf8")).toBe("before\n");
+
+    await startUntilAccepted(service, messages, { type: "start", requestId: "write-cancelled", prompt: "write then cancel", provider: "openai-compatible", model: "fixture", permissionMode: "ask-first" });
+    const cancelledRun = messages.find((message) => message.type === "started" && message.requestId === "write-cancelled");
+    if (cancelledRun?.type !== "started") throw new Error("Cancellable run was not started.");
+    await untilValue(() => messages.find((message) => message.type === "approval" && message.runId === cancelledRun.runId));
+    service.handle({ type: "interrupt", requestId: "cancel-write", runId: cancelledRun.runId });
+    expect(messages.at(-1)).toMatchObject({ type: "interrupted", accepted: true });
+    await until(() => messages.some((message) => message.type === "event" && message.runId === cancelledRun.runId && message.event.type === "agent_end"));
+    expect(readFileSync(target, "utf8")).toBe("before\n");
+
+    await startUntilAccepted(service, messages, { type: "start", requestId: "write-unlogged", prompt: "write again", provider: "openai-compatible", model: "fixture", permissionMode: "ask-first" });
+    const latestRun = messages.find((message) => message.type === "started" && message.requestId === "write-unlogged");
+    if (latestRun?.type !== "started") throw new Error("Unlogged run was not started.");
+    const finalApproval = await untilValue(() => messages.find((message) => message.type === "approval" && message.runId === latestRun.runId));
+    const historyFile = join(historyDirectory, readdirSync(historyDirectory).find((name) => name.endsWith(".jsonl"))!);
+    unlinkSync(historyFile);
+    mkdirSync(historyFile);
+    service.handle({ type: "approval-respond", requestId: "approve-unlogged", hostInstanceId: finalApproval.hostInstanceId, sessionId: finalApproval.sessionId, runId: finalApproval.runId, approvalId: finalApproval.approvalId, approved: true });
+    await until(() => messages.some((message) => message.type === "approval-responded" && message.requestId === "approve-unlogged"));
+    expect(messages.find((message) => message.type === "approval-responded" && message.requestId === "approve-unlogged")).toMatchObject({ accepted: false });
+    await until(() => messages.some((message) => message.type === "event" && message.runId === latestRun.runId && message.event.type === "agent_end"));
+    expect(readFileSync(target, "utf8")).toBe("before\n");
+    expect(messages.some((message) => message.type === "approval" && message.runId === latestRun.runId)).toBe(true);
+    await service.shutdown();
+  });
+
   it("reads the selected project's bytes and rejects traversal and symlink escapes with no writes", async () => {
     const f = fixture();
     await select(f.service, f.messages, f.first);
@@ -278,6 +382,8 @@ describe("desktop real runtime", () => {
     const messages: HostToMain[] = [];
     const resolvers: Array<(value: Awaited<ReturnType<NonNullable<HostServiceOptions["createSession"]>>>) => void> = [];
     const prompted: string[] = [];
+    let lateClosed = 0;
+    let shutdownLateClosed = 0;
     let attempts = 0;
     const service = new HostService({
       send: (message) => messages.push(message),
@@ -302,19 +408,21 @@ describe("desktop real runtime", () => {
     await new Promise(setImmediate);
     await select(service, messages, second, "after-stop-project");
     resolvers[0]!({ provider: "openai", model: "late", session: {
-      messages: [], subscribe: () => () => {}, prompt: async (text) => { prompted.push(text); },
+      messages: [], subscribe: () => () => {}, prompt: async (text) => { prompted.push(text); }, close: async () => { lateClosed += 1; },
     } });
     await new Promise(setImmediate);
+    expect(lateClosed).toBe(1);
     expect(messages.some((item) => item.type === "runtime-config" && item.model === "late")).toBe(false);
     service.handle({ type: "start", requestId: "after", prompt: "new project" });
     expect(attempts).toBe(3);
     // This late factory is cancelled by shutdown below; neither factory may run a prompt.
     await service.shutdown();
     resolvers[1]!({ provider: "openai", model: "after-shutdown", session: {
-      messages: [], subscribe: () => () => {}, prompt: async (text) => { prompted.push(text); },
+      messages: [], subscribe: () => () => {}, prompt: async (text) => { prompted.push(text); }, close: async () => { shutdownLateClosed += 1; },
     } });
     await new Promise(setImmediate);
     expect(prompted).toEqual([]);
+    expect(shutdownLateClosed).toBe(1);
   });
   it("exposes startup Provider and compatible endpoint before any prompt, without URL credentials", () => {
     const messages: HostToMain[] = [];
@@ -367,4 +475,22 @@ async function until(predicate: () => boolean): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error("Expected host event did not arrive.");
+}
+
+async function untilValue<T>(get: () => T | undefined): Promise<T> {
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    const value = get();
+    if (value !== undefined) return value;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("Expected host value did not arrive.");
+}
+
+async function startUntilAccepted(service: HostService, messages: HostToMain[], request: StartRequest): Promise<void> {
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    service.handle(request);
+    if (messages.some((message) => message.type === "started" && message.requestId === request.requestId)) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("Host did not accept the run.");
 }

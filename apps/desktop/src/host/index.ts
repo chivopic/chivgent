@@ -38,8 +38,8 @@ const service = new HostService({
   createAgent: (onEvent, projectPath) => createDemoAgent({ workspaceRoot: projectPath ?? workspaceRoot, timing: VISIBLE_DEMO_TIMING, onEvent }),
   ...(demoMode ? {} : {
     historyDirectory: process.env["CHIVGENT_DESKTOP_HISTORY_DIR"],
-    createSession: async (cwd, provider, model, messages, compaction) => {
-      return createDesktopSession({ cwd, provider, model, messages, compaction });
+    createSession: async (cwd, provider, model, messages, compaction, permissionMode, approval) => {
+      return createDesktopSession({ cwd, provider, model, messages, compaction, permissionMode, approval });
     },
   }),
 });

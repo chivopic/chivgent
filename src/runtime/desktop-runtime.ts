@@ -7,6 +7,7 @@ import { FileCredentialSource, defaultAuthFile } from "../auth/file-credentials.
 import { RetryingLLMClient } from "../retry.js";
 import { defaultProviderRegistry } from "../providers/registry.js";
 import type { Message } from "../messages.js";
+import { PermissionPolicy, type PermissionMode, type PermissionApproval } from "../permissions.js";
 
 export interface DesktopRuntimeConfig {
   readonly cwd: string;
@@ -16,6 +17,8 @@ export interface DesktopRuntimeConfig {
   readonly authFile?: string;
   readonly messages?: readonly Message[];
   readonly compaction?: AppliedCompaction;
+  readonly permissionMode?: "read-only" | PermissionMode;
+  readonly approval?: PermissionApproval;
   readonly createClient?: (config: { apiKey: string; model: string; baseURL?: string }) => import("../llm.js").LLMClient;
 }
 
@@ -61,6 +64,10 @@ export async function createDesktopSession(config: DesktopRuntimeConfig) {
   } satisfies CliOptions;
   const session = createLocalSession({
     options, cwd: config.cwd, llm,
+    ...(config.permissionMode === undefined || config.permissionMode === "read-only" ? {} : {
+      permissionPolicy: new PermissionPolicy(config.permissionMode, config.approval),
+      allowShellForPolicy: false,
+    }),
     restored: { resumed: false, messages: config.messages,
       ...(config.compaction === undefined ? {} : { compaction: config.compaction }) },
   });
