@@ -43,6 +43,15 @@ export interface SelectProjectRequest {
   readonly path: string;
 }
 
+export interface SaveProviderProfileRequest {
+  readonly type: "save-provider-profile";
+  readonly requestId: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly apiKey?: string;
+  readonly baseURL?: string;
+}
+
 export interface InterruptRequest {
   readonly type: "interrupt";
   readonly requestId: string;
@@ -57,6 +66,7 @@ export interface ShutdownRequest {
 export type MainToHost =
   | InitializeRequest
   | SelectProjectRequest
+  | SaveProviderProfileRequest
   | StartRequest
   | InterruptRequest
   | ShutdownRequest;
@@ -69,6 +79,8 @@ export interface InitializedMessage {
   readonly capabilities: readonly string[];
   readonly defaultProvider: string;
   readonly compatibleBaseURL?: string;
+  readonly providerProfiles?: readonly { readonly provider: string; readonly model: string; readonly baseURL?: string; readonly configured: true }[];
+  readonly providerConfigNotice?: string;
   readonly snapshot?: SessionSnapshot;
   readonly historyNotice?: string;
 }
@@ -97,6 +109,11 @@ export interface ProjectSelectedMessage {
   readonly type: "project-selected";
   readonly requestId: string;
   readonly path: string;
+}
+export interface ProviderProfileSavedMessage {
+  readonly type: "provider-profile-saved";
+  readonly requestId: string;
+  readonly profile: { readonly provider: string; readonly model: string; readonly baseURL?: string; readonly configured: true; readonly recovered?: true };
 }
 export interface RuntimeConfigMessage {
   readonly type: "runtime-config";
@@ -141,6 +158,7 @@ export interface DesktopEventMessage {
 export type HostToMain =
   | InitializedMessage
   | ProjectSelectedMessage
+  | ProviderProfileSavedMessage
   | RuntimeConfigMessage
   | StartedMessage
   | InterruptedMessage
@@ -215,6 +233,12 @@ export function validateMainToHost(value: unknown): MainToHost | string {
         return "path must be a non-empty directory path.";
       }
       return { type: "select-project", requestId: record.requestId, path: record.path };
+    case "save-provider-profile":
+      if (typeof record.provider !== "string" || !/^[a-z0-9-]{1,80}$/.test(record.provider)) return "provider is invalid.";
+      if (typeof record.model !== "string" || record.model.trim().length === 0 || record.model.length > MAX_MODEL_LENGTH) return `model must be 1-${MAX_MODEL_LENGTH} non-empty characters.`;
+      if (record.apiKey !== undefined && (typeof record.apiKey !== "string" || record.apiKey.trim().length === 0 || record.apiKey.length > 4_096)) return "apiKey must be a non-empty string when provided.";
+      if (record.baseURL !== undefined && (typeof record.baseURL !== "string" || record.baseURL.length > 2_048)) return "baseURL is invalid.";
+      return { type: "save-provider-profile", requestId: record.requestId, provider: record.provider, model: record.model.trim(), ...(record.apiKey === undefined ? {} : { apiKey: record.apiKey as string }), ...(record.baseURL === undefined ? {} : { baseURL: record.baseURL as string }) };
     case "start":
       if (typeof record.prompt !== "string" || record.prompt.trim().length === 0) {
         return "prompt must be a non-empty string.";
@@ -260,11 +284,17 @@ export function isHostToMain(value: unknown): value is HostToMain {
         record.capabilities.every((capability) => typeof capability === "string") &&
         typeof record.defaultProvider === "string" &&
         (record.compatibleBaseURL === undefined || typeof record.compatibleBaseURL === "string") &&
+        (record.providerProfiles === undefined || (Array.isArray(record.providerProfiles) && record.providerProfiles.every((profile) => typeof profile === "object" && profile !== null && typeof profile.provider === "string" && typeof profile.model === "string" && profile.configured === true && !("apiKey" in profile)))) &&
+        (record.providerConfigNotice === undefined || typeof record.providerConfigNotice === "string") &&
         (record.historyNotice === undefined || typeof record.historyNotice === "string") &&
         (record.snapshot === undefined || isSessionSnapshot(record.snapshot))
       );
     case "project-selected":
       return isRequestId(record.requestId) && typeof record.path === "string" && record.path.length > 0;
+    case "provider-profile-saved": {
+      const profile = record.profile as Record<string, unknown> | null;
+      return isRequestId(record.requestId) && typeof profile === "object" && profile !== null && typeof profile.provider === "string" && typeof profile.model === "string" && profile.configured === true && (profile.recovered === undefined || profile.recovered === true) && !("apiKey" in profile);
+    }
     case "runtime-config":
       return typeof record.provider === "string" && record.provider.length > 0 && typeof record.model === "string" && record.model.length > 0 && (record.baseURL === undefined || typeof record.baseURL === "string");
     case "started":

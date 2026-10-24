@@ -12,8 +12,10 @@ import {
   HOST_CAPABILITIES,
   validateMainToHost,
   type HostToMain,
+  type SaveProviderProfileRequest,
   type StartRequest,
 } from "../protocol/messages.js";
+import { DesktopProviderConfig, type DesktopProviderProfile } from "./provider-config.js";
 
 export interface AcceptedStart {
   readonly requestId: string;
@@ -32,6 +34,7 @@ export interface HostServiceOptions {
   readonly createSession?: SessionFactory;
   readonly createId?: () => string;
   readonly historyDirectory?: string;
+  readonly providerConfigDirectory?: string;
 }
 
 export interface RuntimeSession {
@@ -54,6 +57,7 @@ export type SessionFactory = (
   model: string | undefined,
   messages: readonly Message[] | undefined,
   compaction: AppliedCompaction | undefined,
+  profile?: DesktopProviderProfile,
 ) => Promise<RuntimeSessionResult>;
 
 /**
@@ -76,6 +80,7 @@ export class HostService {
   private session: RuntimeSessionResult | undefined;
   private sessionConfigKey: string | undefined;
   private readonly historyDirectory: string | undefined;
+  private readonly providerConfig: DesktopProviderConfig | undefined;
   private history: DesktopHistory | undefined;
   private loadedHistory: LoadedHistory | undefined;
   private timelineEvents: HistoryEvent[] = [];
@@ -87,6 +92,7 @@ export class HostService {
     this.createSession = options.createSession;
     this.createId = options.createId ?? (() => randomBytes(8).toString("hex"));
     this.historyDirectory = options.historyDirectory;
+    this.providerConfig = options.providerConfigDirectory === undefined ? undefined : new DesktopProviderConfig(options.providerConfigDirectory);
     this.defaultProvider = options.defaultProvider || "openai";
     this.compatibleBaseURL = safeEndpoint(options.compatibleBaseURL);
     this.instanceId = `host-${this.createId()}`;
@@ -110,6 +116,7 @@ export class HostService {
     switch (request.type) {
       case "initialize":
         this.restoreLastProject();
+        const providerConfigStatus = this.providerConfig?.statusSync();
         this.send({
           type: "initialized",
           requestId: request.requestId,
@@ -118,6 +125,8 @@ export class HostService {
           capabilities: [...HOST_CAPABILITIES, this.createSession === undefined ? "demo-agent" : "real-agent"],
           defaultProvider: this.defaultProvider,
           ...(this.compatibleBaseURL === undefined ? {} : { compatibleBaseURL: this.compatibleBaseURL }),
+          ...(providerConfigStatus === undefined ? {} : { providerProfiles: providerConfigStatus.profiles }),
+          ...(providerConfigStatus?.notice === undefined ? {} : { providerConfigNotice: providerConfigStatus.notice }),
           ...(this.historyNotice === undefined ? {} : { historyNotice: this.historyNotice }),
           ...(this.snapshot() === undefined ? {} : { snapshot: this.snapshot() }),
         });
@@ -127,6 +136,9 @@ export class HostService {
         return;
       case "select-project":
         void this.selectProject(request.requestId, request.path);
+        return;
+      case "save-provider-profile":
+        void this.saveProviderProfile(request);
         return;
       case "interrupt":
         this.interrupt(request.requestId, request.runId);
@@ -246,11 +258,13 @@ export class HostService {
 
     const run = async (): Promise<void> => {
       if (this.createSession !== undefined) {
-        const configKey = JSON.stringify([request.provider ?? null, request.model ?? null]);
+        const profile = request.provider === undefined ? undefined : (await this.providerConfig?.read())?.[request.provider];
+        const profileKeyFingerprint = profile === undefined ? null : createHash("sha256").update(profile.apiKey).digest("hex");
+        const configKey = JSON.stringify([request.provider ?? null, request.model ?? null, profile?.model ?? null, profile?.baseURL ?? null, profileKeyFingerprint]);
         if (this.session === undefined || this.sessionConfigKey !== configKey) {
           const messages = this.session?.session.messages ?? this.loadedHistory?.messages;
           const compaction = this.session?.session.compactionCheckpoint ?? this.loadedHistory?.compaction;
-          const pendingSession = this.createSession(this.projectPath!, request.provider, request.model, messages, compaction);
+          const pendingSession = this.createSession(this.projectPath!, request.provider, request.model ?? profile?.model, messages, compaction, profile);
           const initialized = await awaitWithAbort(pendingSession, controller.signal);
           if (initialized.aborted) {
             this.send({ type: "error", requestId: request.requestId, runId, code: "cancelled", message: "运行已停止。" });
@@ -296,6 +310,16 @@ export class HostService {
         }
         resolveDone();
       });
+  }
+
+  private async saveProviderProfile(request: SaveProviderProfileRequest): Promise<void> {
+    try {
+      if (this.providerConfig === undefined) throw new Error("桌面配置目录不可用。");
+      const profile = await this.providerConfig.save(request);
+      this.send({ type: "provider-profile-saved", requestId: request.requestId, profile });
+    } catch (error: unknown) {
+      this.send({ type: "error", requestId: request.requestId, code: "provider_config_failed", message: error instanceof Error ? error.message : "无法保存 Provider 配置。" });
+    }
   }
 
   private async selectProject(requestId: string, requestedPath: string): Promise<void> {
