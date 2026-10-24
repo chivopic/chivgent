@@ -5,6 +5,7 @@ import { isHostToMain, type HostStatus, type IpcResult } from "../protocol/messa
 export interface DesktopApi {
   initialize(): Promise<IpcResult<unknown>>;
   selectProject(): Promise<IpcResult<unknown>>;
+  saveProviderProfile(payload: { requestId: string; provider: string; model: string; apiKey?: string; baseURL?: string }): Promise<IpcResult<unknown>>;
   start(payload: { requestId: string; prompt: string }): Promise<IpcResult<unknown>>;
   interrupt(payload: { requestId: string; runId: string }): Promise<IpcResult<unknown>>;
   onEvent(listener: (message: unknown) => void): () => void;
@@ -14,6 +15,7 @@ export interface DesktopApi {
 const api: DesktopApi = {
   initialize: () => ipcRenderer.invoke(IPC.initialize),
   selectProject: () => ipcRenderer.invoke(IPC.selectProject),
+  saveProviderProfile: (payload) => ipcRenderer.invoke(IPC.saveProviderProfile, payload),
   start: (payload) => ipcRenderer.invoke(IPC.start, payload),
   interrupt: (payload) => ipcRenderer.invoke(IPC.interrupt, payload),
   onEvent: (listener) => subscribe(IPC.event, listener, isHostToMain),

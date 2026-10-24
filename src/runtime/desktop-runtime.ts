@@ -6,12 +6,16 @@ import { EnvCredentialSource } from "../auth/env-credentials.js";
 import { FileCredentialSource, defaultAuthFile } from "../auth/file-credentials.js";
 import { RetryingLLMClient } from "../retry.js";
 import { defaultProviderRegistry } from "../providers/registry.js";
+import { RuntimeCredentialSource } from "../auth/runtime-credentials.js";
 import type { Message } from "../messages.js";
 
 export interface DesktopRuntimeConfig {
   readonly cwd: string;
   readonly provider?: string;
   readonly model?: string;
+  /** Desktop-local profile credential, lower priority than environment and auth.json. */
+  readonly desktopApiKey?: string;
+  readonly baseURL?: string;
   readonly environment?: NodeJS.ProcessEnv;
   readonly authFile?: string;
   readonly messages?: readonly Message[];
@@ -28,7 +32,7 @@ export async function createDesktopSession(config: DesktopRuntimeConfig) {
   if (model === undefined || model.length === 0) {
     throw new Error(`需要为 ${provider} 配置模型名称。`);
   }
-  const baseURL = first(environment, definition.baseUrlEnvKeys) ?? definition.defaultBaseURL;
+  const baseURL = first(environment, definition.baseUrlEnvKeys) ?? config.baseURL ?? definition.defaultBaseURL;
   if (definition.requiresBaseURL && baseURL === undefined) {
     throw new Error(`${definition.baseUrlEnvKeys.join(" 或 ")} 需要配置。`);
   }
@@ -43,6 +47,7 @@ export async function createDesktopSession(config: DesktopRuntimeConfig) {
   const credential = await new CredentialResolver([
     new EnvCredentialSource(credentialEnvironment),
     new FileCredentialSource(config.authFile ?? defaultAuthFile(environment)),
+    new RuntimeCredentialSource(config.desktopApiKey),
   ]).resolve(definition);
   if (credential === undefined) {
     throw new Error(`尚未配置 ${provider} API key。请设置 ${definition.envKeys.join(" 或 ")}，或在 CLI 的 auth.json 中配置。`);

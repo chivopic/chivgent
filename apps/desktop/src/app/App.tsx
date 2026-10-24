@@ -8,6 +8,7 @@ import leafMark from "./assets/chivgent-leaf-mark.png";
 interface DesktopApi {
   initialize(): Promise<IpcResult<HostToMain>>;
   selectProject(): Promise<IpcResult<HostToMain>>;
+  saveProviderProfile(payload: { requestId: string; provider: string; model: string; apiKey?: string; baseURL?: string }): Promise<IpcResult<HostToMain>>;
   start(payload: { requestId: string; prompt: string; provider?: string; model?: string }): Promise<IpcResult<HostToMain>>;
   interrupt(payload: { requestId: string; runId: string }): Promise<IpcResult<HostToMain>>;
   onEvent(listener: (message: HostToMain) => void): () => void;
@@ -33,6 +34,10 @@ export function App(): JSX.Element {
   const [demoMode, setDemoMode] = useState(false);
   const [provider, setProvider] = useState("openai");
   const [model, setModel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [profileStatus, setProfileStatus] = useState("");
+  const [providerConfigNotice, setProviderConfigNotice] = useState("");
+  const [providerProfiles, setProviderProfiles] = useState<NonNullable<Extract<HostToMain, { type: "initialized" }>["providerProfiles"]>>([]);
   const [detailPanel, setDetailPanel] = useState<"project" | "settings" | "status" | null>(null);
   const [copyPathFeedback, setCopyPathFeedback] = useState("");
   const detailsDialogRef = useRef<HTMLDialogElement>(null);
@@ -59,11 +64,18 @@ export function App(): JSX.Element {
     }
     const stopEvents = api.onEvent((message) => {
       if (message.type === "initialized") {
-        if (!providerDefaultAppliedRef.current) {
+        const firstInitialization = !providerDefaultAppliedRef.current;
+        if (firstInitialization) {
           setProvider(message.defaultProvider);
           providerDefaultAppliedRef.current = true;
         }
         setCompatibleEndpoint(message.compatibleBaseURL ?? "");
+        setProviderProfiles(message.providerProfiles ?? []);
+        setProviderConfigNotice(message.providerConfigNotice ?? "");
+        if (firstInitialization) {
+          const savedDefault = message.providerProfiles?.find((item) => item.provider === message.defaultProvider);
+          if (savedDefault !== undefined) { setModel(savedDefault.model); setCompatibleEndpoint(savedDefault.baseURL ?? message.compatibleBaseURL ?? ""); }
+        }
         setDemoMode(message.capabilities.includes("demo-agent"));
         if (message.historyNotice !== undefined) {
           setProjectError(message.historyNotice);
@@ -254,6 +266,26 @@ export function App(): JSX.Element {
     }
   }
 
+  async function saveProviderProfile(): Promise<void> {
+    const api = window.chivgent;
+    if (api === undefined) return;
+    try {
+      const result = await api.saveProviderProfile({ requestId: nextRequestId(), provider, model, ...(apiKey.trim() ? { apiKey } : {}),
+        ...(provider === "openai-compatible" ? { baseURL: compatibleEndpoint } : {}) });
+      if (!result.ok) { setProfileStatus(result.message); return; }
+      if (result.value.type !== "provider-profile-saved") { setProfileStatus("保存响应无效。"); return; }
+      const savedProfile = result.value.profile;
+      setProviderProfiles((current) => [...current.filter((item) => item.provider !== provider), savedProfile]);
+      setApiKey("");
+      setProviderConfigNotice("");
+      setProfileStatus(savedProfile.recovered
+        ? "已创建恢复配置。原损坏文件已保留；其中其他 Provider 需要重新录入。"
+        : "配置已保存。API key 已从输入框清除。");
+    } catch (error: unknown) {
+      setProfileStatus(error instanceof Error ? error.message : "无法保存 Provider 配置。");
+    }
+  }
+
   async function stop(): Promise<void> {
     const api = window.chivgent;
     const runId = runIdRef.current;
@@ -324,11 +356,15 @@ export function App(): JSX.Element {
           {detailPanel === "settings" && <>
             <div className="dialog-head"><div><h2 id="details-title">会话设置</h2><p>Provider 和模型的更改仅用于下一轮运行。</p></div><button type="button" className="dialog-close" aria-label="关闭设置" onClick={() => detailsDialogRef.current?.close()}>×</button></div>
             <div className="settings-form">
-              <label>Provider <select aria-label="Provider" data-testid="provider-select" value={provider} disabled={running} onChange={(event) => { setProvider(event.target.value); setModel(""); }}>
+              <label>Provider <select aria-label="Provider" data-testid="provider-select" value={provider} disabled={running} onChange={(event) => { const next = event.target.value; const profile = providerProfiles.find((item) => item.provider === next); setProvider(next); setModel(profile?.model ?? ""); setCompatibleEndpoint(profile?.baseURL ?? ""); setApiKey(""); setProfileStatus(""); }}>
                 <option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="openai-compatible">OpenAI compatible</option><option value="openrouter">OpenRouter</option><option value="groq">Groq</option><option value="xai">xAI</option><option value="moonshot">Moonshot</option>
               </select></label>
-              <label>Model <input aria-label="Model" data-testid="model-input" value={model} placeholder="沿用 Provider 环境配置" disabled={running} onChange={(event) => setModel(event.target.value)} /></label>
-              {provider === "openai-compatible" && <div className="detail-block" data-testid="compatible-endpoint"><span className="detail-label">请求端点 · OPENAI_BASE_URL</span><code className="path-value">{compatibleEndpoint || "未配置"}</code></div>}
+              <label>Model <input aria-label="Model" data-testid="model-input" value={model} placeholder="填写 Provider 模型名称" disabled={running} onChange={(event) => setModel(event.target.value)} /></label>
+              {provider === "openai-compatible" && <label>兼容 endpoint <input aria-label="兼容 endpoint" data-testid="compatible-endpoint" value={compatibleEndpoint} placeholder="https://example.com/v1" disabled={running} onChange={(event) => setCompatibleEndpoint(event.target.value)} /></label>}
+              <label>API key <input aria-label="API key" data-testid="provider-api-key" type="password" autoComplete="new-password" value={apiKey} placeholder={providerProfiles.some((item) => item.provider === provider) ? "已保存；留空保持当前密钥" : "输入 API key"} disabled={running} onChange={(event) => setApiKey(event.target.value)} /></label>
+              <button type="button" className="secondary-action" disabled={running || (apiKey.trim().length === 0 && !providerProfiles.some((item) => item.provider === provider))} onClick={() => void saveProviderProfile()}>保存 Provider 配置</button>
+              {providerConfigNotice && <p role="alert" data-testid="provider-config-notice">{providerConfigNotice}</p>}
+              {profileStatus && <p role="status" data-testid="provider-config-status">{profileStatus}</p>}
               {runtimeConfig && <div className="detail-block" data-testid="runtime-config"><span className="detail-label">{running ? "当前运行的有效配置" : "最近一次运行的有效配置"}</span><code className="path-value">{runtimeConfig.provider} · {runtimeConfig.model}{runtimeConfig.endpoint ? ` · ${runtimeConfig.endpoint}` : ""}</code></div>}
             </div>
             <div className="dialog-actions"><button type="button" className="secondary-action" onClick={() => detailsDialogRef.current?.close()}>完成</button></div>
