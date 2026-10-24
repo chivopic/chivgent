@@ -10,6 +10,8 @@ interface DesktopApi {
   selectProject(): Promise<IpcResult<HostToMain>>;
   start(payload: { requestId: string; prompt: string; provider?: string; model?: string }): Promise<IpcResult<HostToMain>>;
   interrupt(payload: { requestId: string; runId: string }): Promise<IpcResult<HostToMain>>;
+  workspaceReview(payload: { requestId: string; projectPath: string }): Promise<IpcResult<HostToMain>>;
+  openWorkspaceFile(payload: { projectPath: string; relativePath: string }): Promise<IpcResult<{ opened: boolean }>>;
   onEvent(listener: (message: HostToMain) => void): () => void;
   onHostStatus(listener: (status: HostStatus) => void): () => void;
 }
@@ -35,6 +37,11 @@ export function App(): JSX.Element {
   const [model, setModel] = useState("");
   const [detailPanel, setDetailPanel] = useState<"project" | "settings" | "status" | null>(null);
   const [copyPathFeedback, setCopyPathFeedback] = useState("");
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [workspaceReview, setWorkspaceReview] = useState<Extract<HostToMain, { type: "workspace-review" }> | null>(null);
+  const [reviewError, setReviewError] = useState("");
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const reviewGenerationRef = useRef(0);
   const detailsDialogRef = useRef<HTMLDialogElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -243,6 +250,10 @@ export function App(): JSX.Element {
       return;
     }
     if (result.value.type === "project-selected") {
+      reviewGenerationRef.current += 1;
+      setWorkspaceReview(null);
+      setReviewError("");
+      setReviewLoading(false);
       pendingStartRef.current = null;
       acceptedStartRef.current = null;
       setProjectPath(result.value.path);
@@ -251,6 +262,26 @@ export function App(): JSX.Element {
       setProjectError("");
       dispatch({ type: "reset" });
       void api.initialize();
+    }
+  }
+
+  async function refreshWorkspaceReview(): Promise<void> {
+    const api = window.chivgent;
+    const requestedPath = projectPath;
+    if (api === undefined || requestedPath.length === 0) return;
+    const generation = ++reviewGenerationRef.current;
+    setReviewLoading(true);
+    setReviewError("");
+    try {
+      const result = await api.workspaceReview({ requestId: nextRequestId(), projectPath: requestedPath });
+      if (generation !== reviewGenerationRef.current || projectPath !== requestedPath) return;
+      if (!result.ok) { setReviewError(result.message); return; }
+      if (result.value.type === "workspace-review" && result.value.projectPath === requestedPath) setWorkspaceReview(result.value);
+      else setReviewError("工作区响应与当前项目不匹配，请重新载入。");
+    } catch (error: unknown) {
+      if (generation === reviewGenerationRef.current) setReviewError(error instanceof Error ? error.message : "读取工作区改动失败。");
+    } finally {
+      if (generation === reviewGenerationRef.current) setReviewLoading(false);
     }
   }
 
@@ -299,6 +330,7 @@ export function App(): JSX.Element {
             </button> : <p>先选择项目目录</p>}
           </div>
           <div className="head-actions">
+            <button className="quiet-action" type="button" disabled={!projectPath} onClick={() => { setReviewOpen((open) => !open); if (!reviewOpen) void refreshWorkspaceReview(); }}>工作区改动</button>
             <button className="quiet-action" type="button" onClick={() => setDetailPanel("settings")}>设置</button>
             <button className="status-action" type="button" data-testid="status-action" aria-label={`连接状态详情：${hostLabel(state.host)}`} title="连接状态详情" onClick={() => setDetailPanel("status")}>
               <span className={`dot ${state.host.phase === "ready" ? "ready" : state.host.phase === "starting" ? "run" : "bad"}`} />
@@ -311,6 +343,17 @@ export function App(): JSX.Element {
           <div className="banner" role="status" data-testid="notice">{state.notice}</div>
         )}
         {projectError && <div className="banner" role="alert">{projectError}</div>}
+        {reviewOpen && <section className="workspace-review" aria-label="工作区改动">
+          <header><strong>工作区改动</strong><button type="button" onClick={() => void refreshWorkspaceReview()} disabled={reviewLoading}>{reviewLoading ? "读取中…" : "刷新"}</button><button type="button" aria-label="关闭工作区改动" onClick={() => setReviewOpen(false)}>×</button></header>
+          {reviewError && <p role="alert">{reviewError}</p>}
+          {workspaceReview?.review.kind === "not-git" && <p>此目录不是 Git 项目。</p>}
+            {workspaceReview?.review.kind === "git" && <>
+            <ReviewDiff title="未暂存" value={workspaceReview.review.unstaged} />
+            <ReviewDiff title="已暂存" value={workspaceReview.review.staged} />
+            <section><h3>未跟踪文件</h3>{workspaceReview.review.untracked.length === 0 ? <p>没有未跟踪文件。</p> : workspaceReview.review.untracked.map((file) => <details key={file.path}><summary>{file.path} · {file.kind === "text" ? "文本" : file.kind === "binary" ? "二进制文件" : file.kind === "too-large" ? "文件过大，无法预览" : file.kind === "unsafe" ? "路径不安全" : "无法读取"}</summary>{file.kind === "text" && <><pre>{file.content}</pre><button type="button" onClick={() => { void window.chivgent?.openWorkspaceFile({ projectPath: workspaceReview.projectPath, relativePath: file.path }).then((result) => { if (!result?.ok) setReviewError(result?.message ?? "无法在文件管理器中显示文件。"); }); }}>在文件管理器中显示</button></>}</details>)}</section>
+            {workspaceReview.review.truncated && <p role="status">未跟踪文件过多，仅显示前 500 个。</p>}
+          </>}
+        </section>}
         <dialog className="details-dialog" ref={detailsDialogRef} aria-labelledby="details-title" onClose={() => setDetailPanel(null)}>
           {detailPanel === "project" && <>
             <div className="dialog-head"><div><h2 id="details-title">项目详情</h2><p>当前项目目录</p></div><button type="button" className="dialog-close" aria-label="关闭详情" onClick={() => detailsDialogRef.current?.close()}>×</button></div>
@@ -466,6 +509,10 @@ export function App(): JSX.Element {
 
 function isDefinitiveStartRejection(code: string): boolean {
   return ["bad_request", "busy", "history_write_failed", "project_required", "request_conflict", "request_log_full"].includes(code);
+}
+
+function ReviewDiff({ title, value }: { title: string; value: string }): JSX.Element {
+  return <section><h3>{title}</h3>{value ? <pre>{value}</pre> : <p>没有{title}改动。</p>}</section>;
 }
 
 function ItemView(props: {

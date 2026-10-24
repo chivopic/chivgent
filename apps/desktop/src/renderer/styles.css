@@ -66,6 +66,14 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .pill.stop { background: #f2ede1; color: #896e40; }
 .pill.bad { background: #f6e8e6; color: #a34d4b; }
 .banner { margin: 0 29px 8px; padding: 10px 12px; border-radius: 10px; background: #f8ece8; color: #7a3140; font-size: 13px; }
+.workspace-review { flex: none; max-height: 42vh; overflow: auto; margin: 0 28px 8px; padding: 10px 13px; border: 1px solid var(--line); border-radius: 11px; background: var(--card); }
+.workspace-review > header { position: sticky; top: -10px; z-index: 1; display: flex; align-items: center; gap: 8px; padding: 4px 0 8px; background: var(--card); }
+.workspace-review > header strong { flex: 1; }
+.workspace-review button { border: 1px solid var(--line); border-radius: 7px; background: white; padding: 4px 8px; font-size: 11px; }
+.workspace-review h3 { margin: 10px 0 5px; font-size: 12px; }
+.workspace-review p, .workspace-review summary { color: var(--mute); font-size: 12px; }
+.workspace-review pre { max-height: 220px; overflow: auto; margin: 5px 0 8px; padding: 9px; border-radius: 7px; background: #f7f5ef; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.55 "SF Mono", ui-monospace, Menlo, monospace; }
+.workspace-review details { border-top: 1px solid var(--line); padding: 6px 0; }
 .timeline { flex: 1; overflow-y: auto; padding: 12px 28px 20px; }
 .timeline::-webkit-scrollbar { width: 6px; }
 .timeline::-webkit-scrollbar-thumb { background: #dcdad2; border-radius: 99px; }
