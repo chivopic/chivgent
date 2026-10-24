@@ -5,6 +5,8 @@ export const IPC = {
   start: "desktop:start",
   interrupt: "desktop:interrupt",
   approvalRespond: "desktop:approval-respond",
+  workspaceReview: "desktop:workspace-review",
+  openWorkspaceFile: "desktop:open-workspace-file",
   event: "desktop:event",
   hostStatus: "desktop:host-status",
 } as const;

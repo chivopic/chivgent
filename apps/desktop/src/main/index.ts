@@ -1,5 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import { join } from "node:path";
+import { stat } from "node:fs/promises";
+import { normalizeRelativePath, rejectExplicitDirectorySymlink, resolveExistingPath } from "../../../../src/workspace/paths.js";
+import { isForbiddenDesktopReviewPath } from "../workspace-policy.js";
+import { activeWorkspaceAfterHostReply } from "./workspace-selection.js";
 import { randomUUID } from "node:crypto";
 import { IPC } from "../protocol/channels.js";
 import {
@@ -14,6 +18,7 @@ import { RendererLifecycle } from "./renderer-lifecycle.js";
 
 let mainWindow: BrowserWindow | undefined;
 let quitting = false;
+let activeWorkspacePath: string | undefined;
 const bridge: HostBridge = createHostBridge();
 const pendingApprovals = new Map<string, Extract<HostToMain, { type: "approval" }>>();
 const rendererLifecycle = new RendererLifecycle();
@@ -131,11 +136,34 @@ function installIpc(): void {
     if (result.ok && result.value.type === "approval-responded") pendingApprovals.delete(request.approvalId);
     return result;
   });
+  ipcMain.handle(IPC.workspaceReview, async (event, payload: unknown) => {
+    assertSender(event.sender);
+    const request = validateMainToHost({ ...(typeof payload === "object" && payload !== null ? payload : {}), type: "workspace-review" });
+    if (typeof request === "string" || request.type !== "workspace-review") return failure("bad_request", typeof request === "string" ? request : "Invalid workspace review.");
+    return callHost(request);
+  });
+  ipcMain.handle(IPC.openWorkspaceFile, async (event, payload: unknown) => {
+    assertSender(event.sender);
+    if (typeof payload !== "object" || payload === null) return failure("bad_request", "Invalid workspace file.");
+    const data = payload as { projectPath?: unknown; relativePath?: unknown };
+    if (typeof activeWorkspacePath !== "string" || data.projectPath !== activeWorkspacePath || typeof data.relativePath !== "string" || data.relativePath.length === 0) return failure("bad_request", "Invalid workspace file path.");
+    try {
+      if (isForbiddenDesktopReviewPath(data.relativePath)) return failure("unsafe_path", "此路径属于受保护的工作区内容。");
+      normalizeRelativePath(activeWorkspacePath, data.relativePath);
+      const resolved = await resolveExistingPath(activeWorkspacePath, data.relativePath);
+      await rejectExplicitDirectorySymlink(activeWorkspacePath, resolved, data.relativePath);
+      const target = resolved.realTarget;
+      if (!(await stat(target)).isFile()) return failure("unsafe_path", "目标文件不在当前项目内，或不是普通文件。");
+      shell.showItemInFolder(target);
+      return { ok: true, value: { opened: true } };
+    } catch (error: unknown) { return failure("open_failed", error instanceof Error ? error.message : "无法在文件管理器中显示文件。"); }
+  });
 }
 
 async function callHost(message: Parameters<HostBridge["request"]>[0]): Promise<IpcResult<HostToMain>> {
   try {
     const value = await bridge.request(message);
+    activeWorkspacePath = activeWorkspaceAfterHostReply(activeWorkspacePath, value);
     if (value.type === "error") {
       return failure(value.code, value.message);
     }

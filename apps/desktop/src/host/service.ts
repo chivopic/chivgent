@@ -8,6 +8,7 @@ import type { AppliedCompaction } from "@chivgent/context/context-manager.ts";
 import type { PermissionMode, PermissionApproval } from "@chivgent/permissions.ts";
 import { ApprovalBroker } from "./approval-broker.js";
 import { DesktopHistory, readLastProject, saveLastProject, type DesktopApprovalHistoryEvent, type HistoryEvent, type LoadedHistory } from "./history.js";
+import { readWorkspaceReview } from "./workspace-review.js";
 import {
   acceptedRequestLimit,
   DESKTOP_PROTOCOL_VERSION,
@@ -160,6 +161,9 @@ export class HostService {
         return;
       case "approval-respond":
         this.respondApproval(request);
+        return;
+      case "workspace-review":
+        void this.reviewWorkspace(request.requestId, request.projectPath);
         return;
       case "shutdown":
         void this.shutdown(request.requestId);
@@ -537,6 +541,20 @@ export class HostService {
       }
     }
     this.send({ type: "approval-responded", requestId: request.requestId, accepted });
+  }
+
+  private async reviewWorkspace(requestId: string, requestedPath: string): Promise<void> {
+    const selected = this.projectPath;
+    if (selected === undefined || requestedPath !== selected) {
+      this.send({ type: "error", requestId, code: "project_mismatch", message: "项目已切换，请刷新工作区改动。" });
+      return;
+    }
+    try {
+      const review = await readWorkspaceReview(selected);
+      this.send({ type: "workspace-review", requestId, projectPath: selected, review });
+    } catch (error: unknown) {
+      this.send({ type: "error", requestId, code: "workspace_review_failed", message: error instanceof Error ? error.message : "无法读取工作区改动。" });
+    }
   }
 }
 
