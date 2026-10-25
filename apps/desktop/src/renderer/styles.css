@@ -101,6 +101,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .send:not(:disabled):hover { background: #211f1b; transform: translateY(-1px); }
 .send:disabled { background: #e5e1d8; color: #a5a095; cursor: default; }
 .send.stop { background: #9a5d4b; }
+.stop-icon { width: 11px; height: 11px; border-radius: 2px; background: currentColor; }
 .dot { width: 7px; height: 7px; border-radius: 99px; background: #b9b4aa; flex: none; }
 .dot.ready { background: #779783; }.dot.run { background: #bd8061; }.dot.stop { background: #a58b56; }.dot.bad { background: #b96c61; }
 .reopen-sidebar { position: absolute; z-index: 2; top: 13px; left: 15px; width: 31px; height: 31px; border: 1px solid var(--line); border-radius: 8px; background: #f7f6f1; color: #77736b; }
