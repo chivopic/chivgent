@@ -81,8 +81,18 @@ function fakeRemoteSocket(blocked = false, failWrites = false, asyncErrorAfterWr
   };
 }
 
-async function temporaryDirectory(): Promise<string> {
-  const directory = await mkdtemp(path.join(tmpdir(), "chivgent-remote-"));
+async function temporaryDirectory(prefix = "cg-"): Promise<string> {
+  // macOS's default TMPDIR can leave no room for the session id and socket
+  // suffix. Keep socket fixtures isolated under a short, owned system path.
+  let parent: string;
+  if (process.platform === "darwin") {
+    parent = "/private/tmp";
+  } else if (process.platform === "win32") {
+    parent = tmpdir();
+  } else {
+    parent = "/tmp";
+  }
+  const directory = await mkdtemp(path.join(parent, prefix));
   temporaryDirectories.push(directory);
   return directory;
 }
@@ -231,17 +241,21 @@ async function attach(
 }
 
 afterEach(async () => {
-  for (const client of clients.splice(0)) {
-    client.close();
-  }
-  for (const server of servers.splice(0)) {
-    await server.close();
-  }
-  await Promise.all(
+  const closeResults = await Promise.allSettled([
+    ...clients.splice(0).map(async (client) => client.close()),
+    ...servers.splice(0).map((server) => server.close()),
+  ]);
+  const removeResults = await Promise.allSettled(
     temporaryDirectories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true }),
     ),
   );
+  const failure = [...closeResults, ...removeResults].find(
+    (result) => result.status === "rejected",
+  );
+  if (failure?.status === "rejected") {
+    throw failure.reason;
+  }
 });
 
 describe("LineDecoder", () => {
@@ -347,6 +361,32 @@ describe("protocol validation", () => {
 });
 
 describe("socket paths", () => {
+  it.skipIf(process.platform === "win32")(
+    "uses a short socket fixture root when TMPDIR has a long prefix",
+    async () => {
+      const longPrefix = `chivgent-${"x".repeat(70)}-`;
+      const longRoot = await mkdtemp(path.join(tmpdir(), longPrefix));
+      temporaryDirectories.push(longRoot);
+      const session = createSession();
+      const wouldBeSocketPath = path.join(longRoot, `${session.id}.sock`);
+
+      expect(() => assertSocketPathFits(wouldBeSocketPath)).toThrow(SocketPathTooLongError);
+
+      vi.stubEnv("TMPDIR", longRoot);
+      try {
+        expect(tmpdir()).toBe(longRoot);
+
+        const directory = await temporaryDirectory("remote-");
+        const server = await serve(session, directory);
+
+        expect(() => assertSocketPathFits(server.socketPath)).not.toThrow();
+        expect(server.socketPath.startsWith(longRoot)).toBe(false);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
   it("accepts an id or an explicit path", () => {
     expect(resolveSocketTarget("/tmp/x/y.sock")).toBe("/tmp/x/y.sock");
     expect(resolveSocketTarget("abc", { CHIVGENT_HOME: "/home/x" })).toBe(
