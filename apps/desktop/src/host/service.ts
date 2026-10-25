@@ -5,7 +5,9 @@ import type { Agent } from "@chivgent/agent.ts";
 import type { AgentEvent } from "@chivgent/events.ts";
 import type { Message } from "@chivgent/messages.ts";
 import type { AppliedCompaction } from "@chivgent/context/context-manager.ts";
-import { DesktopHistory, readLastProject, saveLastProject, type HistoryEvent, type LoadedHistory } from "./history.js";
+import type { PermissionMode, PermissionApproval } from "@chivgent/permissions.ts";
+import { ApprovalBroker } from "./approval-broker.js";
+import { DesktopHistory, readLastProject, saveLastProject, type DesktopApprovalHistoryEvent, type HistoryEvent, type LoadedHistory } from "./history.js";
 import {
   acceptedRequestLimit,
   DESKTOP_PROTOCOL_VERSION,
@@ -14,6 +16,7 @@ import {
   type HostToMain,
   type SaveProviderProfileRequest,
   type StartRequest,
+  type ApprovalRespondRequest,
 } from "../protocol/messages.js";
 import { DesktopProviderConfig, type DesktopProviderProfile } from "./provider-config.js";
 
@@ -24,6 +27,7 @@ export interface AcceptedStart {
   readonly projectPath?: string;
   readonly provider?: string;
   readonly model?: string;
+  readonly permissionMode?: "read-only" | "ask-first" | "workspace";
 }
 
 export interface HostServiceOptions {
@@ -35,6 +39,7 @@ export interface HostServiceOptions {
   readonly createId?: () => string;
   readonly historyDirectory?: string;
   readonly providerConfigDirectory?: string;
+  readonly permissionMode?: "read-only" | "ask-first" | "workspace";
 }
 
 export interface RuntimeSession {
@@ -42,6 +47,7 @@ export interface RuntimeSession {
   readonly compactionCheckpoint?: AppliedCompaction;
   prompt(text: string, options: { signal: AbortSignal }): Promise<unknown>;
   subscribe(listener: (event: AgentEvent) => void): () => void;
+  close?(): Promise<void>;
 }
 
 export interface RuntimeSessionResult {
@@ -57,6 +63,8 @@ export type SessionFactory = (
   model: string | undefined,
   messages: readonly Message[] | undefined,
   compaction: AppliedCompaction | undefined,
+  permissionMode: PermissionMode | undefined,
+  approval: PermissionApproval | undefined,
   profile?: DesktopProviderProfile,
 ) => Promise<RuntimeSessionResult>;
 
@@ -79,12 +87,18 @@ export class HostService {
   private projectPath: string | undefined;
   private session: RuntimeSessionResult | undefined;
   private sessionConfigKey: string | undefined;
+  private cachedMessages: readonly Message[] | undefined;
+  private cachedCompaction: AppliedCompaction | undefined;
   private readonly historyDirectory: string | undefined;
   private readonly providerConfig: DesktopProviderConfig | undefined;
   private history: DesktopHistory | undefined;
   private loadedHistory: LoadedHistory | undefined;
   private timelineEvents: HistoryEvent[] = [];
   private historyNotice: string | undefined;
+  private approvalBroker: ApprovalBroker | undefined;
+  private pendingApprovals = new Map<string, { runId: string; action: string; context: string }>();
+  private journalFailed = false;
+  private readonly permissionMode: "read-only" | "ask-first" | "workspace";
 
   constructor(options: HostServiceOptions) {
     this.send = options.send;
@@ -93,6 +107,7 @@ export class HostService {
     this.createId = options.createId ?? (() => randomBytes(8).toString("hex"));
     this.historyDirectory = options.historyDirectory;
     this.providerConfig = options.providerConfigDirectory === undefined ? undefined : new DesktopProviderConfig(options.providerConfigDirectory);
+    this.permissionMode = options.permissionMode ?? "read-only";
     this.defaultProvider = options.defaultProvider || "openai";
     this.compatibleBaseURL = safeEndpoint(options.compatibleBaseURL);
     this.instanceId = `host-${this.createId()}`;
@@ -143,6 +158,9 @@ export class HostService {
       case "interrupt":
         this.interrupt(request.requestId, request.runId);
         return;
+      case "approval-respond":
+        this.respondApproval(request);
+        return;
       case "shutdown":
         void this.shutdown(request.requestId);
         return;
@@ -153,6 +171,7 @@ export class HostService {
     this.closed = true;
     const active = this.active;
     if (active !== undefined) {
+      this.cancelPendingApprovals();
       active.controller.abort();
       await Promise.race([
         active.done,
@@ -160,13 +179,15 @@ export class HostService {
       ]);
     }
     this.history?.close();
+    await closeRuntimeSession(this.session);
+    this.session = undefined;
     this.send({ type: "shutdown_ack", requestId });
   }
 
   private start(request: StartRequest): void {
     const previous = this.accepted.get(request.requestId);
     if (previous !== undefined) {
-      if (previous.prompt !== request.prompt || previous.projectPath !== this.projectPath || previous.provider !== request.provider || previous.model !== request.model) {
+      if (previous.prompt !== request.prompt || previous.projectPath !== this.projectPath || previous.provider !== request.provider || previous.model !== request.model || previous.permissionMode !== request.permissionMode) {
         this.send({
           type: "error",
           requestId: request.requestId,
@@ -214,6 +235,7 @@ export class HostService {
       ...(this.projectPath === undefined ? {} : { projectPath: this.projectPath }),
       ...(request.provider === undefined ? {} : { provider: request.provider }),
       ...(request.model === undefined ? {} : { model: request.model }),
+      ...(request.permissionMode === undefined ? {} : { permissionMode: request.permissionMode }),
     };
     this.accepted.set(request.requestId, accepted);
     try {
@@ -224,6 +246,7 @@ export class HostService {
       return;
     }
     const controller = new AbortController();
+    this.journalFailed = false;
     let resolveDone: () => void = () => {};
     const done = new Promise<void>((resolve) => {
       resolveDone = resolve;
@@ -244,6 +267,8 @@ export class HostService {
         // Streaming text stays in host memory for refresh snapshots; terminal and tool state is journaled.
         if (event.type !== "message_update") this.history?.appendEvent(stored);
       } catch (error: unknown) {
+        this.journalFailed = true;
+        controller.abort();
         this.send({ type: "error", runId, code: "history_write_failed", message: `历史保存失败：${error instanceof Error ? error.message : "未知错误"}` });
       }
       this.send({
@@ -260,17 +285,30 @@ export class HostService {
       if (this.createSession !== undefined) {
         const profile = request.provider === undefined ? undefined : (await this.providerConfig?.read())?.[request.provider];
         const profileKeyFingerprint = profile === undefined ? null : createHash("sha256").update(profile.apiKey).digest("hex");
-        const configKey = JSON.stringify([request.provider ?? null, request.model ?? null, profile?.model ?? null, profile?.baseURL ?? null, profileKeyFingerprint]);
+        const mode = request.permissionMode ?? this.permissionMode;
+        // A new session binds approvals to this run's abort signal and broker.
+        const configKey = JSON.stringify([request.provider ?? null, request.model ?? null, profile?.model ?? null, profile?.baseURL ?? null, profileKeyFingerprint, mode, runId]);
         if (this.session === undefined || this.sessionConfigKey !== configKey) {
-          const messages = this.session?.session.messages ?? this.loadedHistory?.messages;
-          const compaction = this.session?.session.compactionCheckpoint ?? this.loadedHistory?.compaction;
-          const pendingSession = this.createSession(this.projectPath!, request.provider, request.model ?? profile?.model, messages, compaction, profile);
+          const previousSession = this.session;
+          const messages = previousSession?.session.messages ?? this.cachedMessages ?? this.loadedHistory?.messages;
+          const compaction = previousSession?.session.compactionCheckpoint ?? this.cachedCompaction ?? this.loadedHistory?.compaction;
+          if (previousSession !== undefined) {
+            this.session = undefined;
+            await closeRuntimeSession(previousSession);
+          }
+          const approval = mode === "ask-first" ? this.createApprovalHandler(runId, controller.signal) : undefined;
+          const pendingSession = this.createSession(this.projectPath!, request.provider, request.model ?? profile?.model, messages, compaction,
+            mode === "read-only" ? undefined : mode, approval, profile);
           const initialized = await awaitWithAbort(pendingSession, controller.signal);
           if (initialized.aborted) {
+            void pendingSession.then((late) => closeRuntimeSession(late)).catch(() => {});
             this.send({ type: "error", requestId: request.requestId, runId, code: "cancelled", message: "运行已停止。" });
             return;
           }
-          if (this.active?.runId !== runId || controller.signal.aborted || this.closed) return;
+          if (this.active?.runId !== runId || controller.signal.aborted || this.closed) {
+            await closeRuntimeSession(initialized.value);
+            return;
+          }
           this.session = initialized.value;
           this.sessionConfigKey = configKey;
           const baseURL = safeEndpoint(this.session.baseURL);
@@ -285,10 +323,18 @@ export class HostService {
         try {
           await this.session.session.prompt(request.prompt, { signal: controller.signal });
           this.history?.saveContext(this.session.session.messages, this.session.session.compactionCheckpoint);
+          this.cachedMessages = this.session.session.messages;
+          this.cachedCompaction = this.session.session.compactionCheckpoint;
+          this.loadedHistory = this.history?.snapshot() ?? this.loadedHistory;
           const terminal = [...this.timelineEvents].reverse().find((item) => item.runId === runId && item.event.type === "agent_end");
           const status = terminal?.event.type === "agent_end" && terminal.event.status === "completed" ? "completed" : "interrupted";
           this.history?.saveRun({ type: "run", runId, prompt: request.prompt, status });
-        } finally { unsubscribe(); }
+        } finally {
+          unsubscribe();
+          const current = this.session;
+          this.session = undefined;
+          await closeRuntimeSession(current);
+        }
       } else {
         await this.createAgent(onEvent, this.projectPath).run(request.prompt, { signal: controller.signal });
       }
@@ -305,6 +351,8 @@ export class HostService {
         });
       })
       .finally(() => {
+        this.cancelPendingApprovals();
+        this.approvalBroker = undefined;
         if (this.active?.runId === runId) {
           this.active = undefined;
         }
@@ -343,6 +391,8 @@ export class HostService {
         throw error;
       }
       this.history?.close();
+      await closeRuntimeSession(this.session);
+      this.session = undefined;
       this.history = nextHistory;
       this.projectPath = canonical;
       this.historyNotice = undefined;
@@ -351,6 +401,8 @@ export class HostService {
       this.sequence = Math.max(this.sequence, ...this.timelineEvents.map((event) => event.sequence), 0);
       this.session = undefined;
       this.sessionConfigKey = undefined;
+      this.cachedMessages = undefined;
+      this.cachedCompaction = undefined;
       this.send({ type: "project-selected", requestId, path: canonical });
     } catch (error: unknown) {
       this.send({ type: "error", requestId, code: "invalid_project", message: error instanceof Error ? error.message : "无法打开项目目录。" });
@@ -398,6 +450,7 @@ export class HostService {
       events: events.map(({ sequence, runId, event }) => ({ sequence, runId, event })),
       ...(currentRun === undefined ? {} : { run: currentRun }),
       runs,
+      pendingApprovals: [...this.pendingApprovals].map(([approvalId, approval]) => ({ type: "approval" as const, hostInstanceId: this.instanceId, sessionId: history.sessionId, approvalId, ...approval })),
       incomplete: history.incomplete,
       corruption: history.corruption,
     };
@@ -411,6 +464,7 @@ export class HostService {
     const active = this.active;
     const accepted = active !== undefined && active.runId === runId;
     if (accepted) {
+      this.cancelPendingApprovals();
       active.controller.abort();
     }
     this.send({
@@ -419,6 +473,70 @@ export class HostService {
       runId,
       accepted,
     });
+  }
+
+  private createApprovalHandler(runId: string, signal: AbortSignal): PermissionApproval {
+    const broker = new ApprovalBroker((request) => {
+      if (this.journalFailed || this.history === undefined || this.active?.runId !== runId || signal.aborted) throw new Error("No durable approval journal is available.");
+      const sequence = ++this.sequence;
+      const event: HistoryEvent = { type: "event", sequence, runId, event: { type: "approval_requested", approvalId: request.approvalId, action: request.action, context: request.context } satisfies DesktopApprovalHistoryEvent };
+      try { this.history.appendEvent(event); }
+      catch (error) {
+        this.journalFailed = true;
+        this.active?.controller.abort();
+        throw error;
+      }
+      this.timelineEvents.push(event);
+      this.pendingApprovals.set(request.approvalId, { runId, action: request.action, context: request.context });
+      try { this.send({ type: "approval", hostInstanceId: this.instanceId, sessionId: this.sessionId(), runId, ...request }); }
+      catch (error) { this.pendingApprovals.delete(request.approvalId); throw error; }
+    });
+    this.approvalBroker?.close();
+    this.approvalBroker = broker;
+    return (action, approvalSignal, context) => broker.request({
+      approvalId: `approval-${this.createId()}`,
+      action,
+      context: `${context ?? "Workspace file change"} · ${this.projectPath ?? "项目目录不可用"}`,
+      signal: approvalSignal,
+    });
+  }
+
+  private cancelPendingApprovals(): void {
+    for (const [approvalId, pending] of this.pendingApprovals) {
+      try {
+        const sequence = ++this.sequence;
+        const event: HistoryEvent = { type: "event", sequence, runId: pending.runId, event: { type: "approval_decision", approvalId, approved: false, reason: "cancelled" } satisfies DesktopApprovalHistoryEvent };
+        this.history?.appendEvent(event);
+        this.timelineEvents.push(event);
+      } catch {
+        this.journalFailed = true;
+      }
+      this.pendingApprovals.delete(approvalId);
+    }
+    this.approvalBroker?.close();
+  }
+
+  private respondApproval(request: ApprovalRespondRequest): void {
+    const item = this.pendingApprovals.get(request.approvalId);
+    let accepted = item !== undefined && item.runId === request.runId && this.active?.runId === request.runId &&
+      this.instanceId === request.hostInstanceId && this.sessionId() === request.sessionId && !this.closed && !this.journalFailed;
+    if (accepted) {
+      try {
+        const sequence = ++this.sequence;
+        const event: HistoryEvent = { type: "event", sequence, runId: request.runId, event: { type: "approval_decision", approvalId: request.approvalId, approved: request.approved } satisfies DesktopApprovalHistoryEvent };
+        this.history?.appendEvent(event);
+        this.timelineEvents.push(event);
+        this.pendingApprovals.delete(request.approvalId);
+        this.approvalBroker?.respond(request.approvalId, request.approved);
+      } catch {
+        accepted = false;
+        this.journalFailed = true;
+        this.active?.controller.abort();
+        this.pendingApprovals.delete(request.approvalId);
+        this.approvalBroker?.respond(request.approvalId, false);
+      }
+    }
+    this.send({ type: "approval-responded", requestId: request.requestId, accepted });
   }
 }
 
@@ -442,6 +560,10 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+async function closeRuntimeSession(session: RuntimeSessionResult | undefined): Promise<void> {
+  try { await session?.session.close?.(); } catch { /* Closing a failed or interrupted runtime is best effort. */ }
 }
 
 async function awaitWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<{ aborted: true } | { aborted: false; value: T }> {

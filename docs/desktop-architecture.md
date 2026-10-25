@@ -2,7 +2,7 @@
 
 更新：2026-10-19。状态：P1 首批真实只读运行已实现；#68 的单项目历史与最小恢复首批已实现，完整任务导航、旧 CLI 导入及 M1 后续能力仍未实现。
 
-默认运行真实 Agent。用户通过 main process 原生目录对话框选择项目；host 解析规范路径并为其创建只读 `AgentSession`，复用 CLI Provider、凭证解析、流式事件与 `list_files`、`search_text`、`read_file`、`update_plan` 工具。Provider、模型、兼容 endpoint 与 API key 可从会话设置配置。Renderer 只在密码输入框中短暂持有新输入；Node host 将 Provider 配置保存到应用 userData 的 `desktop-config-v1/provider-profiles.json`，目录权限为 0700、文件为 0600，状态读取不返回 key。配置不写入 CLI `auth.json`。环境 key 优先，其次 CLI `auth.json`，最后是该 Provider 的桌面 key。OAuth 刷新、项目写入、Shell 均未接入。
+默认运行真实 Agent，权限模式默认为只读。用户通过 main process 原生目录对话框选择项目；host 解析规范路径并为其创建 `AgentSession`，复用 CLI Provider、凭证解析、流式事件与文件工具。用户可在本次运行选择只读、逐项审批写入或工作区自动写入；逐项审批由 host 校验并在执行前可靠记录。Shell 仍未接入。Provider、模型、兼容 endpoint、API key 与权限模式可从会话设置配置。Renderer 只在密码输入框中短暂持有新输入；Node host 将 Provider 配置保存到应用 userData 的 `desktop-config-v1/provider-profiles.json`，目录权限为 0700、文件为 0600，状态读取不返回 key。配置不写入 CLI `auth.json`。环境 key 优先，其次 CLI `auth.json`，最后是该 Provider 的桌面 key。OAuth 刷新仍未接入。
 
 每个项目当前提供一个最小会话，支持多轮上下文；切换到有历史的项目会恢复其会话，首次打开才开始新上下文，运行期间不能切换。Provider/model 改变时用旧 transcript 重建 session。真实运行现在把当前项目及版本化运行记录保存在应用 userData 下的 `desktop-history-v1`；可用 `CHIVGENT_DESKTOP_HISTORY_DIR` 为验证指定隔离目录。host 初始化时恢复所选项目的原子快照；Renderer 刷新不重新提交任务，重启只读取历史和上下文，不自动运行模型或工具。未结束运行显示 interrupted/unknown；未完成工具提示检查工作区。运行期间 host 退出、host 失败或当前 run 报错时，仍为 running 的工具立即显示“结果未知”，保留已有工具输出和部分回答；已完成或已报错的工具保持原状态。历史损坏和写入失败会显示错误，损坏日志保持只读。记录不含凭证配置字段，序列化内容会对常见 token/key 形态脱敏。离线演示仅在显式设置 `CHIVGENT_DESKTOP_DEMO=1` 时启用，当前 demo 路径不持久化。macOS arm64 `.app` 本地打包未签名；这不代表公开发布或签名/安装包已通过 CI；当前桌面 CI 范围以 [workflow](../.github/workflows/ci.yml) 为准。完整恢复与 CLI 兼容仍见 [#68](https://github.com/chivopic/chivgent/issues/68)，UI 后续见 [#69](https://github.com/chivopic/chivgent/issues/69)。
 
@@ -154,11 +154,11 @@ UI 叫“任务/会话”；内部沿用 Session 和 Run，对应 Thread/Turn �
 
 桌面首次配置保存每个 Provider 的模型、key 与兼容 endpoint（仅 `openai-compatible` 可设置 endpoint）。已有 profile 更新模型或 endpoint 时可以留空 key，Node 侧保留原 key。key 位于应用 userData 的独立 profile 文件中，不写入会话历史或 CLI `auth.json`；运行时 key 解析仍是 Provider 环境变量 → CLI `auth.json` → 桌面 profile。Renderer 可写入 key，但只读取 Provider/model/endpoint/是否已配置的脱敏状态。配置文件损坏时，host 保持可启动并报告不含密钥的修复提示；首次恢复保存到独立 recovery 文件，原损坏文件保留，其他不可读取的 profile 需要重新录入。
 
-每次运行冻结有效配置：Provider、model、endpoint、cwd、工具写权限、Shell 启用/后端/网络策略、审批策略与上下文预算。快照只记录凭证引用，不保存密钥。
+每次运行冻结有效配置：Provider、model、endpoint、cwd、写入权限模式、Shell 状态与上下文预算。Desktop 默认只读；`ask-first` 对每次文件变更单独请求审批；`workspace` 允许项目工作区内的文件变更。当前 Shell 仍关闭。模式只随本次运行请求发送，不写入历史，也不从恢复记录读取；应用重启后回到只读。快照只记录凭证引用，不保存密钥。
 
 界面将下一轮 Provider/model 选择与最近一次实际运行的有效配置分开展示：会话设置入口允许选择 Provider 和模型覆盖，切换 Provider 会清除模型覆盖；运行期间仍可打开设置查看当前有效配置，但不能修改选择。endpoint 与完整配置仅在设置详情中可见。项目名称是项目详情入口，详情显示 host 解析后的完整规范路径并提供复制；侧栏和对话标题不铺开重复路径。正常 Agent host 连接仅显示为可访问的状态点，连接详情按需打开；连接失败和其他需要用户处理的提示持续显示。
 
-修改模型或权限只影响下一次运行。要立即生效先停止再开始；审批回复只授权该次动作。M1 不在已有会话中切换 cwd，改用新建任务。恢复历史不能静默扩大权限，界面展示本次继续执行的有效设置。
+修改模型或权限只影响下一次运行。要立即生效先停止再开始；审批回复只授权该次文件动作。M1 不在已有会话中切换 cwd，改用新建任务。恢复历史不能静默扩大权限，界面展示本次运行的有效设置。
 
 M1 同一 host 只执行一个 Run，其他会话可查看、编辑草稿或等待；不自动排队。这只约束本应用，不声称阻止外部编辑器或其他 CLI 修改同一目录。M2 按规范化工作目录调度；不同目录可并行，同目录写任务串行或使用独立 worktree。
 
@@ -173,7 +173,7 @@ M1 同一 host 只执行一个 Run，其他会话可查看、编辑草稿或等�
 | session/create、list、read、update、resume | 创建、历史、标题/归档/配置、继续工作 |
 | session/subscribe、unsubscribe | 原子快照与后续事件 |
 | run/start、read、interrupt | 提交、查询、取消 |
-| approval/respond | 回答指定动作 |
+| approval/respond | 带 hostInstanceId/sessionId/runId/approvalId 回答指定文件动作；单次消费 |
 | provider/list、status | 模型能力与脱敏配置状态 |
 | workspace/diff、file/read | 有权限边界与容量限制的只读检查 |
 | host/shutdown | 受控停止与刷新 |
@@ -186,6 +186,8 @@ Renderer 等待 `run/start` 确认期间保留 Composer 草稿。Host 明确拒�
 
 hostInstanceId 改变后原请求结果视为未知，不跨 host 自动重试有副作用的任务。
 
+文件审批先将请求写入并同步到历史，再通知 Renderer；批准回复的身份必须匹配当前 host、Session、Run 和 Approval。host 先同步审批决定，再向 PermissionPolicy 返回批准。拒绝、取消、过期、Renderer 不可用或任一历史写入失败都会拒绝写入。Renderer 崩溃时 main 拒绝其已知未决审批；隐藏窗口保持等待。停止和 host 退出会取消未决审批。
+
 订阅在同一状态边界取得快照水位，再发送后续事件。快照包含进行中的文本、工具输出和待审批项。sequence 按 host 内每个 Session 单调递增，重建 host 后以新实例 ID 区分。界面按序去重；增量批量合并，过载明确要求重新取快照。
 
 持久化成功/失败独立于模型是否完成，不把流结束误当作历史已保存。
@@ -196,7 +198,7 @@ hostInstanceId 改变后原请求结果视为未知，不跨 host 自动重试�
 
 真实 Desktop host 使用 `apps/desktop/src/host/history.ts` 在 `desktop-history-v1` 下为规范项目路径建立稳定 Session ID 和 version-1 JSONL 日志。日志以单写入者锁保护；仅在锁内记录的 PID 已失效且回收过程独占时移除旧锁。初始化原子读取历史并带 `hostInstanceId`、`sessionId`、sequence 水位、运行事件与终态返回快照。Renderer 先订阅事件，再请求初始化；按 host/session/sequence 去重，发现缺口后重新请求快照。
 
-记录运行受理、工具事件、完成事件和 Agent 可恢复的模型上下文；流式文本只保留在 host 内存快照，不逐 token 同步写入。保存运行受理失败会拒绝该次运行；日志写失败、损坏尾行或中间记录损坏会显示恢复状态，损坏日志不继续追加。启动时从最后可靠上下文恢复后续用户主动运行；重启时将无终态运行显示为 interrupted/unknown，未完成工具结果标注需检查工作区，绝不自动重放。日志不储存 Provider 凭证配置或权限，历史恢复也不设置运行权限。项目切换、多个已完成 Run 的最小时间线可恢复；完整任务列表、重命名/归档 UI、旧 CLI 导入及跨进程幂等请求记录不在本批范围。
+记录运行受理、工具事件、审批请求/决定、完成事件和 Agent 可恢复的模型上下文；流式文本只保留在 host 内存快照，不逐 token 同步写入。保存运行受理失败会拒绝该次运行；审批请求或决定保存失败时拒绝文件变更并终止当前运行。其他日志写失败会中止当前运行，避免后续副作用。损坏日志不继续追加。启动时从最后可靠上下文恢复后续用户主动运行；重启时将无终态运行显示为 interrupted/unknown，未完成工具结果标注需检查工作区，绝不自动重放。日志不储存 Provider 凭证配置或权限，历史恢复也不设置运行权限。项目切换、多个已完成 Run 的最小时间线可恢复；完整任务列表、重命名/归档 UI、旧 CLI 导入及跨进程幂等请求记录不在本批范围。
 
 继续使用 JSONL，但分开两种读取结果：供模型恢复的上下文，与供界面展示的运行/消息/工具活动时间线。现有 `FileSessionStore.read()` 主要围绕最终消息快照，需要增加历史投影读取器。
 
@@ -220,7 +222,7 @@ hostInstanceId 改变后原请求结果视为未知，不跨 host 自动重试�
 
 ## 9. 审批、凭证与应用生命周期
 
-ShellApprovalGate 通过 host 的审批 broker 接入。审批显示命令、目录、所需权限及沙箱上下文，关联唯一 Run 与 Approval。重复/过期/跨运行回复不能执行。项目扩展仍在 import 前完成信任判定；CLI 提问和桌面审批共用判定逻辑。
+文件写入通过 host 的审批 broker 接入 `PermissionPolicy`。审批显示操作和工作区上下文，关联 host、Session、Run 与唯一 Approval。重复、过期、跨运行回复不能执行。当前 Desktop 不启用 Shell；接入前需完成命令沙箱与进程清理验收。项目扩展仍在 import 前完成信任判定；CLI 提问和桌面审批共用判定逻辑。
 
 BrowserWindow 开启 contextIsolation/sandbox，关闭 nodeIntegration。preload 暴露明确方法，主进程校验发送者与参数；Markdown 和链接按不可信内容处理。文件预览、diff、编辑器打开同样校验项目边界，不能成为任意文件读取通道。
 
@@ -231,8 +233,8 @@ Desktop 设置支持各 Provider 独立的桌面 API key；兼容 endpoint 只�
 macOS 生命周期：
 
 - 关闭窗口：隐藏窗口，主进程与 host 继续运行；Dock 可重新打开。
-- 正常关窗待审批：保持等待，发出可回到任务的通知；绝不自动批准。
-- Renderer 崩溃：未决审批失效并拒绝，其他任务按 host 状态恢复；与正常隐藏区分。
+- 正常关窗待审批：保持等待，之后可从 Dock 重新打开；绝不自动批准。当前没有待审批系统通知。
+- Renderer 崩溃：main 拒绝其已知未决审批，其他任务按 host 状态恢复；与正常隐藏区分。
 - 明确退出应用：停止任务、取消审批、清理受管命令/Docker、刷新日志，再退出。主进程等待 Agent host 的 utility process 退出后再完成应用退出；优雅关闭超时会终止 host 并有界等待其退出，仍未退出则报告清理失败并继续退出。
 - 超时退出：有界等待后记录异常结果，使用跟踪信息清理；不承诺强杀后所有状态均已落盘。
 
@@ -265,7 +267,7 @@ worktree 首批只做创建、选择、任务绑定与可恢复清理；搬移�
 | --- | --- | --- | --- |
 | P0 桌面底座 / M0 | 已实现并通过本地验证 | 单窗口、utility host、stub Agent、流式显示、停止、macOS arm64 `.app` | `npm run desktop:pack` 成功；复制到源码树外运行 [verify-packaged.mjs](../apps/desktop/scripts/verify-packaged.mjs)，12 项断言全通过：重复 initialize、IME、流式文本、文本出现后取消及光标收起、工具活动/展开、完成、host 退出与启动失败提示、关窗隐藏、退出清理。CLI `npm run check`、`npm run build` 通过；获批原生权限并设置 `TMPDIR=/private/tmp` 后 `npm test`：56 个文件，679 passed、1 skipped。Desktop `npm run desktop:test`：9 passed。产物未签名；上述验收结果来自本地；当前 CI 另有桌面单元/集成测试、构建和只读 Electron 验证。 |
 | P1 真实任务 | 首批已实现 | 最小 runtime、Provider/model 选择、目录授权、只读工具与流式会话 | `verify-readonly.mjs` 验证默认信息层级、路径详情/复制、设置与状态详情、真实 fake Provider 请求、read_file、多轮、取消、缺凭证恢复及窄窗布局；`verify-history.mjs` 验证刷新/重启/崩溃恢复、用户 Provider 选择、上下文与不自动重放；完整命令见下文 |
-| P2 执行控制 | 待实现 | 写入/网络/Shell 设置、审批、取消、关窗/退出、通知 | 允许命令能执行、拒绝无副作用；关窗任务继续；退出清理；新设置只作用下一轮 |
+| P2 执行控制 | 文件写入首批已实现；Shell 与通知仍待实现 | 只读/逐项审批/工作区写入模式、host 审批、取消与退出清理 | fake Provider 对真实临时文件覆盖批准/拒绝/取消/记录失败；Shell 沙箱运行和完整桌面生命周期仍需单独验收 |
 | P3 历史与会话 | 单项目记录与恢复首批已实现；后续仍跟踪 [#68](https://github.com/chivopic/chivgent/issues/68) | 版本化历史、host 快照、模型上下文和运行/工具恢复已实现；完整任务导航、旧 CLI 导入、标题/归档和跨 host 幂等记录待实现 | 刷新不断任务；重启恢复且不重放工具；损坏/写失败可见；后续再验收 CLI 导入与任务导航 |
 | P4 本地可用版 / M1 | Provider 首次配置已实现；其他能力仍待实现 | 侧栏、diff、预览、草稿、主题、安装完善 | 完成修复→审批→测试→检查 diff→重启继续；无源码依赖；CLI 回归通过 |
 | P5 工作台 / M2 | 待实现 | 运行中介入、持久终端、review、worktree、并行任务 | 按上一节逐项关卡交付；共用能力进入 CLI 回归 |

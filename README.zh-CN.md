@@ -25,9 +25,9 @@ chivgent 是跑在你打开的目录里的本地 agent。它要做的，是 [Cla
 
 这一类现在的默认是 auto mode。工作区内的读取、编辑，以及沙箱里的命令，直接进行。命令需要出站网络或宽泛的宿主机文件访问时会请求确认。这里这个策略叫 `workspace`。它不是另一个模型在逐条审查，也不是跳过所有边界。本地交互式 rich TUI 在没有指定权限模式或旧权限开关时默认使用 Ask for me：文件修改和命令都要确认；在空闲输入框按 Shift+Tab 可在 Plan、Auto mode 和 Ask for me 之间循环。headless、simple 和远程启动保留原有默认值。
 
-## 桌面版 — 开发中 / Coming soon
+## 桌面版 — 开发中
 
-桌面版正在开发中，将项目会话、流式回答和工具活动集中到一个简洁的本地工作台。欢迎关注[开发进展与当前能力](docs/desktop-architecture.md)。
+桌面版将项目会话、流式回答和工具活动集中到本地工作台。运行 `npm run desktop:dev` 可构建并启动。每次运行默认只读；也可选择“逐项审批”，在每次文件修改前确认，或选择“工作区写入”，允许修改所选项目目录内的文件。这些模式只控制文件工具；Shell 和命令执行仍未启用。权限选择仅对本次运行生效，应用重启后恢复只读。详见[当前行为与限制](docs/desktop-architecture.md)。
 
 ![chivgent 桌面版开发预览：chivopic 项目的简洁工作台。](product-media/desktop/01-workspace.png)
 
@@ -166,7 +166,7 @@ CHIVGENT_WEB_SEARCH_TOKEN=… chivgent --web-search https://search.example.com
 
 在已提交的代码上工作。不信任的仓库，用一份副本。
 
-这个仓库还包含 Electron 桌面应用。它通过原生目录选择器打开项目，并用同一 Agent 和只读项目工具运行已配置的 Provider。桌面端仅从环境变量或 CLI `auth.json` 读取 API Key，不保存凭证；它不会读取 `oauth.json` 或刷新订阅 OAuth 凭证。仅通过 `/login oauth` 登录的用户，使用桌面端前还需配置 API Key。选择兼容 Provider 时，请先核对界面显示的请求端点，再发送项目内容。目前每个项目保留一个会话：窗口刷新可恢复当前运行，应用重启后加载历史供用户主动续聊。中断运行标记为结果未知，不自动重放；完整历史导航和 CLI 会话导入仍待实现。设置 `CHIVGENT_DESKTOP_DEMO=1` 可显式启用离线演示。使用 `npm run desktop:dev` 开发；本地离线真实 adapter 验收运行 `npm run desktop:build && node apps/desktop/scripts/verify-readonly.mjs --allow-ui`，会打开可见窗口。重复 GUI 验收由 CI 在 Xvfb 下运行。[桌面行为与限制](docs/desktop-architecture.md)。
+这个仓库还包含 Electron 桌面应用。它通过原生目录选择器打开项目，并用同一 Agent 运行已配置的 Provider。可在应用设置中保存 Provider、模型、API Key 和兼容端点；Node host 将桌面配置保存在应用 userData 下权限仅限本用户的文件中，环境变量和 CLI `auth.json` 中的密钥优先，Renderer 与会话历史不接收已保存的密钥。每次运行默认只读；也可选择逐项审批文件修改，或允许修改所选项目目录内的文件。Shell 和命令执行仍未启用；应用重启后权限恢复只读。桌面端不会读取 `oauth.json` 或刷新订阅 OAuth 凭证。仅通过 `/login oauth` 登录的用户，使用桌面端前还需配置 API Key。选择兼容 Provider 时，请先核对界面显示的请求端点，再发送项目内容。目前每个项目保留一个会话：窗口刷新可恢复当前运行，应用重启后加载历史供用户主动续聊。中断运行标记为结果未知，不自动重放；完整历史导航和 CLI 会话导入仍待实现。设置 `CHIVGENT_DESKTOP_DEMO=1` 可显式启用离线演示。使用 `npm run desktop:dev` 开发；本地离线真实 adapter 验收运行 `npm run desktop:build && node apps/desktop/scripts/verify-readonly.mjs --allow-ui`，会打开可见窗口。重复 GUI 验收由 CI 在 Xvfb 下运行。[桌面行为与限制](docs/desktop-architecture.md)。
 
 ## 文档
 

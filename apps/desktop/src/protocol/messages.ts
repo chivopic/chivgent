@@ -35,6 +35,17 @@ export interface StartRequest {
   readonly prompt: string;
   readonly provider?: string;
   readonly model?: string;
+  readonly permissionMode?: "read-only" | "ask-first" | "workspace";
+}
+
+export interface ApprovalRespondRequest {
+  readonly type: "approval-respond";
+  readonly requestId: string;
+  readonly hostInstanceId: string;
+  readonly sessionId: string;
+  readonly runId: string;
+  readonly approvalId: string;
+  readonly approved: boolean;
 }
 
 export interface SelectProjectRequest {
@@ -69,6 +80,7 @@ export type MainToHost =
   | SaveProviderProfileRequest
   | StartRequest
   | InterruptRequest
+  | ApprovalRespondRequest
   | ShutdownRequest;
 
 export interface InitializedMessage {
@@ -93,6 +105,7 @@ export interface SessionSnapshot {
   readonly events: readonly { readonly sequence: number; readonly runId: string; readonly event: AgentEventPayload }[];
   readonly run?: { readonly runId: string; readonly status: "started" | "running" | "completed" | "interrupted" | "unknown"; readonly prompt: string };
   readonly runs?: readonly { readonly runId: string; readonly status: "started" | "running" | "completed" | "interrupted" | "unknown"; readonly prompt: string }[];
+  readonly pendingApprovals?: readonly ApprovalMessage[];
   readonly incomplete: boolean;
   readonly corruption: "tail" | "middle" | null;
 }
@@ -134,6 +147,22 @@ export interface ShutdownAckMessage {
   readonly requestId: string;
 }
 
+export interface ApprovalMessage {
+  readonly type: "approval";
+  readonly hostInstanceId: string;
+  readonly sessionId: string;
+  readonly runId: string;
+  readonly approvalId: string;
+  readonly action: string;
+  readonly context: string;
+}
+
+export interface ApprovalRespondedMessage {
+  readonly type: "approval-responded";
+  readonly requestId: string;
+  readonly accepted: boolean;
+}
+
 export interface HostErrorMessage {
   readonly type: "error";
   readonly requestId?: string;
@@ -163,6 +192,8 @@ export type HostToMain =
   | StartedMessage
   | InterruptedMessage
   | ShutdownAckMessage
+  | ApprovalMessage
+  | ApprovalRespondedMessage
   | HostErrorMessage
   | DesktopEventMessage;
 
@@ -172,6 +203,10 @@ export type HostToMain =
  */
 export interface AgentEventPayload {
   readonly type: string;
+  readonly approvalId?: string;
+  readonly action?: string;
+  readonly context?: string;
+  readonly approved?: boolean;
   readonly turn?: number;
   readonly delta?: string;
   readonly prompt?: string;
@@ -248,12 +283,14 @@ export function validateMainToHost(value: unknown): MainToHost | string {
       }
       if (record.provider !== undefined && (typeof record.provider !== "string" || !/^[a-z0-9-]{1,80}$/.test(record.provider))) return "provider is invalid.";
       if (record.model !== undefined && (typeof record.model !== "string" || record.model.trim().length === 0 || record.model.length > MAX_MODEL_LENGTH)) return `model must be 1-${MAX_MODEL_LENGTH} non-empty characters.`;
+      if (record.permissionMode !== undefined && !["read-only", "ask-first", "workspace"].includes(String(record.permissionMode))) return "permissionMode is invalid.";
       return {
         type: "start",
         requestId: record.requestId,
         prompt: record.prompt,
         ...(record.provider === undefined ? {} : { provider: record.provider as string }),
         ...(record.model === undefined ? {} : { model: (record.model as string).trim() }),
+        ...(record.permissionMode === undefined ? {} : { permissionMode: record.permissionMode as StartRequest["permissionMode"] }),
       };
     case "interrupt":
       if (!isRequestId(record.runId)) {
@@ -264,6 +301,9 @@ export function validateMainToHost(value: unknown): MainToHost | string {
         requestId: record.requestId,
         runId: record.runId,
       };
+    case "approval-respond":
+      if (!isRequestId(record.hostInstanceId) || !isRequestId(record.sessionId) || !isRequestId(record.runId) || !isRequestId(record.approvalId) || typeof record.approved !== "boolean") return "approval response correlation or decision is invalid.";
+      return { type: "approval-respond", requestId: record.requestId, hostInstanceId: record.hostInstanceId, sessionId: record.sessionId, runId: record.runId, approvalId: record.approvalId, approved: record.approved };
     default:
       return "Unknown host request type.";
   }
@@ -311,6 +351,10 @@ export function isHostToMain(value: unknown): value is HostToMain {
       );
     case "shutdown_ack":
       return isRequestId(record.requestId);
+    case "approval-responded":
+      return isRequestId(record.requestId) && typeof record.accepted === "boolean";
+    case "approval":
+      return isRequestId(record.hostInstanceId) && isRequestId(record.sessionId) && isRequestId(record.runId) && isRequestId(record.approvalId) && typeof record.action === "string" && typeof record.context === "string";
     case "error":
       return typeof record.code === "string" && typeof record.message === "string";
     case "event":
@@ -344,5 +388,6 @@ function isSessionSnapshot(value: unknown): value is SessionSnapshot {
       Number.isSafeInteger((event as { sequence?: unknown }).sequence) && ((event as { sequence: number }).sequence > 0) && isRequestId((event as { runId?: unknown }).runId) &&
       typeof (event as { event?: unknown }).event === "object" && (event as { event?: { type?: unknown } }).event !== null && typeof (event as { event: { type?: unknown } }).event.type === "string") &&
     (item.run === undefined || validRun(item.run)) && (item.runs === undefined || (Array.isArray(item.runs) && item.runs.every(validRun))) &&
+    (item.pendingApprovals === undefined || (Array.isArray(item.pendingApprovals) && item.pendingApprovals.every((approval) => isHostToMain(approval) && approval.type === "approval"))) &&
     typeof item.incomplete === "boolean" && (item.corruption === null || item.corruption === "tail" || item.corruption === "middle");
 }

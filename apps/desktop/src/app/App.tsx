@@ -2,15 +2,16 @@ import { useEffect, useLayoutEffect, useReducer, useRef, useState, type JSX } fr
 import { nextRequestId, shouldSubmitOnEnter } from "./input.js";
 import { initialDeskState, phaseLabel, reduceDesk, type TimelineItem } from "./reduce.js";
 import { isNearBottom } from "./scroll.js";
-import { MAX_MODEL_LENGTH, MAX_PROMPT_LENGTH, type HostStatus, type HostToMain, type IpcResult } from "../protocol/messages.js";
+import { MAX_MODEL_LENGTH, MAX_PROMPT_LENGTH, type ApprovalMessage, type HostStatus, type HostToMain, type IpcResult } from "../protocol/messages.js";
 import leafMark from "./assets/chivgent-leaf-mark.png";
 
 interface DesktopApi {
   initialize(): Promise<IpcResult<HostToMain>>;
   selectProject(): Promise<IpcResult<HostToMain>>;
   saveProviderProfile(payload: { requestId: string; provider: string; model: string; apiKey?: string; baseURL?: string }): Promise<IpcResult<HostToMain>>;
-  start(payload: { requestId: string; prompt: string; provider?: string; model?: string }): Promise<IpcResult<HostToMain>>;
+  start(payload: { requestId: string; prompt: string; provider?: string; model?: string; permissionMode?: "read-only" | "ask-first" | "workspace" }): Promise<IpcResult<HostToMain>>;
   interrupt(payload: { requestId: string; runId: string }): Promise<IpcResult<HostToMain>>;
+  approvalRespond(payload: { requestId: string; hostInstanceId: string; sessionId: string; runId: string; approvalId: string; approved: boolean }): Promise<IpcResult<HostToMain>>;
   onEvent(listener: (message: HostToMain) => void): () => void;
   onHostStatus(listener: (status: HostStatus) => void): () => void;
 }
@@ -38,6 +39,8 @@ export function App(): JSX.Element {
   const [profileStatus, setProfileStatus] = useState("");
   const [providerConfigNotice, setProviderConfigNotice] = useState("");
   const [providerProfiles, setProviderProfiles] = useState<NonNullable<Extract<HostToMain, { type: "initialized" }>["providerProfiles"]>>([]);
+  const [permissionMode, setPermissionMode] = useState<"read-only" | "ask-first" | "workspace">("read-only");
+  const [pendingApprovals, setPendingApprovals] = useState<readonly ApprovalMessage[]>([]);
   const [detailPanel, setDetailPanel] = useState<"project" | "settings" | "status" | null>(null);
   const [copyPathFeedback, setCopyPathFeedback] = useState("");
   const detailsDialogRef = useRef<HTMLDialogElement>(null);
@@ -89,6 +92,7 @@ export function App(): JSX.Element {
           setProjectPath(message.snapshot.projectPath);
           eventCursorRef.current = { hostInstanceId: message.snapshot.hostInstanceId, sessionId: message.snapshot.sessionId, sequence: message.snapshot.sequence, refreshing: false };
           dispatch({ type: "hydrate", snapshot: message.snapshot });
+          setPendingApprovals(message.snapshot.pendingApprovals ?? []);
         }
       } else if (message.type === "runtime-config") {
         setRuntimeConfig({ provider: message.provider, model: message.model,
@@ -101,7 +105,10 @@ export function App(): JSX.Element {
           if (draftRevisionRef.current === startDraftRevisionRef.current) setDraft("");
           dispatch({ type: "started", runId: message.runId });
         }
+      } else if (message.type === "approval") {
+        setPendingApprovals((current) => current.some((item) => item.approvalId === message.approvalId) ? current : [...current, message]);
       } else if (message.type === "event") {
+        if (message.event.type === "agent_end") setPendingApprovals((current) => current.filter((approval) => approval.runId !== message.runId));
         const cursor = eventCursorRef.current;
         if (cursor.hostInstanceId !== "" && (message.hostInstanceId !== cursor.hostInstanceId || message.sessionId !== cursor.sessionId)) {
           if (!cursor.refreshing) {
@@ -132,6 +139,7 @@ export function App(): JSX.Element {
           event: message.event,
         });
       } else if (message.type === "error" && message.runId !== undefined) {
+        setPendingApprovals((current) => current.filter((approval) => approval.runId !== message.runId));
         // Correlate terminal errors with their run; picker errors have no runId.
         dispatch({ type: "run-error", runId: message.runId, message: message.message,
           cancelled: message.code === "cancelled" });
@@ -212,7 +220,7 @@ export function App(): JSX.Element {
     dispatch({ type: "submit", text });
     let result: IpcResult<HostToMain>;
     try {
-      result = await api.start({ requestId, prompt: text, provider, ...(model.trim() ? { model: model.trim() } : {}) });
+      result = await api.start({ requestId, prompt: text, provider, ...(model.trim() ? { model: model.trim() } : {}), permissionMode });
     } catch (error: unknown) {
       if (pendingStartRef.current === requestId) {
         pendingStartRef.current = null;
@@ -297,6 +305,23 @@ export function App(): JSX.Element {
     const result = await api.interrupt({ requestId: nextRequestId(), runId });
     if (!result.ok) {
       dispatch({ type: "fail", message: result.message });
+    } else if (result.value.type === "interrupted" && result.value.accepted) {
+      const interruptedRunId = result.value.runId;
+      setPendingApprovals((current) => current.filter((approval) => approval.runId !== interruptedRunId));
+    }
+  }
+
+  async function respondApproval(approval: ApprovalMessage, approved: boolean): Promise<void> {
+    const api = window.chivgent;
+    if (api === undefined) return;
+    const result = await api.approvalRespond({ requestId: nextRequestId(), hostInstanceId: approval.hostInstanceId, sessionId: approval.sessionId, runId: approval.runId, approvalId: approval.approvalId, approved });
+    if (!result.ok) {
+      setProjectError(`审批未发送：${result.message}`);
+      return;
+    }
+    if (result.value.type === "approval-responded") {
+      setPendingApprovals((current) => current.filter((item) => item.approvalId !== approval.approvalId));
+      if (!result.value.accepted) setProjectError("审批已失效或无法保存，动作没有获批。");
     }
   }
 
@@ -345,6 +370,11 @@ export function App(): JSX.Element {
           <div className="banner" role="status" data-testid="notice">{state.notice}</div>
         )}
         {projectError && <div className="banner" role="alert">{projectError}</div>}
+        {pendingApprovals.map((approval) => <section className="banner approval-card" key={approval.approvalId} data-testid="approval-card" aria-label="等待审批">
+          <strong>请求文件修改</strong><p>{approval.action}</p><p>{approval.context}</p>
+          <button type="button" className="secondary-action" onClick={() => void respondApproval(approval, false)}>拒绝</button>
+          <button type="button" className="secondary-action" onClick={() => void respondApproval(approval, true)}>本次允许</button>
+        </section>)}
         <dialog className="details-dialog" ref={detailsDialogRef} aria-labelledby="details-title" onClose={() => setDetailPanel(null)}>
           {detailPanel === "project" && <>
             <div className="dialog-head"><div><h2 id="details-title">项目详情</h2><p>当前项目目录</p></div><button type="button" className="dialog-close" aria-label="关闭详情" onClick={() => detailsDialogRef.current?.close()}>×</button></div>
@@ -362,6 +392,9 @@ export function App(): JSX.Element {
                 <option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="openai-compatible">OpenAI compatible</option><option value="openrouter">OpenRouter</option><option value="groq">Groq</option><option value="xai">xAI</option><option value="moonshot">Moonshot</option>
               </select></label>
               <label>Model <input aria-label="Model" data-testid="model-input" value={model} placeholder="填写 Provider 模型名称" disabled={running} onChange={(event) => setModel(event.target.value)} /></label>
+              <label>权限模式 <select aria-label="权限模式" data-testid="permission-mode" value={permissionMode} disabled={running} onChange={(event) => setPermissionMode(event.target.value as typeof permissionMode)}>
+                <option value="read-only">只读</option><option value="ask-first">逐项审批</option><option value="workspace">工作区自动写入</option>
+              </select></label>
               {provider === "openai-compatible" && <label>兼容 endpoint <input aria-label="兼容 endpoint" data-testid="compatible-endpoint" value={compatibleEndpoint} placeholder="https://example.com/v1" disabled={running} onChange={(event) => setCompatibleEndpoint(event.target.value)} /></label>}
               <label>API key <input aria-label="API key" data-testid="provider-api-key" type="password" autoComplete="new-password" value={apiKey} placeholder={providerProfiles.some((item) => item.provider === provider) ? "已保存；留空保持当前密钥" : "输入 API key"} disabled={running} onChange={(event) => setApiKey(event.target.value)} /></label>
               <button type="button" className="secondary-action" disabled={running || (apiKey.trim().length === 0 && !providerProfiles.some((item) => item.provider === provider))} onClick={() => void saveProviderProfile()}>保存 Provider 配置</button>

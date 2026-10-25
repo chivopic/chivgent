@@ -70,8 +70,10 @@ const server = createServer(async (request, response) => {
     const body = JSON.parse(raw);
     requests.push(body);
     assert.equal(body.model, "desktop-fixture");
-    assert.deepEqual(body.tools.map((tool) => tool.function.name).sort(),
-      ["list_files", "question", "read_file", "search_text", "update_plan"]);
+    const toolNames = body.tools.map((tool) => tool.function.name).sort();
+    const askFirstTools = ["apply_patch", "edit_file", "list_files", "question", "read_file", "search_text", "update_plan", "write_file"];
+    const readOnlyTools = ["list_files", "question", "read_file", "search_text", "update_plan"];
+    assert.deepEqual(toolNames, toolNames.includes("write_file") ? askFirstTools : readOnlyTools);
     response.writeHead(200, { "Content-Type": "text/event-stream" });
     const send = (delta, finish = null) => response.write(`data: ${JSON.stringify({
       id: `fixture-${requests.length}`, object: "chat.completion.chunk",
@@ -84,7 +86,17 @@ const server = createServer(async (request, response) => {
       // The client must close the live stream when the user presses Stop.
       return;
     }
-    if (last?.role === "tool") {
+    if (last?.role === "user" && last.content === "审批拒绝写入 E2E") {
+      assert.ok(toolNames.includes("write_file"), "ask-first run must expose the file write tool");
+      send({ role: "assistant", content: "准备写入", tool_calls: [{
+        index: 0, id: `write-${requests.length}`, type: "function",
+        function: { name: "write_file", arguments: JSON.stringify({ path: "approval-denied.txt", contents: "must not exist" }) },
+      }] });
+    } else if (last?.role === "tool" && last.content.includes("approval was declined or unavailable")) {
+      send({ role: "assistant", content: "已按拒绝继续，文件没有写入。" });
+    } else if (last?.role === "user" && last.content === "拒绝后继续") {
+      send({ role: "assistant", content: "下一轮仍可继续。" });
+    } else if (last?.role === "tool") {
       assert.ok(last.content.includes(marker), "read_file must return the selected project's bytes");
       send({ role: "assistant", content: `真实工具已读到 ${marker}` });
     } else if (last?.content === "继续追问") {
@@ -97,7 +109,7 @@ const server = createServer(async (request, response) => {
         function: { name: "read_file", arguments: JSON.stringify({ path: "README.md", start_line: 1, line_count: 20 }) },
       }] });
     }
-    send({}, last?.role === "tool" || last?.content === "继续追问" ? "stop" : "tool_calls");
+    send({}, last?.role === "tool" || last?.content === "继续追问" || last?.content === "拒绝后继续" ? "stop" : "tool_calls");
     response.end("data: [DONE]\n\n");
   } catch (error) {
     fixtureErrors.push(error.message);
@@ -262,7 +274,25 @@ try {
   await page.getByTestId("send").click();
   await page.getByTestId("assistant-message").filter({ hasText: "上下文仍在" }).last().waitFor({ timeout: 15_000 });
   await page.getByTestId("run-status").getByText("已完成").waitFor();
-  progress("multi-turn verified; testing missing credential recovery");
+  progress("multi-turn verified; testing ask-first denial and recovery");
+  await page.getByRole("button", { name: "设置" }).click();
+  await page.getByTestId("permission-mode").selectOption("ask-first");
+  await page.getByRole("button", { name: "完成", exact: true }).click();
+  await page.getByTestId("composer").fill("审批拒绝写入 E2E");
+  await page.getByTestId("send").click();
+  const approvalCard = page.getByTestId("approval-card");
+  await approvalCard.waitFor({ timeout: 15_000 });
+  assert.match(await approvalCard.innerText(), /approval-denied\.txt/);
+  await approvalCard.getByRole("button", { name: "拒绝" }).click();
+  await page.getByTestId("assistant-message").filter({ hasText: "已按拒绝继续" }).waitFor({ timeout: 15_000 });
+  await page.getByTestId("run-status").getByText("已完成").waitFor();
+  await assert.rejects(access(join(project, "approval-denied.txt")), { code: "ENOENT" });
+  await page.getByTestId("composer").fill("拒绝后继续");
+  await page.getByTestId("send").click();
+  await page.getByTestId("assistant-message").filter({ hasText: "下一轮仍可继续" }).waitFor({ timeout: 15_000 });
+  await page.getByTestId("run-status").getByText("已完成").waitFor();
+  await assert.rejects(access(join(project, "approval-denied.txt")), { code: "ENOENT" });
+  progress("ask-first denial left file absent and next turn completed; testing missing credential recovery");
   const beforeMissingKey = requests.length;
   await page.getByRole("button", { name: "设置" }).click();
   await page.getByTestId("provider-select").selectOption("deepseek");
@@ -355,7 +385,8 @@ try {
   progress("long project basename layout verified; closing Electron");
   await page.getByRole("button", { name: "关闭详情" }).click();
   console.log(JSON.stringify({ selectedProjectRead: true, toolOutputVisible: true,
-    multiTurn: true, missingCredentialRecovery: true, cancellation: true, continueAfterStop: true,
+    multiTurn: true, askFirstDenial: true, continueAfterApprovalDenial: true,
+    missingCredentialRecovery: true, cancellation: true, continueAfterStop: true,
     readonlyWorkspace: true, noCredentialWrites: true, minimumWindowLayout: true,
     providerRequests: requests.length }, null, 2));
 } catch (error) {
