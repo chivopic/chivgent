@@ -356,6 +356,17 @@ export function App(): JSX.Element {
     }
   }
 
+  async function recoverHost(): Promise<void> {
+    const api = window.chivgent;
+    if (api === undefined || state.host.phase === "starting") return;
+    try {
+      const result = await api.initialize();
+      if (!result.ok) dispatch({ type: "fail", message: `无法重新连接并恢复会话：${result.message}` });
+    } catch (error: unknown) {
+      dispatch({ type: "fail", message: `无法重新连接并恢复会话：${error instanceof Error ? error.message : "Agent host 没有回应。"}` });
+    }
+  }
+
   const running = state.phase === "running";
   const label = phaseLabel(state.phase, state.host);
 
@@ -400,6 +411,12 @@ export function App(): JSX.Element {
         {demoMode && <div className="banner" data-testid="demo-notice" role="status">离线演示：此模式不会读取所选项目文件，也不会连接真实 Provider。</div>}
         {state.notice !== null && (
           <div className="banner" role="status" data-testid="notice">{state.notice}</div>
+        )}
+        {(state.host.phase === "exited" || state.host.phase === "failed") && (
+          <div className="banner" role="alert" data-testid="host-recovery">
+            Agent host 已中断。恢复会重新启动 host 并读取已保存会话，不会重新提交运行。
+            <button type="button" className="secondary-action" aria-label="重新连接并恢复会话" onClick={() => void recoverHost()}>重新连接并恢复</button>
+          </div>
         )}
         {projectError && <div className="banner" role="alert">{projectError}</div>}
         {pendingApprovals.map((approval) => <section className="banner approval-card" key={approval.approvalId} data-testid="approval-card" aria-label="等待审批">

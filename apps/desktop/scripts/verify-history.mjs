@@ -169,7 +169,10 @@ try {
   await page.getByTestId('status-action').click();
   await page.getByTestId('host-status').getByText(/退出/).waitFor();
   await page.getByRole('button', { name: '关闭状态详情' }).click();
-  await page.reload();
+  const recover = page.getByTestId('host-recovery').getByRole('button', { name: '重新连接并恢复会话' });
+  await recover.waitFor();
+  if (process.argv[3]) await page.screenshot({ path: resolve(process.argv[3]) });
+  await recover.click();
   await page.locator('[data-testid="status-action"] .dot.ready').waitFor({ timeout: 15_000 });
   await page.getByTestId('status-action').click();
   await page.getByTestId('host-status').getByText('Agent host 已连接', { exact: true }).waitFor();
@@ -178,8 +181,7 @@ try {
   assert.equal(await page.getByTestId('user-message').count(), 3);
   assert.equal(requests.length, 4, 'crash recovery must never replay the interrupted prompt');
   assert.deepEqual(fixtureErrors, []);
-  if (process.argv[3]) await page.screenshot({ path: resolve(process.argv[3]) });
-  console.log(JSON.stringify({ preservedProviderSelection: true, liveReload: true, onePromptAfterReload: true, toolRestored: true, noReplay: true, restartHistory: true, resumedModelContext: true, crashedRunUnknown: true, noCrashReplay: true, readonlyWorkspace: true, noCredentialWrites: true, providerRequests: requests.length }, null, 2));
+  console.log(JSON.stringify({ preservedProviderSelection: true, liveReload: true, onePromptAfterReload: true, toolRestored: true, noReplay: true, restartHistory: true, resumedModelContext: true, crashedRunUnknown: true, explicitHostRecovery: true, noCrashReplay: true, readonlyWorkspace: true, noCredentialWrites: true, providerRequests: requests.length }, null, 2));
 } catch (error) {
   runError = error;
 } finally {
