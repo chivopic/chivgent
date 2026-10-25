@@ -1,4 +1,4 @@
-# chivgent 1.2.0
+# chivgent 1.1.4
 
 This release adds structured questions in local interactive sessions and a way
 to read truncated shell output. It also fixes shell approval handling, bounds
@@ -77,7 +77,7 @@ chivgent update --check
 chivgent update
 ```
 
-Or install explicitly with `npm install -g chivgent@1.2.0` after publication.
+Or install explicitly with `npm install -g chivgent@1.1.4` after publication.
 Node.js 22 or newer is required.
 
 ## Release preparation

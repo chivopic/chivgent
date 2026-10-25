@@ -1,6 +1,6 @@
 {
   "name": "chivgent",
-  "version": "1.2.0",
+  "version": "1.1.4",
   "description": "A terminal coding agent with a streaming TUI and configurable AI providers.",
   "license": "MIT",
   "repository": {
