@@ -444,7 +444,7 @@ export function App(): JSX.Element {
           <div className="composer-bar">
             {running ? (
               <button type="button" className="send stop" data-testid="stop" aria-label="停止当前运行" onClick={() => void stop()}>
-                停止
+                <span className="stop-icon" aria-hidden="true" />
               </button>
             ) : (
               <button

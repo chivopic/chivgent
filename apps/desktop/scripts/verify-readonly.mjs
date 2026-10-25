@@ -304,6 +304,18 @@ try {
   });
   await page.getByText("运行期间不能切换项目。").waitFor();
   await page.getByTestId("stop").waitFor({ state: "visible" });
+  assert.equal(await page.getByTestId("stop").innerText(), "", "the stop control should use an icon rather than cramped text");
+  assert.equal(await page.getByTestId("stop").getAttribute("aria-label"), "停止当前运行");
+  assert.ok(await page.getByTestId("stop").evaluate((button) => {
+    const icon = button.querySelector(".stop-icon");
+    if (!icon) return false;
+    const buttonBounds = button.getBoundingClientRect();
+    const iconBounds = icon.getBoundingClientRect();
+    return iconBounds.width >= 10 && iconBounds.width === iconBounds.height &&
+      iconBounds.left >= buttonBounds.left && iconBounds.right <= buttonBounds.right &&
+      iconBounds.top >= buttonBounds.top && iconBounds.bottom <= buttonBounds.bottom;
+  }), "the square stop icon should fit inside its button");
+  if (process.argv[4] !== undefined) await page.screenshot({ path: resolve(process.argv[4]) });
 
   progress("stop remains accessible after busy picker; cancelling");
   await page.getByTestId("stop").click();
