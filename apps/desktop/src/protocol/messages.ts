@@ -8,7 +8,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 1 as const;
 
-export const HOST_CAPABILITIES = ["project-select", "start", "interrupt"] as const;
+export const HOST_CAPABILITIES = ["project-select", "start", "interrupt", "workspace-review"] as const;
 
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,80}$/;
 export const MAX_PROMPT_LENGTH = 32_000;
@@ -69,6 +69,12 @@ export interface InterruptRequest {
   readonly runId: string;
 }
 
+export interface WorkspaceReviewRequest {
+  readonly type: "workspace-review";
+  readonly requestId: string;
+  readonly projectPath: string;
+}
+
 export interface ShutdownRequest {
   readonly type: "shutdown";
   readonly requestId: string;
@@ -81,6 +87,7 @@ export type MainToHost =
   | StartRequest
   | InterruptRequest
   | ApprovalRespondRequest
+  | WorkspaceReviewRequest
   | ShutdownRequest;
 
 export interface InitializedMessage {
@@ -128,6 +135,14 @@ export interface ProviderProfileSavedMessage {
   readonly requestId: string;
   readonly profile: { readonly provider: string; readonly model: string; readonly baseURL?: string; readonly configured: true; readonly recovered?: true };
 }
+export interface WorkspaceReviewMessage {
+  readonly type: "workspace-review";
+  readonly requestId: string;
+  readonly projectPath: string;
+  readonly review: WorkspaceReviewData;
+}
+export type WorkspaceReviewFile = { readonly path: string; readonly kind: "text"; readonly content: string } | { readonly path: string; readonly kind: "binary" | "too-large" | "unsafe" | "unavailable" };
+export type WorkspaceReviewData = { readonly kind: "not-git" } | { readonly kind: "git"; readonly staged: string; readonly unstaged: string; readonly untracked: readonly WorkspaceReviewFile[]; readonly truncated: boolean };
 export interface RuntimeConfigMessage {
   readonly type: "runtime-config";
   readonly provider: string;
@@ -188,6 +203,7 @@ export type HostToMain =
   | InitializedMessage
   | ProjectSelectedMessage
   | ProviderProfileSavedMessage
+  | WorkspaceReviewMessage
   | RuntimeConfigMessage
   | StartedMessage
   | InterruptedMessage
@@ -304,6 +320,9 @@ export function validateMainToHost(value: unknown): MainToHost | string {
     case "approval-respond":
       if (!isRequestId(record.hostInstanceId) || !isRequestId(record.sessionId) || !isRequestId(record.runId) || !isRequestId(record.approvalId) || typeof record.approved !== "boolean") return "approval response correlation or decision is invalid.";
       return { type: "approval-respond", requestId: record.requestId, hostInstanceId: record.hostInstanceId, sessionId: record.sessionId, runId: record.runId, approvalId: record.approvalId, approved: record.approved };
+    case "workspace-review":
+      if (typeof record.projectPath !== "string" || record.projectPath.length === 0 || record.projectPath.length > 4_096) return "projectPath must be a non-empty directory path.";
+      return { type: "workspace-review", requestId: record.requestId, projectPath: record.projectPath };
     default:
       return "Unknown host request type.";
   }
@@ -335,6 +354,8 @@ export function isHostToMain(value: unknown): value is HostToMain {
       const profile = record.profile as Record<string, unknown> | null;
       return isRequestId(record.requestId) && typeof profile === "object" && profile !== null && typeof profile.provider === "string" && typeof profile.model === "string" && profile.configured === true && (profile.recovered === undefined || profile.recovered === true) && !("apiKey" in profile);
     }
+    case "workspace-review":
+      return isRequestId(record.requestId) && typeof record.projectPath === "string" && isWorkspaceReview(record.review);
     case "runtime-config":
       return typeof record.provider === "string" && record.provider.length > 0 && typeof record.model === "string" && record.model.length > 0 && (record.baseURL === undefined || typeof record.baseURL === "string");
     case "started":
@@ -372,6 +393,14 @@ export function isHostToMain(value: unknown): value is HostToMain {
     default:
       return false;
   }
+}
+
+function isWorkspaceReview(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const item = value as Record<string, unknown>;
+  if (item.kind === "not-git") return true;
+  if (item.kind !== "git" || typeof item.staged !== "string" || typeof item.unstaged !== "string" || typeof item.truncated !== "boolean" || !Array.isArray(item.untracked)) return false;
+  return item.untracked.every((entry) => typeof entry === "object" && entry !== null && typeof (entry as { path?: unknown }).path === "string" && ["text", "binary", "too-large", "unsafe", "unavailable"].includes(String((entry as { kind?: unknown }).kind)) && ((entry as { kind?: unknown }).kind !== "text" || typeof (entry as { content?: unknown }).content === "string"));
 }
 
 export function acceptedRequestLimit(): number {
