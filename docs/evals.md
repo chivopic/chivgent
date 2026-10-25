@@ -55,6 +55,38 @@ Opt-in compaction attempts include `compactionCount` in their JSON report; the
 count is omitted for other tasks. Keep long-session probes outside the default
 suite unless they are deliberately added as benchmark tasks.
 
+A task can opt into a bounded, multi-prompt conversation with `followUps`. The
+runner sends each prompt through the same `AgentSession`, so later user
+corrections see the transcript and any active compaction checkpoint. Set
+`recoverAfter` to one-based prompt numbers to flush the session JSONL, close the
+session, and restore it through the production `FileSessionStore` reader before
+the next prompt. Both fields are optional; single-prompt tasks keep their
+existing behavior and the default suite does not change. Recovery data stays in a
+private temporary directory outside the model workspace and is removed when the
+attempt ends.
+
+```jsonc
+{
+  "prompt": "Read the archive record and inspect the index until ready.",
+  "followUps": ["Correction: the current key is violet. What is it?"],
+  "recoverAfter": [1],
+  "contextWindow": 6000,
+  "attempts": 3,
+  "graders": [{ "type": "answer-matches", "pattern": "violet" }]
+}
+```
+
+The cap is four follow-up prompts per task. Existing attempt and Agent-turn
+limits apply to each task and prompt. Recovery points must be ordered, unique,
+and fall after a prompt that has a later follow-up. Task-level graders
+judge the final response and the accumulated attempt events/files. Evals report
+the Provider-reported usage across every prompt and compaction call; when any
+usage is missing, total usage remains incomplete/unknown. A fake-Provider test
+proves the harness exercises repeated compaction and disk restore, but it does
+not establish a real model's task success, constraint retention, latency, or
+cost. Those comparisons require recorded runs on the named Provider/model.
+An initial DeepSeek comparison and its limits are recorded in [the issue 121 eval note](eval-results/issue-121-deepseek-notes.md), with sanitized request-level measurements in its JSON companion. Keep that probe outside the default suite; its small sample does not support general reliability or cost conclusions.
+
 ```jsonc
 {
   "prompt": "Rename the function sayHi to greet everywhere, including callers.",
