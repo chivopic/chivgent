@@ -33,6 +33,16 @@ describe("desktop provider configuration", () => {
     await expect(config.save({ provider: "openai-compatible", model: "custom", baseURL: "https://user:pass@example.test/v1", apiKey: "other-secret" })).rejects.toThrow("凭证");
   });
 
+  it("keeps both profiles when saves arrive concurrently", async () => {
+    const root = await mkdtemp(join(tmpdir(), "chivgent-desktop-provider-")); roots.push(root);
+    const config = new DesktopProviderConfig(root);
+    await Promise.all([
+      config.save({ provider: "openai", model: "gpt-test", apiKey: "first-fake-key" }),
+      config.save({ provider: "deepseek", model: "deepseek-test", apiKey: "second-fake-key" }),
+    ]);
+    expect(Object.keys(await config.read()).sort()).toEqual(["deepseek", "openai"]);
+  });
+
   it("reports malformed profiles without throwing, preserves the damaged file, and allows recovery", async () => {
     const root = await mkdtemp(join(tmpdir(), "chivgent-desktop-provider-")); roots.push(root);
     const file = join(root, "provider-profiles.json");

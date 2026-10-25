@@ -196,7 +196,7 @@ try {
   await page.getByRole("button", { name: "设置" }).click();
   await page.getByTestId("provider-select").waitFor({ state: "visible" });
   await page.waitForFunction(() => document.querySelector('[data-testid="provider-select"]')?.value === "openai-compatible");
-  await page.getByTestId("compatible-endpoint").getByText(endpoint, { exact: false }).waitFor();
+  await page.waitForFunction((expected) => document.querySelector('[data-testid="compatible-endpoint"]')?.value === expected, endpoint);
   await page.keyboard.press("Escape");
   await page.getByTestId("provider-select").waitFor({ state: "hidden" });
   assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), "设置",
@@ -234,16 +234,16 @@ try {
       return bounds.left >= 0 && bounds.right <= window.innerWidth;
     })), "the narrow window must keep header controls within the viewport");
   await page.getByRole("button", { name: "设置" }).click();
-  await page.getByTestId("compatible-endpoint").getByText(endpoint, { exact: false }).waitFor();
+  await page.waitForFunction((expected) => document.querySelector('[data-testid="compatible-endpoint"]')?.value === expected, endpoint);
   assert.ok(await page.evaluate(() => {
     const dialog = document.querySelector(".details-dialog");
-    const value = dialog?.querySelector(".path-value");
-    if (!dialog || !value) return false;
+    const endpointInput = dialog?.querySelector('[data-testid="compatible-endpoint"]');
+    if (!dialog || !endpointInput) return false;
     const dialogBounds = dialog.getBoundingClientRect();
-    const valueBounds = value.getBoundingClientRect();
+    const inputBounds = endpointInput.getBoundingClientRect();
     return document.documentElement.scrollWidth <= window.innerWidth &&
-      dialogBounds.left >= 0 && dialogBounds.right <= window.innerWidth && valueBounds.right <= dialogBounds.right;
-  }), "the long endpoint must wrap inside settings at narrow width");
+      dialogBounds.left >= 0 && dialogBounds.right <= window.innerWidth && inputBounds.right <= dialogBounds.right;
+  }), "the endpoint input must stay inside settings at narrow width");
   await page.getByRole("button", { name: "完成", exact: true }).click();
   await page.locator(".project-identity").click();
   assert.ok(await page.evaluate(() => {

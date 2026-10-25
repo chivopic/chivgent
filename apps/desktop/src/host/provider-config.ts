@@ -34,6 +34,7 @@ export class ProviderProfileCorruptError extends Error {
 export class DesktopProviderConfig {
   private readonly filePath: string;
   private readonly recoveryPath: string;
+  private saveQueue: Promise<void> = Promise.resolve();
 
   constructor(directory: string) {
     this.filePath = join(directory, "provider-profiles.json");
@@ -44,7 +45,13 @@ export class DesktopProviderConfig {
     return (await this.readWithPath()).profiles;
   }
 
-  async save(request: SaveProviderProfileRequest): Promise<DesktopProviderProfileSummary & { readonly recovered?: true }> {
+  save(request: SaveProviderProfileRequest): Promise<DesktopProviderProfileSummary & { readonly recovered?: true }> {
+    const result = this.saveQueue.then(() => this.saveOne(request));
+    this.saveQueue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  private async saveOne(request: SaveProviderProfileRequest): Promise<DesktopProviderProfileSummary & { readonly recovered?: true }> {
     const definition = defaultProviderRegistry.get(request.provider);
     const model = request.model.trim();
     if (!model || model.length > 160) throw new Error("请输入有效的模型名称（最多 160 个字符）。");
