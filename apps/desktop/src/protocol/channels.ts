@@ -1,6 +1,7 @@
 export const IPC = {
   initialize: "desktop:initialize",
   selectProject: "desktop:select-project",
+  saveProviderProfile: "desktop:save-provider-profile",
   start: "desktop:start",
   interrupt: "desktop:interrupt",
   event: "desktop:event",

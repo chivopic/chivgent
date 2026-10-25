@@ -36,6 +36,7 @@ interface TestApi {
   start: (payload: StartPayload) => Promise<any>;
   initialize: () => Promise<any>;
   selectProject: () => Promise<any>;
+  saveProviderProfile: (payload: any) => Promise<any>;
   interrupt: () => Promise<any>;
   onEvent: (listener: (message: any) => void) => () => void;
   onHostStatus: (listener: (status: any) => void) => () => void;
@@ -67,6 +68,7 @@ describe("App submit flow", () => {
         return { ok: true, value: { type: "initialized" } };
       }),
       selectProject: vi.fn(async () => ({ ok: false, code: "cancelled", message: "cancelled" })),
+      saveProviderProfile: vi.fn(async (payload) => ({ ok: true, value: { type: "provider-profile-saved", requestId: payload.requestId, profile: { provider: payload.provider, model: payload.model, ...(payload.baseURL ? { baseURL: payload.baseURL } : {}), configured: true } } })),
       interrupt: vi.fn(async () => ({ ok: true, value: { type: "interrupted" } })),
       onEvent: vi.fn((listener) => { eventListener = listener; return () => {}; }),
       onHostStatus: vi.fn((listener) => { statusListener = listener; return () => {}; }),
@@ -134,6 +136,49 @@ describe("App submit flow", () => {
     await findType(tree, "form").props.onSubmit({ preventDefault() {} });
     expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ prompt: "valid prompt", model: "m".repeat(160) }));
     expect(validateMainToHost({ type: "start", requestId: "edge", prompt: "ok", model: "m".repeat(160) })).toMatchObject({ type: "start" });
+  });
+
+  it("does not overwrite a model edited by the user when initialization is resynchronized", async () => {
+    let tree = await renderApp();
+    findByText(tree, "设置").props.onClick();
+    tree = await renderApp();
+    findByLabel(tree, "Model").props.onChange({ target: { value: "user-selected-model" } });
+    tree = await renderApp();
+    publishEvent({ type: "initialized", requestId: "resync", protocolVersion: 1, hostInstanceId: "test-host", capabilities: ["real-agent"], defaultProvider: "openai", providerProfiles: [{ provider: "openai", model: "saved-default-model", configured: true }] });
+    tree = await renderApp();
+    expect(findByLabel(tree, "Model").props.value).toBe("user-selected-model");
+  });
+
+  it("allows updating a saved profile without resending its API key", async () => {
+    let tree = await renderApp();
+    publishEvent({ type: "initialized", requestId: "profile", protocolVersion: 1, hostInstanceId: "test-host", capabilities: ["real-agent"], defaultProvider: "openai", providerProfiles: [{ provider: "openai", model: "old-model", configured: true }] });
+    tree = await renderApp();
+    findByText(tree, "设置").props.onClick();
+    tree = await renderApp();
+    findByLabel(tree, "Model").props.onChange({ target: { value: "new-model" } });
+    tree = await renderApp();
+    const save = findByText(tree, "保存 Provider 配置");
+    expect(save.props.disabled).toBe(false);
+    await save.props.onClick();
+    tree = await renderApp();
+    expect(api.saveProviderProfile).toHaveBeenCalledWith(expect.objectContaining({ provider: "openai", model: "new-model" }));
+    expect(api.saveProviderProfile.mock.calls[0]?.[0]).not.toHaveProperty("apiKey");
+  });
+
+  it("restores the environment endpoint when switching back to the compatible Provider", async () => {
+    let tree = await renderApp();
+    publishEvent({ type: "initialized", requestId: "resync", protocolVersion: 1, hostInstanceId: "test-host", capabilities: ["real-agent"], defaultProvider: "openai", compatibleBaseURL: "http://127.0.0.1:43127/v1" });
+    tree = await renderApp();
+    findByText(tree, "设置").props.onClick();
+    tree = await renderApp();
+    findByLabel(tree, "Provider").props.onChange({ target: { value: "openai-compatible" } });
+    tree = await renderApp();
+    expect(findByLabel(tree, "兼容 endpoint").props.value).toBe("http://127.0.0.1:43127/v1");
+    findByLabel(tree, "Provider").props.onChange({ target: { value: "deepseek" } });
+    tree = await renderApp();
+    findByLabel(tree, "Provider").props.onChange({ target: { value: "openai-compatible" } });
+    tree = await renderApp();
+    expect(findByLabel(tree, "兼容 endpoint").props.value).toBe("http://127.0.0.1:43127/v1");
   });
 
   it("gives a pre-send warning at 161 model characters", async () => {

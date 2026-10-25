@@ -1,4 +1,5 @@
 import { mkdtempSync, mkdirSync, realpathSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -181,6 +182,59 @@ describe("desktop real runtime", () => {
     })).rejects.toThrow("API key");
     expect(constructed).toBe(false);
     expect(readdirSync(cwd)).toEqual([]);
+  });
+
+  it("uses a saved desktop profile for an isolated OpenAI-compatible request", async () => {
+    const cwd = temporaryProject();
+    let selected: { apiKey: string; baseURL?: string } | undefined;
+    const config = {
+      cwd, provider: "openai-compatible", model: "desktop-model",
+      desktopApiKey: "desktop-compatible-key", baseURL: "http://127.0.0.1:43127/v1",
+      environment: {}, authFile: join(cwd, "absent-auth.json"),
+      createClient: (value: { apiKey: string; baseURL?: string }) => {
+        selected = value;
+        return { async complete() { return { message: { role: "assistant" as const, content: "ok", toolCalls: [] } }; } };
+      },
+    } as unknown as Parameters<typeof createDesktopSession>[0];
+    await createDesktopSession(config);
+    expect(selected).toEqual({ apiKey: "desktop-compatible-key", model: "desktop-model", baseURL: "http://127.0.0.1:43127/v1" });
+  });
+
+  it("keeps environment and CLI auth.json keys ahead of the desktop profile", async () => {
+    const cwd = temporaryProject();
+    const authFile = join(cwd, "auth.json");
+    writeFileSync(authFile, JSON.stringify({ openai: "cli-auth-key" }));
+    const selected: string[] = [];
+    const createClient = ({ apiKey }: { apiKey: string }) => {
+      selected.push(apiKey);
+      return { async complete() { return { message: { role: "assistant" as const, content: "ok", toolCalls: [] } }; } };
+    };
+    await createDesktopSession({ cwd, provider: "openai", desktopApiKey: "desktop-key", authFile, createClient });
+    await createDesktopSession({ cwd, provider: "openai", desktopApiKey: "desktop-key", authFile, environment: { OPENAI_API_KEY: "environment-key" }, createClient });
+    expect(selected).toEqual(["cli-auth-key", "environment-key"]);
+  });
+
+  it("sends the selected desktop compatible profile to a localhost fake Provider", async () => {
+    const cwd = temporaryProject();
+    let received: { authorization?: string; url?: string; model?: string } = {};
+    const server = createServer(async (request, response) => {
+      let raw = "";
+      for await (const chunk of request) raw += chunk;
+      received = { authorization: request.headers.authorization, url: request.url, model: JSON.parse(raw).model };
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end(`data: ${JSON.stringify({ id: "fake", object: "chat.completion.chunk", created: 1, model: "local-model", choices: [{ index: 0, delta: { role: "assistant", content: "local response" }, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ id: "fake", object: "chat.completion.chunk", created: 1, model: "local-model", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
+    });
+    await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("fake Provider did not bind");
+      const endpoint = `http://127.0.0.1:${address.port}/v1`;
+      const result = await createDesktopSession({ cwd, provider: "openai-compatible", model: "desktop-model", desktopApiKey: "fake-desktop-key", baseURL: endpoint, environment: {}, authFile: join(cwd, "absent-auth.json") });
+      await result.session.prompt("hello", { signal: new AbortController().signal });
+      expect(received).toEqual({ authorization: "Bearer fake-desktop-key", url: "/v1/chat/completions", model: "desktop-model" });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   it("does not forward an OpenAI startup key when switching to a compatible endpoint", async () => {
