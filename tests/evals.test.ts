@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,6 +11,7 @@ import { toolNamesFor, toolsFor } from "../src/evals/tools.js";
 import { MissingCapabilityError, runTask } from "../src/evals/runner.js";
 import { formatFailures, formatTable, toJsonReport } from "../src/evals/report.js";
 import { assistant, FakeLLMClient } from "./fakes.js";
+import { FileSessionStore } from "../src/session-store.js";
 import { createLocalShellOperations } from "../src/shell/local.js";
 import type { LLMClient, LLMRequest, LLMResponse } from "../src/llm.js";
 
@@ -95,6 +96,27 @@ describe("task parsing", () => {
 
     expect(ordinary.contextWindow).toBeUndefined();
     expect(longRun.contextWindow).toBe(1_200);
+  });
+
+  it("accepts follow-up prompts and disk recovery points only for explicit conversations", () => {
+    const conversation = parseTask({
+      ...valid,
+      followUps: ["Actually, use the corrected requirement."],
+      recoverAfter: [1],
+    }, "/tasks/conversation", "/tasks/conversation/fixture");
+
+    expect(Reflect.get(conversation, "followUps")).toEqual(["Actually, use the corrected requirement."]);
+    expect(Reflect.get(conversation, "recoverAfter")).toEqual([1]);
+    expect(Reflect.get(parseTask(valid, "/tasks/demo", "/tasks/demo/fixture"), "followUps")).toBeUndefined();
+  });
+
+  it("rejects empty follow-ups and recovery points outside the conversation", () => {
+    expect(() => parseTask({ ...valid, followUps: [" "] }, "/d", "/f")).toThrow(/followUps/);
+    expect(() => parseTask({ ...valid, followUps: ["next"], recoverAfter: [0] }, "/d", "/f")).toThrow(/recoverAfter/);
+    expect(() => parseTask({ ...valid, followUps: ["next"], recoverAfter: [2] }, "/d", "/f")).toThrow(/recoverAfter/);
+    expect(() => parseTask({ ...valid, followUps: ["next"], recoverAfter: [1, 1] }, "/d", "/f")).toThrow(/recoverAfter/);
+    expect(() => parseTask({ ...valid, followUps: ["one", "two"], recoverAfter: [2, 1] }, "/d", "/f")).toThrow(/recoverAfter/);
+    expect(() => parseTask({ ...valid, followUps: ["next"], recoverAfter: "1" }, "/d", "/f")).toThrow(/recoverAfter/);
   });
 
   it("rejects an invalid opt-in context window", () => {
@@ -503,6 +525,179 @@ describe("runner", () => {
     expect(bad.result.passed).toBe(0);
     expect(bad.result.attempts[0]?.failures.join(" ")).toContain("ARCHIVE_KEY=violet-731");
     expect(bad.result.attempts[0]?.failures.join(" ")).not.toMatch(/context budget/i);
+  });
+
+  it("runs follow-up prompts through a disk-restored session checkpoint", async () => {
+    const root = await temporaryDirectory();
+    const fact = "ARCHIVE_KEY=violet-731";
+    const filler = Array.from({ length: 45 }, (_, index) => `line-${index} ${"noise ".repeat(12)}`).join("\n");
+    const directory = await writeTask(root, "conversation", {
+      name: "conversation",
+      prompt: "Read archive.txt, then repeatedly inspect filler.txt and report ready.",
+      followUps: ["Correction: replace the prior decision: archive keys are violet. What is the key?"],
+      recoverAfter: [1],
+      attempts: 1,
+      maxTurns: 12,
+      contextWindow: 3_000,
+      graders: [{ type: "answer-matches", pattern: "ARCHIVE_KEY=violet-731" }],
+    }, { "archive.txt": fact, "filler.txt": filler });
+    const task = await loadTask(directory);
+    const requests: LLMRequest[] = [];
+    let ordinaryCalls = 0;
+    let summaryCalls = 0;
+    const client: LLMClient = {
+      async complete(request: LLMRequest): Promise<LLMResponse> {
+        requests.push(structuredClone(request));
+        const visible = JSON.stringify(request.messages);
+        const isSummary = request.systemPrompt.includes("You are compacting an engineering conversation");
+        let response: LLMResponse;
+        if (isSummary) {
+          summaryCalls += 1;
+          response = assistant(JSON.stringify({
+            summary: `Earlier archive fact ${fact} was read.`,
+            decisions: ["Archive keys must be red."],
+            pendingTasks: [],
+          }));
+        } else if (visible.includes("Correction: replace the prior decision")) {
+          response = assistant(visible.includes(fact) ? fact : "The key was lost.");
+        } else {
+          const call = ordinaryCalls++;
+          if (call === 0) response = assistant("", [{ id: "archive", name: "read_file", arguments: { path: "archive.txt" } }]);
+          else if (call <= 6) response = assistant("", [{ id: `filler-${call}`, name: "read_file", arguments: { path: "filler.txt" } }]);
+          else response = assistant("Ready for the correction.");
+        }
+        // One summary call deliberately omits usage; all other paid requests
+        // report known usage so the aggregate must preserve exact known totals.
+        if (isSummary && summaryCalls === 1) return response;
+        return { ...response, usage: { inputTokens: 10, outputTokens: 3, totalTokens: 13 } };
+      },
+    };
+
+    const result = await runTask(task, { ...baseOptions, createClient: () => client });
+    const followUpRequest = requests.find((request) => JSON.stringify(request.messages).includes("Correction: replace the prior decision"));
+    expect(result.attempts[0]?.status).toBe("completed");
+    expect(result.attempts[0]?.compactionCount).toBeGreaterThanOrEqual(2);
+    expect(followUpRequest).toBeDefined();
+    expect(JSON.stringify(followUpRequest?.messages)).toContain("Correction: replace the prior decision");
+    expect(JSON.stringify(followUpRequest?.messages)).toContain(`Earlier archive fact ${fact} was read.`);
+    expect(JSON.stringify(followUpRequest?.messages)).toContain("Archive keys must be red.");
+    expect(JSON.stringify(followUpRequest?.messages)).not.toContain("File: archive.txt");
+    expect(result.passed).toBe(1);
+    expect(summaryCalls).toBeGreaterThanOrEqual(2);
+    const callsWithKnownUsage = requests.length - 1;
+    expect(result.attempts[0]?.usage).toEqual({
+      usage: {
+        inputTokens: callsWithKnownUsage * 10,
+        outputTokens: callsWithKnownUsage * 3,
+        totalTokens: callsWithKnownUsage * 13,
+      },
+      complete: false,
+    });
+  });
+
+  it("fails closed when a disk recovery read is missing and preserves paid usage", async () => {
+    const root = await temporaryDirectory();
+    const directory = await writeTask(root, "missing-recovery", {
+      name: "missing-recovery",
+      prompt: "Inspect the archive and report ready.",
+      followUps: ["Please verify the corrected archive value."],
+      recoverAfter: [1],
+      attempts: 1,
+      graders: [{ type: "answer-matches", pattern: "ready" }],
+    }, { "archive.txt": "ARCHIVE_KEY=violet-731" });
+    const task = await loadTask(directory);
+    const requests: LLMRequest[] = [];
+    const storeRoots: string[] = [];
+    let persistedBeforeFailedRead = false;
+    const usage = { inputTokens: 13, outputTokens: 5, totalTokens: 18 };
+    const client: LLMClient = {
+      async complete(request: LLMRequest): Promise<LLMResponse> {
+        requests.push(structuredClone(request));
+        return { ...assistant("Ready."), usage };
+      },
+    };
+
+    const result = await runTask(task, {
+      ...baseOptions,
+      createClient: () => client,
+      createSessionStore: (home) => {
+        storeRoots.push(home);
+        return new class extends FileSessionStore {
+          override async read(id: string) {
+            persistedBeforeFailedRead = (await super.read(id)) !== undefined;
+            return undefined;
+          }
+        }(home);
+      },
+    });
+
+    const attempt = result.attempts[0];
+    expect(persistedBeforeFailedRead).toBe(true);
+    expect(requests).toHaveLength(1);
+    expect(JSON.stringify(requests)).not.toContain("Please verify the corrected archive value.");
+    expect(attempt?.status).toBe("error");
+    expect(attempt?.passed).toBe(false);
+    expect(attempt?.usage).toEqual({ usage, complete: true });
+    await expect(access(storeRoots[0]!)).rejects.toThrow();
+  });
+
+  it("stops follow-up prompts after max_turns and retains reported usage", async () => {
+    const root = await temporaryDirectory();
+    const directory = await writeTask(root, "stopped-follow-up", {
+      name: "stopped-follow-up",
+      prompt: "Inspect the archive and report ready.",
+      followUps: ["Now verify the corrected value."],
+      attempts: 1,
+      maxTurns: 1,
+      graders: [{ type: "answer-matches", pattern: "ready" }],
+    }, { "archive.txt": "ARCHIVE_KEY=violet-731" });
+    const task = await loadTask(directory);
+    const requests: LLMRequest[] = [];
+    const usage = { inputTokens: 7, outputTokens: 2, totalTokens: 9 };
+    const client: LLMClient = {
+      async complete(request: LLMRequest): Promise<LLMResponse> {
+        requests.push(structuredClone(request));
+        return {
+          ...assistant("", [{ id: "archive", name: "read_file", arguments: { path: "archive.txt" } }]),
+          usage,
+        };
+      },
+    };
+
+    const result = await runTask(task, { ...baseOptions, createClient: () => client });
+    expect(requests).toHaveLength(1);
+    expect(JSON.stringify(requests)).not.toContain("Now verify the corrected value.");
+    expect(result.attempts[0]?.status).toBe("max_turns");
+    expect(result.attempts[0]?.usage).toEqual({ usage, complete: true });
+  });
+
+  it("counts a failed follow-up Provider turn and retains partial usage", async () => {
+    const root = await temporaryDirectory();
+    const directory = await writeTask(root, "failed-follow-up", {
+      name: "failed-follow-up",
+      prompt: "Read the archive and report ready.",
+      followUps: ["After recovery, answer with the archive code."],
+      recoverAfter: [1],
+      attempts: 1,
+      graders: [{ type: "answer-matches", pattern: "ready" }],
+    }, { "archive.txt": "ARCHIVE_KEY=violet-731" });
+    const task = await loadTask(directory);
+    let calls = 0;
+    const knownUsage = { inputTokens: 11, outputTokens: 4, totalTokens: 15 };
+    const client: LLMClient = {
+      async complete(): Promise<LLMResponse> {
+        calls += 1;
+        if (calls === 1) return { ...assistant("Ready."), usage: knownUsage };
+        throw new Error("Request timed out.");
+      },
+    };
+
+    const result = await runTask(task, { ...baseOptions, createClient: () => client });
+    expect(calls).toBe(2);
+    expect(result.attempts[0]?.status).toBe("error");
+    expect(result.attempts[0]?.turnCount).toBe(2);
+    expect(result.attempts[0]?.usage).toEqual({ usage: knownUsage, complete: false });
+    expect(result.attempts[0]?.failures.join(" ")).toContain("Request timed out.");
   });
 
   it("records every tool call in order, with whether it succeeded", async () => {

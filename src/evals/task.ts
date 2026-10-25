@@ -28,6 +28,10 @@ export interface Task {
   readonly maxTurns: number;
   /** Enables the production ContextManager path for this task only. */
   readonly contextWindow?: number;
+  /** Additional user messages in the same opt-in session. */
+  readonly followUps?: readonly string[];
+  /** One-based prompt numbers after which the runner reloads the saved session. */
+  readonly recoverAfter?: readonly number[];
   readonly graders: readonly GraderSpec[];
   /** Directory copied into a fresh workspace for every attempt. */
   readonly fixtureDirectory: string;
@@ -37,6 +41,7 @@ export interface Task {
 const DEFAULT_ATTEMPTS = 5;
 const DEFAULT_MAX_TURNS = 12;
 const MAX_ATTEMPTS = 50;
+const MAX_FOLLOW_UPS = 4;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -158,25 +163,62 @@ export function parseTask(
     throw new TaskError(`${name}: contextWindow must be an integer of at least 1000.`);
   }
 
+  let followUps: readonly string[] | undefined;
+  if (value.followUps !== undefined) {
+    if (
+      !Array.isArray(value.followUps) ||
+      value.followUps.length === 0 ||
+      value.followUps.length > MAX_FOLLOW_UPS ||
+      !value.followUps.every((item) => typeof item === "string" && item.trim().length > 0)
+    ) {
+      throw new TaskError(`${name}: followUps must contain 1 to ${MAX_FOLLOW_UPS} non-empty strings.`);
+    }
+    followUps = value.followUps;
+  }
+
+  const followUpCount = followUps?.length ?? 0;
+  let recoverAfter: readonly number[] | undefined;
+  if (value.recoverAfter !== undefined) {
+    if (
+      followUps === undefined ||
+      !Array.isArray(value.recoverAfter) ||
+      !value.recoverAfter.every(
+        (item) => Number.isSafeInteger(item) && (item as number) >= 1 && (item as number) <= followUps!.length,
+      ) ||
+      new Set(value.recoverAfter).size !== value.recoverAfter.length ||
+      value.recoverAfter.some(
+        (item, index) => index > 0 && (item as number) <= (value.recoverAfter as number[])[index - 1]!,
+      )
+    ) {
+      throw new TaskError(`${name}: recoverAfter must be ordered unique prompt numbers from 1 to ${followUpCount} and requires followUps.`);
+    }
+    recoverAfter = value.recoverAfter as number[];
+  }
+
+  const attempts = readPositiveInteger(
+    value.attempts,
+    DEFAULT_ATTEMPTS,
+    MAX_ATTEMPTS,
+    "attempts",
+    name,
+  );
+  const maxTurns = readPositiveInteger(
+    value.maxTurns,
+    DEFAULT_MAX_TURNS,
+    100,
+    "maxTurns",
+    name,
+  );
+
   return {
     name,
     prompt: value.prompt,
     capabilities,
-    attempts: readPositiveInteger(
-      value.attempts,
-      DEFAULT_ATTEMPTS,
-      MAX_ATTEMPTS,
-      "attempts",
-      name,
-    ),
-    maxTurns: readPositiveInteger(
-      value.maxTurns,
-      DEFAULT_MAX_TURNS,
-      100,
-      "maxTurns",
-      name,
-    ),
+    attempts,
+    maxTurns,
     ...(contextWindow === undefined ? {} : { contextWindow }),
+    ...(followUps === undefined ? {} : { followUps }),
+    ...(recoverAfter === undefined ? {} : { recoverAfter }),
     graders,
     fixtureDirectory,
     directory,

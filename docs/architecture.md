@@ -123,7 +123,22 @@ single message and recent turns are kept verbatim. Four details matter:
 
 Token counts are estimated from character length rather than with a real
 tokenizer, which would be model-specific and a large dependency for a number
-that only decides *when* to compact. The reserve budget absorbs the error.
+that only decides *when* to compact. The default configured window is 128,000,
+with a 16,384-token reserve and 20,000 recent tokens kept verbatim (the reserve
+is capped at one quarter of smaller windows; recent history is capped at half
+the configured window). This reserve is a local estimate
+margin, not a measured upper bound: character/4 can undercount, and opaque
+Provider continuation or reasoning state is not represented in the estimate.
+The configured window must therefore be selected for the active Provider; local
+budget success does not guarantee that Provider will accept the request.
+
+If local budget checks refuse a main or summary request, or a candidate summary
+cannot fit with retained history, the request is not sent or the candidate is
+not installed; the previous checkpoint and full transcript remain available.
+A Provider-specific context rejection after a request was sent is not a local
+budget refusal. If a valid summary was already installed to build that request,
+the attempted checkpoint can be saved with the failed run; no Provider-level
+retry or rollback is implied by the local budget checks.
 
 A single tool result larger than the whole budget cannot be compacted away;
 bound tool output instead. Compaction is disabled with `--no-compaction`.
