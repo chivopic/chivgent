@@ -51,6 +51,7 @@ export function App(): JSX.Element {
   const startDraftRevisionRef = useRef(0);
   const eventCursorRef = useRef({ hostInstanceId: "", sessionId: "", sequence: 0, refreshing: false });
   const providerDefaultAppliedRef = useRef(false);
+  const compatibleBaseURLRef = useRef("");
   runIdRef.current = state.runId;
 
   useEffect(() => {
@@ -69,10 +70,11 @@ export function App(): JSX.Element {
           setProvider(message.defaultProvider);
           providerDefaultAppliedRef.current = true;
         }
-        setCompatibleEndpoint(message.compatibleBaseURL ?? "");
+        compatibleBaseURLRef.current = message.compatibleBaseURL ?? "";
         setProviderProfiles(message.providerProfiles ?? []);
         setProviderConfigNotice(message.providerConfigNotice ?? "");
         if (firstInitialization) {
+          setCompatibleEndpoint(message.compatibleBaseURL ?? "");
           const savedDefault = message.providerProfiles?.find((item) => item.provider === message.defaultProvider);
           if (savedDefault !== undefined) { setModel(savedDefault.model); setCompatibleEndpoint(savedDefault.baseURL ?? message.compatibleBaseURL ?? ""); }
         }
@@ -356,7 +358,7 @@ export function App(): JSX.Element {
           {detailPanel === "settings" && <>
             <div className="dialog-head"><div><h2 id="details-title">会话设置</h2><p>Provider 和模型的更改仅用于下一轮运行。</p></div><button type="button" className="dialog-close" aria-label="关闭设置" onClick={() => detailsDialogRef.current?.close()}>×</button></div>
             <div className="settings-form">
-              <label>Provider <select aria-label="Provider" data-testid="provider-select" value={provider} disabled={running} onChange={(event) => { const next = event.target.value; const profile = providerProfiles.find((item) => item.provider === next); setProvider(next); setModel(profile?.model ?? ""); setCompatibleEndpoint(profile?.baseURL ?? ""); setApiKey(""); setProfileStatus(""); }}>
+              <label>Provider <select aria-label="Provider" data-testid="provider-select" value={provider} disabled={running} onChange={(event) => { const next = event.target.value; const profile = providerProfiles.find((item) => item.provider === next); setProvider(next); setModel(profile?.model ?? ""); setCompatibleEndpoint(profile?.baseURL ?? (next === "openai-compatible" ? compatibleBaseURLRef.current : "")); setApiKey(""); setProfileStatus(""); }}>
                 <option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="openai-compatible">OpenAI compatible</option><option value="openrouter">OpenRouter</option><option value="groq">Groq</option><option value="xai">xAI</option><option value="moonshot">Moonshot</option>
               </select></label>
               <label>Model <input aria-label="Model" data-testid="model-input" value={model} placeholder="填写 Provider 模型名称" disabled={running} onChange={(event) => setModel(event.target.value)} /></label>

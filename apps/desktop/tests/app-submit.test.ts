@@ -165,6 +165,22 @@ describe("App submit flow", () => {
     expect(api.saveProviderProfile.mock.calls[0]?.[0]).not.toHaveProperty("apiKey");
   });
 
+  it("restores the environment endpoint when switching back to the compatible Provider", async () => {
+    let tree = await renderApp();
+    publishEvent({ type: "initialized", requestId: "resync", protocolVersion: 1, hostInstanceId: "test-host", capabilities: ["real-agent"], defaultProvider: "openai", compatibleBaseURL: "http://127.0.0.1:43127/v1" });
+    tree = await renderApp();
+    findByText(tree, "设置").props.onClick();
+    tree = await renderApp();
+    findByLabel(tree, "Provider").props.onChange({ target: { value: "openai-compatible" } });
+    tree = await renderApp();
+    expect(findByLabel(tree, "兼容 endpoint").props.value).toBe("http://127.0.0.1:43127/v1");
+    findByLabel(tree, "Provider").props.onChange({ target: { value: "deepseek" } });
+    tree = await renderApp();
+    findByLabel(tree, "Provider").props.onChange({ target: { value: "openai-compatible" } });
+    tree = await renderApp();
+    expect(findByLabel(tree, "兼容 endpoint").props.value).toBe("http://127.0.0.1:43127/v1");
+  });
+
   it("gives a pre-send warning at 161 model characters", async () => {
     let tree = await renderApp();
     findByText(tree, "设置").props.onClick();
