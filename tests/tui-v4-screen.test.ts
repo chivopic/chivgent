@@ -67,18 +67,24 @@ describe("default inline TUI composer in a real terminal", () => {
         expect.objectContaining({ role: "user", content: "!printf  hello   world" }),
         expect.objectContaining({ role: "tool", toolName: "bash", content: "shell output\n" }),
       ]));
-      screen.input.write("!exit 7\r");
-      await vi.waitFor(() => expect(screen.bytes()).toContain("│ exit 7"));
+      screen.input.write("!printf first\u000fsecond\r");
       await vi.waitFor(() => expect(screen.bytes().split("approve>").length).toBeGreaterThan(2));
       screen.input.write("y\r");
+      await vi.waitFor(() => expect(runCommand).toHaveBeenCalledTimes(2));
+      expect(runCommand.mock.calls[1]?.[0]).toBe("printf first\nsecond");
+      expect(session.messages.at(-3)).toMatchObject({ role: "user", content: "!printf first\nsecond" });
+      screen.input.write("!exit 7\r");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("│ exit 7"));
+      await vi.waitFor(() => expect(screen.bytes().split("approve>").length).toBeGreaterThan(3));
+      screen.input.write("y\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("Command exited with code 7"));
-      expect(runCommand).toHaveBeenCalledTimes(2);
+      expect(runCommand).toHaveBeenCalledTimes(3);
       screen.input.write("!denied\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("│ denied"));
-      await vi.waitFor(() => expect(screen.bytes().split("approve>").length).toBeGreaterThan(3));
+      await vi.waitFor(() => expect(screen.bytes().split("approve>").length).toBeGreaterThan(4));
       screen.input.write("n\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("Shell command denied by user."));
-      expect(runCommand).toHaveBeenCalledTimes(2);
+      expect(runCommand).toHaveBeenCalledTimes(3);
       screen.input.write("\u0004");
       expect(await repl).toBe(0);
     } finally { screen.input.end(); await repl; screen.dispose(); }
