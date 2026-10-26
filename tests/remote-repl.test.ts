@@ -34,3 +34,22 @@ it("detaches on idle Ctrl+C and interrupts only an active remote run", async () 
     expect(await result).toBe(130);
   } finally { input.end(); await result; }
 });
+
+it("does not forward a leading ! command to the remote model", async () => {
+  const input = new Input();
+  const output = new PassThrough();
+  let screen = "";
+  output.on("data", (chunk) => { screen += chunk.toString(); });
+  const prompt = vi.fn(async () => undefined);
+  const remote = { session: { id: "remote-test", cwd: "/workspace", capabilities: [] }, toolNames: [], prompt, interrupt: vi.fn() } as unknown as RemoteSession;
+  const result = runRemoteRepl({ remote, input, output, stderr: output, socketPath: "/unused" });
+  try {
+    input.write("!echo should-not-run\r");
+    await vi.waitFor(() => expect(screen).toContain("unavailable over a remote connection"));
+    expect(prompt).not.toHaveBeenCalled();
+    input.write(" !ordinary prompt\r");
+    await vi.waitFor(() => expect(prompt).toHaveBeenCalledWith("!ordinary prompt"));
+    input.write("/exit\r");
+    expect(await result).toBe(0);
+  } finally { input.end(); await result; }
+});

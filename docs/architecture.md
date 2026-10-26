@@ -59,6 +59,17 @@ release and receive an unavailable result rather than waiting. The Desktop host 
 no presenter in this release and returns an unavailable tool result immediately
 without opening UI.
 
+In local interactive REPLs, a line beginning with `!` is executed through
+[`runRepl`](../src/repl.ts) and
+[`AgentSession.executeShellCommand`](../src/session.ts). The session uses the
+exact built-in Bash tool and its active executor, sandbox, network, permission,
+and approval checks via [`Agent.executeShellCommand`](../src/agent.ts); Plan
+Mode, missing shell access, and unavailable approval fail closed. The command
+and bounded result are saved as a user message plus a paired Bash tool-call and
+tool-result exchange, so the transcript remains valid for the next model
+request and after resume. This snapshot does not count as a model turn or add
+provider usage. Remote REPLs refuse the shortcut locally and do not forward it.
+
 The agent identifies itself as **chivgent**. When asked which model it uses,
 it also reports the current configured provider and model, in the user's
 language. This is configuration, not proof of which backend implementation
