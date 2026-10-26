@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -11,6 +11,7 @@ import { LocalWorkspace } from "../src/workspace.js";
 import { createLiveRegion } from "../src/tui/live.js";
 import { TuiInput } from "../src/tui/input.js";
 import { displayWidth, fitLine, fitLineTail, terminalText } from "../src/tui/text.js";
+import { writeFooterFields } from "../src/tui/footer-preferences.js";
 import { welcome } from "../src/tui/welcome.js";
 import { terminalHarness } from "./helpers/terminal.js";
 
@@ -115,8 +116,8 @@ describe("idle composer footer", () => {
     await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
   });
 
-  function session(cwd: string): AgentSession {
-    return new AgentSession({ cwd, agent: {
+  function session(cwd: string, id?: string): AgentSession {
+    return new AgentSession({ cwd, ...(id === undefined ? {} : { id }), agent: {
       systemPrompt: "demo", maxTurns: 1, tools: [], workspace: new LocalWorkspace(cwd),
       llm: { async complete() { throw new Error("No provider call expected"); } },
     } });
@@ -186,6 +187,156 @@ describe("idle composer footer", () => {
       await expect(repl).resolves.toBe(0);
     } finally {
       screen.input.end();
+      await repl;
+      screen.dispose();
+    }
+  });
+
+  it("keeps the help hint in rich TUI sessions without a named permission policy", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const cwd = await mkdtemp(path.join(tmpdir(), "chivgent-footer-legacy-"));
+    roots.push(cwd);
+    const screen = terminalHarness(80, 24);
+    const repl = runRepl({ session: session(cwd), ...screen, stderr: screen.output, tui: true, inlineComposer: true });
+    try {
+      await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("/help for shortcuts"));
+      screen.input.write("\u0004");
+      await expect(repl).resolves.toBe(0);
+    } finally {
+      screen.input.end();
+      await repl;
+      screen.dispose();
+    }
+  });
+
+  it("does not advertise Shift+Tab in legacy Plan Mode without a permission policy", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const cwd = await mkdtemp(path.join(tmpdir(), "chivgent-footer-plan-legacy-"));
+    roots.push(cwd);
+    const current = session(cwd);
+    await current.setPlanMode(true);
+    const screen = terminalHarness(80, 24);
+    const repl = runRepl({ session: current, ...screen, stderr: screen.output, tui: true, inlineComposer: true });
+    try {
+      await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("Plan · /help"));
+      expect(screen.visible().join("\n")).not.toContain("Shift+Tab Auto mode");
+      screen.input.write("\u0004");
+      await expect(repl).resolves.toBe(0);
+    } finally {
+      screen.input.end();
+      await repl;
+      screen.dispose();
+    }
+  });
+
+  it("persists explicit footer field changes and reads Git only after per-query approval", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const cwd = await mkdtemp(path.join(tmpdir(), "chivgent-footer-settings-"));
+    roots.push(cwd);
+    const preferencesFile = path.join(cwd, "statusline.json");
+    const screen = terminalHarness(80, 24);
+    let gitReads = 0;
+    const repl = runRepl({
+      session: session(cwd, "sess-footer"), ...screen, stderr: screen.output, tui: true, inlineComposer: true,
+      permissionPolicy: new PermissionPolicy("ask-first"),
+      providers: providers("gpt-test"),
+      contextWindow: 64_000,
+      footerPreferencesFile: preferencesFile,
+      gitStatusReader: async () => { gitReads += 1; return "main\n"; },
+    });
+    try {
+      await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("Ask for me · Shift+Tab Plan · /help"));
+      screen.input.write("/statusline show context\n");
+      await vi.waitFor(async () => expect(await readFile(preferencesFile, "utf8")).toContain("context"));
+      expect(screen.visible().join("\n")).toContain("Footer fields: identity, mode, context");
+      screen.resize(40, 12);
+      await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("Ask for me · Shift+Tab Plan · /help"));
+      screen.resize(80, 24);
+      screen.input.write("/statusline order session,context,identity\n");
+      await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("Footer fields: session, context, identity"));
+      const orderedFrame = screen.visible().join("\n");
+      expect(orderedFrame.indexOf("sess-")).toBeLessThan(orderedFrame.indexOf("ctx 64.0k"));
+      expect(orderedFrame.indexOf("ctx 64.0k")).toBeLessThan(orderedFrame.indexOf("openai · gpt-test"));
+
+      screen.input.write("/status --git\n");
+      await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("status-git>"));
+      expect(gitReads).toBe(0);
+      screen.input.write("n");
+      await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("no process started"));
+      expect(gitReads).toBe(0);
+      screen.input.write("/status --git\n");
+      await vi.waitFor(() => expect(screen.visible().join("\n").match(/status-git>/g)?.length).toBeGreaterThan(1));
+      screen.input.write("y");
+      await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("branch:    main"));
+      expect(gitReads).toBe(1);
+      screen.input.write("\u0004");
+      await expect(repl).resolves.toBe(0);
+    } finally {
+      screen.input.end();
+      await repl;
+      screen.dispose();
+    }
+  });
+
+  it("loads saved footer order into runRepl and keeps it on the real busy live region", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const cwd = await mkdtemp(path.join(tmpdir(), "chivgent-footer-live-"));
+    roots.push(cwd);
+    const preferencesFile = path.join(cwd, "statusline.json");
+    await writeFooterFields(preferencesFile, ["session", "context", "identity"]);
+    const screen = terminalHarness(80, 24);
+    let providerStarted!: () => void;
+    const started = new Promise<void>(resolve => { providerStarted = resolve; });
+    const current = new AgentSession({ cwd, id: "sess-persisted-footer", agent: {
+      systemPrompt: "demo", maxTurns: 1, tools: [], workspace: new LocalWorkspace(cwd),
+      llm: { complete(request) {
+        providerStarted();
+        return new Promise((_resolve, reject) => {
+          request.signal?.addEventListener("abort", () => reject(new LLMAbortError()), { once: true });
+        });
+      } },
+    } });
+    const liveRegion = createLiveRegion({
+      stream: screen.output,
+      width: () => screen.output.columns,
+      height: () => screen.output.rows,
+      tickMs: 5,
+    });
+    const detach = current.subscribe(liveRegion.listener);
+    const repl = runRepl({
+      session: current, ...screen, stderr: screen.output, tui: true, inlineComposer: true,
+      permissionPolicy: new PermissionPolicy("ask-first"),
+      providers: providers("gpt-test"), contextWindow: 64_000,
+      footerPreferencesFile: preferencesFile, liveRegion,
+    });
+    try {
+      await vi.waitFor(() => {
+        const frame = screen.visible().join("\n");
+        expect(frame.indexOf("sess-persisted-footer")).toBeLessThan(frame.indexOf("ctx 64.0k"));
+        expect(frame.indexOf("ctx 64.0k")).toBeLessThan(frame.indexOf("openai · gpt-test"));
+      });
+      expect(screen.visible().join("\n")).not.toContain("Ask for me");
+
+      screen.input.write("go\r");
+      await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("thinking"));
+      await started;
+      await screen.flush();
+      const busy = screen.visible().join("\n");
+      expect(busy).toContain("sess-persisted-footer");
+      expect(busy).toContain("ctx 64.0k");
+      expect(busy).toContain("openai · gpt-test");
+      expect(busy).not.toContain("Ask for me");
+      expect(busy).toContain("ctrl+c to stop");
+
+      screen.input.write("\x03");
+      await vi.waitFor(() => expect(screen.history().join("\n")).toContain("Stopped"));
+      screen.input.write("\x04");
+      await expect(repl).resolves.toBe(0);
+    } finally {
+      screen.input.write("\x03\x04");
+      screen.input.end();
+      detach();
+      liveRegion.stop();
       await repl;
       screen.dispose();
     }

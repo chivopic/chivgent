@@ -377,6 +377,8 @@ export async function main(argv: readonly string[]): Promise<number> {
         compactionEnabled: options.compaction,
         providerName: options.provider,
         modelName: options.model,
+        contextWindow: options.contextWindow,
+        footerPreferencesFile: resolve(defaultSessionHome(process.env), "statusline.json"),
         ...(options.webSearch === undefined
           ? {}
           : { webSearch: { provider: webSearchProviderName(options.webSearch.url) } }),
@@ -384,6 +386,7 @@ export async function main(argv: readonly string[]): Promise<number> {
           ...(options.permissionMode === undefined ? [] : [`mode:${options.permissionMode}`]),
           ...(options.allowWrites ? ["file-write"] : []),
           ...(options.allowShell ? ["shell"] : []),
+          ...(options.approveAllShell ? ["approve-all-shell"] : []),
           ...(options.shellNetwork ? ["network"] : []),
         ],
         sessionOptions: store === undefined ? undefined : {

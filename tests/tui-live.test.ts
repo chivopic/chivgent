@@ -96,6 +96,21 @@ describe("createLiveRegion", () => {
     region.stop();
   });
 
+  it("keeps the configurable statusline and interrupt hint visible while a turn runs", () => {
+    const output = recorder();
+    let status = "openai · current-model · ctx 64k";
+    const region = createLiveRegion({ stream: output.stream, width: () => 40, height: () => 8, now: () => 1_000 });
+    region.setStatusline(() => status);
+    region.listener(start);
+    expect(output.written()).toContain(status);
+    expect(output.written()).toContain("^C stop");
+    status = "Plan · Shift+Tab Auto mode · /help";
+    region.listener({ type: "message_update", turn: 1, delta: "working" });
+    expect(output.written()).toContain(status);
+    expect(output.written()).toContain("^C stop");
+    region.stop();
+  });
+
   it("erases the region before flushing a finished turn to scrollback", () => {
     // Order matters: writing the transcript first would push it below a region
     // that is then erased from the wrong place, leaving both in the wrong spot.
