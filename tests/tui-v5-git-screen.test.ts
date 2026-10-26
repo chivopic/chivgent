@@ -57,4 +57,45 @@ describe("consent and real-terminal git diff review", () => {
       expect(await repl).toBe(0);
     } finally {screen.input.end(); await repl; screen.dispose();}
   });
+
+  it("requests the complete change set by default after one approval", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const screen = terminalHarness(84, 24);
+    const read = vi.fn(async (_cwd:string, _mode:string) =>
+      "=== Staged changes ===\n+diff --git a/a b/a\n+staged\n=== Unstaged changes ===\n+worktree\n=== Untracked file ===\n+new file");
+    const repl = runRepl({session:session(), ...screen, tui:true, inlineComposer:true,
+      stderr:screen.output, gitDiffReader:read});
+    try {
+      await vi.waitFor(() => expect(screen.bytes()).toContain("/help for shortcuts"));
+      screen.input.write("/diff\r");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("Approve once?"));
+      expect(read).not.toHaveBeenCalled();
+      screen.input.write("y");
+      await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+      expect(read.mock.calls[0]?.[1]).toBe("all");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("new file"));
+      screen.input.write("q");
+      await vi.waitFor(() => expect(screen.bytes().split("/help for shortcuts").length).toBeGreaterThan(2));
+      screen.input.write("\u0004");
+      expect(await repl).toBe(0);
+    } finally {screen.input.end(); await repl; screen.dispose();}
+  });
+
+  it("does not start collection when approval is cancelled", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const screen = terminalHarness(84, 24);
+    const read = vi.fn(async () => "+changed");
+    const repl = runRepl({session:session(), ...screen, tui:true, inlineComposer:true,
+      stderr:screen.output, gitDiffReader:read});
+    try {
+      await vi.waitFor(() => expect(screen.bytes()).toContain("/help for shortcuts"));
+      screen.input.write("/diff\r");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("Approve once?"));
+      screen.input.write("\u001b");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("review denied"));
+      expect(read).not.toHaveBeenCalled();
+      screen.input.write("\u0004");
+      expect(await repl).toBe(0);
+    } finally {screen.input.end(); await repl; screen.dispose();}
+  });
 });
