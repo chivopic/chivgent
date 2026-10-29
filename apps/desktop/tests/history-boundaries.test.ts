@@ -226,6 +226,26 @@ describe("desktop history recovery boundaries", () => {
     if (target === "existing") expect(readFileSync(linkTarget, "utf8")).toBe(line(run));
   });
 
+  it("fails closed when syncing the marker file fails before the log write", () => {
+    const dir = fixture();
+    const path = join(dir, `${sessionId}.jsonl`);
+    const history = open(dir);
+    history.saveRun(run);
+    const original = readFileSync(path, "utf8");
+    fsFailure.fsyncPath = join(dir, `${sessionId}.intent`);
+    expect(() => history.saveRun({ ...run, status: "completed" })).toThrow("injected log fsync failure");
+    expect(fsFailure.triggered).toBe(true);
+    expect(readFileSync(path, "utf8")).toBe(original);
+    expect(history.snapshot()).toMatchObject({ incomplete: true, corruption: "uncertain" });
+    expect(() => history.saveRun({ ...run, runId: "must-not-append" })).toThrow();
+    history.close();
+    fsFailure.fsyncPath = undefined;
+    const restored = open(dir);
+    expect(restored.snapshot()).toMatchObject({ incomplete: true, corruption: "uncertain", activeRun: { status: "interrupted" } });
+    expect(() => restored.saveRun({ ...run, runId: "must-not-append" })).toThrow();
+    expect(readFileSync(path, "utf8")).toBe(original);
+  });
+
   it("fails closed when syncing the marker directory fails before the log write", () => {
     const dir = fixture();
     const path = join(dir, `${sessionId}.jsonl`);
