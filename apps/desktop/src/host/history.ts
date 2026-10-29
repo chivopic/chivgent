@@ -1,4 +1,4 @@
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeSync, fsyncSync, unlinkSync, renameSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, writeSync, fsyncSync, unlinkSync, renameSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { AgentEvent } from "@chivgent/events.ts";
@@ -64,7 +64,7 @@ export interface LoadedHistory {
   readonly activeRun?: HistoryRun;
   readonly runs: readonly HistoryRun[];
   readonly incomplete: boolean;
-  readonly corruption: "tail" | "middle" | null;
+  readonly corruption: "tail" | "middle" | "uncertain" | null;
 }
 
 /** A conservative single-writer, append-only journal for one desktop session. */
@@ -72,21 +72,25 @@ export class DesktopHistory {
   readonly sessionId: string;
   private readonly projectPath: string;
   private readonly logPath: string;
+  private readonly intentPath: string;
+  private readonly directory: string;
   private readonly lockPath: string;
   private readonly lockFd: number;
-  private readonly corruption: "tail" | "middle" | null;
+  private corruption: "tail" | "middle" | "uncertain" | null;
   private closed = false;
   private entries: Entry[];
 
-  private constructor(directory: string, projectPath: string, entries: Entry[], lockFd: number, corruption: "tail" | "middle" | null) {
+  private constructor(directory: string, projectPath: string, entries: Entry[], lockFd: number, corruption: "tail" | "middle" | "uncertain" | null) {
+    this.directory = directory;
     this.projectPath = projectPath;
     this.sessionId = `session-${createHash("sha256").update(projectPath).digest("hex").slice(0, 24)}`;
     this.logPath = join(directory, `${this.sessionId}.jsonl`);
+    this.intentPath = join(directory, `${this.sessionId}.intent`);
     this.lockPath = join(directory, `${this.sessionId}.lock`);
     this.entries = entries;
     this.lockFd = lockFd;
     this.corruption = corruption;
-    if (!existsSync(this.logPath)) closeSync(openSync(this.logPath, "wx", 0o600));
+    if (this.corruption === null && !existsSync(this.logPath)) closeSync(openSync(this.logPath, "wx", 0o600));
   }
 
   static open(directory: string, projectPath: string): DesktopHistory {
@@ -94,14 +98,19 @@ export class DesktopHistory {
     const sessionId = `session-${createHash("sha256").update(projectPath).digest("hex").slice(0, 24)}`;
     const lockPath = join(directory, `${sessionId}.lock`);
     const lockFd = acquireLock(lockPath, sessionId);
-    writeSync(lockFd, JSON.stringify({ pid: process.pid, sessionId }));
-    fsyncSync(lockFd);
-    const logPath = join(directory, `${sessionId}.jsonl`);
     try {
-      const loaded = readEntries(logPath);
-      return new DesktopHistory(directory, projectPath, loaded.entries, lockFd, loaded.corruption);
+      writeAll(lockFd, Buffer.from(JSON.stringify({ pid: process.pid, sessionId })));
+      fsyncSync(lockFd);
+      const logPath = join(directory, `${sessionId}.jsonl`);
+      const intent = readIntent(join(directory, `${sessionId}.intent`));
+      const loaded = readEntries(logPath, intent === undefined ? undefined : intent.offset);
+      return new DesktopHistory(directory, projectPath, loaded.entries, lockFd, intent === undefined ? loaded.corruption : "uncertain");
     }
-    catch (error) { closeSync(lockFd); unlinkSync(lockPath); throw error; }
+    catch (error) {
+      try { closeSync(lockFd); } catch { /* Preserve the original failure. */ }
+      try { unlinkSync(lockPath); } catch { /* A stale lock is safer than losing the failure. */ }
+      throw error;
+    }
   }
 
   snapshot(): LoadedHistory {
@@ -145,18 +154,88 @@ export class DesktopHistory {
 
   private append(value: HistoryEvent | HistoryContext | HistoryRun): void {
     if (this.closed) throw new Error("Desktop history is closed.");
-    if (this.corruption !== null) throw new Error(`历史记录损坏（${this.corruption === "tail" ? "尾部" : "中间"}），已进入只读恢复状态。`);
+    if (this.corruption !== null) throw new Error("历史记录不完整或写入状态未知，已进入只读恢复状态。");
     const entry: Entry = { version: FORMAT_VERSION, value: redact(value) as typeof value };
-    const fd = openSync(this.logPath, "a", 0o600);
-    try { writeSync(fd, `${JSON.stringify(entry)}\n`); fsyncSync(fd); }
-    finally { closeSync(fd); }
-    this.entries.push(entry);
+    const fd = openSync(this.logPath, constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const stat = fstatSync(fd);
+      if (!stat.isFile()) throw new Error("历史日志不是普通文件。");
+      const offset = stat.size;
+      // The durable marker establishes the last reliable prefix before any log bytes are written.
+      this.corruption = "uncertain";
+      const markerFd = openSync(this.intentPath, "wx", 0o600);
+      try {
+        writeAll(markerFd, Buffer.from(JSON.stringify({ version: FORMAT_VERSION, offset })));
+        fsyncSync(markerFd);
+      } finally { closeSync(markerFd); }
+      syncDirectory(this.directory);
+      writeAll(fd, Buffer.from(`${JSON.stringify(entry)}\n`));
+      fsyncSync(fd);
+      closeSync(fd);
+      this.entries.push(entry);
+      unlinkSync(this.intentPath);
+      // The log fsync is the commit point. An unsynced marker deletion may
+      // reappear after power loss, in which case recovery remains conservative.
+      this.corruption = null;
+    } catch (error) {
+      try { closeSync(fd); } catch { /* Preserve the original failure. */ }
+      throw error;
+    }
   }
 }
 
-function readEntries(path: string): { entries: Entry[]; corruption: "tail" | "middle" | null } {
-  if (!existsSync(path)) return { entries: [], corruption: null };
-  const text = readFileSync(path, "utf8");
+function writeAll(fd: number, bytes: Buffer): void {
+  let offset = 0;
+  while (offset < bytes.length) {
+    const written = writeSync(fd, bytes, offset, bytes.length - offset);
+    if (written <= 0 || written > bytes.length - offset) throw new Error("历史记录写入没有进展。");
+    offset += written;
+  }
+}
+
+function syncDirectory(path: string): void {
+  const fd = openSync(path, "r");
+  try { fsyncSync(fd); } finally { closeSync(fd); }
+}
+
+function readIntent(path: string): { offset: number } | undefined {
+  try {
+    const bytes = readRegularFile(path);
+    if (bytes === undefined) return undefined;
+    const value: unknown = JSON.parse(bytes.toString("utf8"));
+    if (typeof value !== "object" || value === null || (value as { version?: unknown }).version !== FORMAT_VERSION || !Number.isSafeInteger((value as { offset?: unknown }).offset) || ((value as { offset: number }).offset < 0)) return { offset: 0 };
+    return { offset: (value as { offset: number }).offset };
+  } catch (error) {
+    return { offset: 0 };
+  }
+}
+
+function readRegularFile(path: string): Buffer | undefined {
+  let fd: number;
+  try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      // A dangling symlink is an existing, untrusted entry, not an absent file.
+      try { lstatSync(path); }
+      catch (statError) {
+        if ((statError as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+        throw statError;
+      }
+    }
+    throw error;
+  }
+  try {
+    if (!fstatSync(fd).isFile()) throw new Error("历史文件不是普通文件。");
+    return readFileSync(fd);
+  } finally { closeSync(fd); }
+}
+
+function readEntries(path: string, offset?: number): { entries: Entry[]; corruption: "tail" | "middle" | null } {
+  const bytes = readRegularFile(path);
+  if (bytes === undefined) return { entries: [], corruption: null };
+  // An invalid offset must never authorize accepting any unconfirmed bytes.
+  const boundary = offset === undefined ? bytes.length : offset <= bytes.length && (offset === 0 || bytes[offset - 1] === 10) ? offset : 0;
+  const text = bytes.subarray(0, boundary).toString("utf8");
   const lines = text.split("\n");
   const entries: Entry[] = [];
   let corruption: "tail" | "middle" | null = null;

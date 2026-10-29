@@ -154,7 +154,10 @@ function hydrateSnapshot(state: DeskState, snapshot: SessionSnapshot): DeskState
     }
   }
   next = { ...next, lastSequence: snapshot.sequence };
-  if (snapshot.incomplete) next = { ...next, notice: `${next.notice ? `${next.notice} ` : ""}历史记录不完整（${snapshot.corruption === "tail" ? "尾部" : "中间"}损坏）。` };
+  if (snapshot.incomplete) {
+    const reason = snapshot.corruption === "uncertain" ? "保存结果未确认" : snapshot.corruption === "tail" ? "尾部损坏" : snapshot.corruption === "middle" ? "中间损坏" : "原因未知";
+    next = { ...next, notice: `${next.notice ? `${next.notice} ` : ""}历史记录不完整（${reason}）。` };
+  }
   return next;
 }
 
