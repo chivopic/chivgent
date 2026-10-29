@@ -173,6 +173,15 @@ describe("composer and scroll", () => {
     expect(restored.notice).toContain("没有自动重放工具");
   });
 
+  it("explains an unconfirmed history save without claiming file corruption", () => {
+    const restored = reduceDesk(initialDeskState, { type: "hydrate", snapshot: {
+      hostInstanceId: "host-restored", sessionId: "session-restored", projectPath: "/tmp/project", sequence: 0,
+      runs: [], events: [], incomplete: true, corruption: "uncertain",
+    } });
+    expect(restored.notice).toContain("保存结果未确认");
+    expect(restored.notice).not.toContain("损坏");
+  });
+
   it("marks only the active run's unfinished tools unknown when the host exits or fails", () => {
     let state = reduceDesk({ ...initialDeskState, host: { phase: "ready" } }, { type: "submit", text: "检查项目" });
     state = reduceDesk(state, { type: "started", runId: "run-active" });

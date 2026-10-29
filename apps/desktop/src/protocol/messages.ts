@@ -114,7 +114,7 @@ export interface SessionSnapshot {
   readonly runs?: readonly { readonly runId: string; readonly status: "started" | "running" | "completed" | "interrupted" | "unknown"; readonly prompt: string }[];
   readonly pendingApprovals?: readonly ApprovalMessage[];
   readonly incomplete: boolean;
-  readonly corruption: "tail" | "middle" | null;
+  readonly corruption: "tail" | "middle" | "uncertain" | null;
 }
 
 export interface StartedMessage {
@@ -418,5 +418,5 @@ function isSessionSnapshot(value: unknown): value is SessionSnapshot {
       typeof (event as { event?: unknown }).event === "object" && (event as { event?: { type?: unknown } }).event !== null && typeof (event as { event: { type?: unknown } }).event.type === "string") &&
     (item.run === undefined || validRun(item.run)) && (item.runs === undefined || (Array.isArray(item.runs) && item.runs.every(validRun))) &&
     (item.pendingApprovals === undefined || (Array.isArray(item.pendingApprovals) && item.pendingApprovals.every((approval) => isHostToMain(approval) && approval.type === "approval"))) &&
-    typeof item.incomplete === "boolean" && (item.corruption === null || item.corruption === "tail" || item.corruption === "middle");
+    typeof item.incomplete === "boolean" && (item.corruption === null || item.corruption === "tail" || item.corruption === "middle" || item.corruption === "uncertain");
 }
