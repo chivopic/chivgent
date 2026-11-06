@@ -65,6 +65,9 @@ See [Agent identity](architecture.md#agent-instructions) and the
   survive late invocation errors. Unfinished tools display an unknown result
   with their existing output retained. Prompt and model length limits are
   shown before submission, and an active run uses a square stop icon.
+- If a Desktop history write cannot be confirmed, recovery preserves the log,
+  reads only the last confirmed records, and reports the uncertainty. It does
+  not restore model context or replay actions from the uncertain history.
 
 The Desktop app remains in development. This npm release distributes the CLI
 and does not include a Desktop installer. See the
