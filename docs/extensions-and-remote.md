@@ -89,6 +89,11 @@ belongs to the session rather than to whoever started it. A prompt sent while
 another is running is refused rather than queued, and a client that disconnects
 mid-run does not cancel it.
 
+The remote interactive client has no local shell executor. A line starting
+with `!` is refused locally and is not forwarded as a model prompt. The local
+interactive composer may use `!command` to run through its active session's
+configured bash tool; see [the TUI contract](tui.md).
+
 Each attached client has a pending-send budget that defaults to 4 MiB,
 including bytes already queued by its socket. `SessionServerOptions` can set a
 different positive safe-integer byte limit. If the next encoded JSONL frame

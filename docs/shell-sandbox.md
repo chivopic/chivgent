@@ -16,6 +16,15 @@ Scope availability follows the session configuration. Legacy flag sessions expos
 Interactive runs ask before every command; headless and socket-server runs deny
 commands unless `--approve-all-shell` was explicitly supplied.
 
+At the local interactive composer, a line beginning with `!` runs the remaining
+text directly through that session's registered built-in bash tool. It keeps
+the same executor, sandbox, network scope, and approval decision as a bash tool
+call. Plan Mode blocks it, and a session without bash reports that shell access
+is unavailable. The command and bounded sanitized result are saved as a user
+message and a complete bash tool-call/result pair, without adding provider
+usage. Remote interactive clients refuse `!` locally because they do not own a
+shell executor. See [the TUI interaction contract](tui.md).
+
 ## Reading truncated command output
 
 When a bash result is truncated, it includes a session-local `Output ID` and a saved state. Use `read_shell_output` with that ID and a line range to inspect earlier output; it accepts no file path. Reads are limited to 200 lines, 32 KiB returned text, and 5 MiB scanned per request. The output is sanitized before it reaches the transcript. A saved state of `incomplete` means a storage cap was reached; `unavailable` means the spill could not be saved or the reference expired. Per-output storage is capped at 5 MiB and a session at 20 MiB or 20 outputs. IDs expire after one hour of inactivity and are removed on `/clear`, session replacement, and process exit. A resumed transcript cannot restore the in-memory mapping, so old IDs return unavailable. Saving or reading shell output does not widen `read_file`'s workspace boundary or grant shell access.

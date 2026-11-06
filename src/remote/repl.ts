@@ -23,7 +23,7 @@ const HELP = `Commands:
   /status    Unavailable for a remote connection
   /exit      Leave this client (the server keeps running)
 
-Anything else is sent to the server. Ctrl+C interrupts a running answer; at the prompt it detaches.
+Anything else is sent to the server. Leading ! shell commands are unavailable remotely and are not sent. Ctrl+C interrupts a running answer; at the prompt it detaches.
 `;
 
 /**
@@ -101,6 +101,12 @@ export async function runRemoteRepl(
       } else {
         write(`Unknown command: ${trimmed}. Try /help.\n`);
       }
+      readline.prompt();
+      continue;
+    }
+
+    if (line.startsWith("!")) {
+      write("Direct shell commands are unavailable over a remote connection. The command was not sent to the server.\n");
       readline.prompt();
       continue;
     }

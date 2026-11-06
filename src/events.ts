@@ -137,6 +137,8 @@ export interface AgentEndEvent {
   readonly promptCount?: number;
   readonly sessionUsage?: UsageTotal;
   readonly compactionTranscriptHash?: string;
+  /** Snapshot produced by a user-entered local shell shortcut, without a model turn. */
+  readonly directShellSnapshot?: true;
 }
 
 /**

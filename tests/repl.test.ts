@@ -7,6 +7,8 @@ import { AgentSession } from "../src/session.js";
 import { PermissionPolicy } from "../src/permissions.js";
 import type { Tool } from "../src/tools/tool.js";
 import type { Workspace } from "../src/workspace.js";
+import { BashTool } from "../src/tools/bash.js";
+import { ShellApprovalGate } from "../src/shell/approval.js";
 import {
   assistant,
   FakeLLMClient,
@@ -85,6 +87,50 @@ describe("REPL commands", () => {
       input.write("\x03");
       expect(await result).toBe(130);
     } finally { input.end(); vi.unstubAllEnvs(); await result; }
+  });
+
+  it("runs a leading ! command in the simple local prompt without invoking the model", async () => {
+    const input = Object.assign(new PassThrough(), { isTTY: true, setRawMode(_enabled: boolean) { return this; } });
+    const output = new PassThrough();
+    let screen = "";
+    output.on("data", chunk => { screen += chunk.toString(); });
+    const execute = vi.fn(async (_command: string, _cwd: string, options: { onData?: (chunk: Buffer) => void }) => {
+      options.onData?.(Buffer.from("simple output\n"));
+      return { exitCode: 0 };
+    });
+    const gate = new ShellApprovalGate();
+    const session = new AgentSession({ agent: {
+      systemPrompt: "test", maxTurns: 1, workspace,
+      tools: [new BashTool({ cwd: "/workspace", operations: { exec: execute }, approve: (cmd, signal, context) => gate.approve(cmd, signal, context) })],
+      llm: { async complete() { throw new Error("shell command must bypass the model"); } },
+    } });
+    const done = runRepl({ session, input, output, stderr: output, shellApproval: gate });
+    try {
+      input.write("!printf  simple\n");
+      await vi.waitFor(() => expect(screen).toContain("approve>"));
+      input.write("y\n");
+      await vi.waitFor(() => expect(screen).toContain("simple output"));
+      expect(execute.mock.calls[0]?.[0]).toBe("printf  simple");
+      input.write("\u0004");
+      expect(await done).toBe(0);
+    } finally { input.end(); await done; }
+  });
+
+  it("reports a disabled shell for ! input without forwarding it to the model", async () => {
+    const input = Object.assign(new PassThrough(), { isTTY: true, setRawMode(_enabled: boolean) { return this; } });
+    const output = new PassThrough();
+    let screen = "";
+    output.on("data", chunk => { screen += chunk.toString(); });
+    const complete = vi.fn(async () => ({ message: { role: "assistant" as const, content: "unexpected", toolCalls: [] } }));
+    const session = new AgentSession({ agent: { systemPrompt: "test", maxTurns: 1, workspace, tools: [], llm: { complete } } });
+    const done = runRepl({ session, input, output, stderr: output });
+    try {
+      input.write("!echo not-forwarded\n");
+      await vi.waitFor(() => expect(screen).toContain("Shell commands are unavailable"));
+      expect(complete).not.toHaveBeenCalled();
+      input.write("\u0004");
+      expect(await done).toBe(0);
+    } finally { input.end(); await done; }
   });
 
   it("treats ordinary input as a prompt", () => {

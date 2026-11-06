@@ -219,12 +219,12 @@ const HELP = `Commands:
   /login     Store API key or sign in with subscription (/login logout to sign out)
   /exit      Leave chivgent
 
-Anything else is sent to the model. Ctrl+C stops a running answer.
+Anything else is sent to the model. A leading ! runs a local shell command directly when shell access is configured. Ctrl+C stops a running answer or shell command.
 `;
 
 function helpText(context: SlashCommandContext): string {
   const controls = context.inlineComposer
-    ? `Rich TUI input: Enter sends; Ctrl+O inserts a newline; Ctrl+R searches prompt history; arrows move the cursor. Ctrl+C clears the current draft; Ctrl+D exits when it is empty.${context.permissionPolicy === undefined ? "" : " Shift+Tab cycles Plan → Auto mode → Ask for me at the idle prompt."}\n\n`
+    ? `Rich TUI input: Enter sends; Ctrl+O inserts a newline; Ctrl+R searches prompt history; arrows move the cursor. A leading ! runs a local shell command through the active policy. Ctrl+C clears the current draft; Ctrl+D exits when it is empty.${context.permissionPolicy === undefined ? "" : " Shift+Tab cycles Plan → Auto mode → Ask for me at the idle prompt."}\n\n`
     : "";
   const exit = context.inlineComposer ? "" : "At the simple prompt Ctrl+C or Ctrl+D exits.\n";
   const extras = context.extensionCommands ?? [];
@@ -1223,6 +1223,30 @@ export async function runRepl(options: ReplOptions): Promise<number> {
           continue;
         }
         line = draft;
+      }
+      if (line.startsWith("!")) {
+        const command = line.slice(1);
+        const shownCommand = terminalText(command);
+        const commandPreview = shownCommand.length > 4_096 ? `${shownCommand.slice(0, 4_095)}…` : shownCommand;
+        write(`\n!${commandPreview}\nRunning shell command · Ctrl+C cancels\n`);
+        controller = new AbortController();
+        tuiInput?.setBusy(true);
+        let latestOutput = "";
+        try {
+          const result = await activeSession.executeShellCommand(command, controller.signal, (content) => { latestOutput = content; });
+          write(`${terminalText(result.content)}\n`);
+        } catch (error: unknown) {
+          const message = terminalText(error instanceof Error ? error.message : "Unknown error");
+          if (latestOutput.length > 0) write(`${terminalText(latestOutput).slice(-50_000)}\n`);
+          const boundedMessage = message.length > 4_096 ? `${message.slice(0, 4_095)}…` : message;
+          write(`${controller.signal.aborted ? "Shell command cancelled." : `Shell command failed: ${boundedMessage}`}\n`);
+        } finally {
+          controller = undefined;
+          tuiInput?.setBusy(false);
+        }
+        if (inputClosed) break;
+        showPrompt();
+        continue;
       }
       if (options.inlineComposer && tuiInput !== undefined) {
         const isOutputTTY = typeof options.output === "object" && options.output !== null && "isTTY" in options.output && options.output.isTTY === true;
