@@ -14,6 +14,7 @@ export interface ViewOptions {
   readonly width: number;
   readonly now: number;
   readonly height?: number;
+  readonly footerLine?: string;
 }
 
 function elapsed(from: number, now: number): string {
@@ -122,6 +123,7 @@ export function view(
     lines.push(fitLine(`  and ${hidden} more`, options.width));
   }
 
+  if (options.footerLine) lines.push(fitLine(options.footerLine, options.width));
   lines.push(statusLine(run, options.now, options.width));
 
   return lines.slice(-Math.max(1, options.height ?? lines.length));

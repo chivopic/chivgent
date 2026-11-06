@@ -45,6 +45,7 @@ npm run demo:tui
 | `/provider` | 打开供应商交互选择器；选中后若缺 Key，直接进入隐藏输入 |
 | `/provider deepseek` | 在当前会话切换到 DeepSeek，保留对话历史 |
 | `/model MODEL` | 切换当前供应商的模型 |
+| `/statusline show\|hide FIELD`、`/statusline order FIELD,...` | 选择并排序页脚字段；设置保存到 `CHIVGENT_HOME/statusline.json`（默认 `~/.chivgent/statusline.json`） |
 | `/endpoint URL` | 为 OpenAI 兼容供应商设置 API 地址 |
 | `/login`、`/login deepseek` | 先选择供应商再保存其 API Key（不回显）；`/login deepseek` 跳过选择；`/login logout` 登出订阅 |
 | `/permissions` | 查看或更改权限模式（`ask-first` / `workspace` / `unrestricted` / `plan`） |
@@ -52,7 +53,9 @@ npm run demo:tui
 | `/clear` | 清空模型会话内容，保留终端滚动历史 |
 欢迎区保持两到三行。第一行是品牌和版本，第二行只显示工作区路径：放得下就显示完整路径，放不下就保留末尾，不会收成 `~`。只有需要设置供应商、模型或端点时才多显示一条操作提示。欢迎区不显示供应商和模型。会话标识按需通过 `/session` 或 `/status` 查看，欢迎区以及 `/new`、`/resume` 的成功提示不重复显示 session ID；`/resume` 的候选列表仍显示 ID，方便选择会话。
 
-默认输入框用方框包住草稿，`›` 标出当前行。草稿为空时框内显示 Ask chivgent to do anything；这几个字不是草稿，回车不会发送。命令菜单显示在框下方。框外是一行安静的状态栏。左侧是当前供应商和模型，两者都已设置才显示，缺模型时不编造名字。同一行放得下时，后面是当前 Plan、Auto mode 或 Ask for me、Shift+Tab 的下一种模式和 `/help`。窗口较窄、模型名很长时，仍保留这段模式提示。Shift+Tab 只在空闲输入时切换；完整按键说明放在 `/help`。选择文字或打开命令菜单时，状态栏改为对应提示，暂不显示模型。占位符只在终端允许颜色时变暗。
+默认输入框用方框包住草稿，`›` 标出当前行。草稿为空时框内显示 Ask chivgent to do anything；这几个字不是草稿，回车不会发送。命令菜单显示在框下方。框外是一行安静的状态栏。左侧是当前供应商和模型，两者都已设置才显示，缺模型时不编造名字。同一行放得下时，后面是当前 Plan、Auto mode 或 Ask for me、可用时的 Shift+Tab 下一种模式和 `/help`；没有permission policy时 Plan Mode只显示`Plan · /help`。窗口较窄时先保留模式提示；执行中的页脚在运行状态行上方显示用户选定字段，运行状态及 `^C stop` 保持在最下方。Shift+Tab 只在空闲输入时切换；完整按键说明放在 `/help`。选择文字或打开命令菜单时，状态栏改为对应提示，暂不显示模型。占位符只在终端允许颜色时变暗。
+
+`/status`的权限摘要按当前process policy、Plan Mode和direct-write能力分别显示可写workspace、shell scope及network policy；Plan Mode生效时列出无写入与shell权限。context capacity只显示host传入的配置值，unknown时标记unavailable；transcript启发估算单独标明为transcript-only，累计token usage不作为当前context use。默认status/footer不查询Git；`/status --git`只在用户对该次本地只读查询确认后显示分支，失败或缺少授权数据时不猜测。页脚字段可用`identity`、`mode`、`workspace`、`context`、`session`、`tokens`、`branch`显隐和排序；branch只在本会话通过批准的`/status --git`查询后可显示，是批准时的快照而非实时监视；再次运行`/status --git`可明确刷新。设置只在`/statusline`命令执行时保存，普通绘制不会写配置或查询Git。配置文件损坏或不可读时，命令保留原文件并报告无法更改。
 
 运行区显示回答尾部、最多三个工具的最新进度、
 轮次、耗时及 token。运行完成、取消、失败或达到轮次上限时会留下结果；`tokens+` 表示有一轮

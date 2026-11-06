@@ -1,6 +1,8 @@
 import { TuiInput } from "./tui/input.js";
 import { EditorController } from "./tui/editor-input.js";
 import { readLiveGitDiff, type GitDiffMode } from "./tui/git-diff.js";
+import { readOnlyGit } from "./workspace/git-read.js";
+import { DEFAULT_FOOTER_FIELDS, FOOTER_FIELDS, formatFooterFields, parseFooterFields, readFooterFields, writeFooterFields, type FooterField } from "./tui/footer-preferences.js";
 import { displayWidth, terminalText } from "./tui/text.js";
 import { terminalColorEnabled } from "./tui/selection.js";
 import { PatchReviewController } from "./tui/review.js";
@@ -89,6 +91,8 @@ export type SlashCommandOutcome =
   | { readonly kind: "rename"; readonly title: string }
   | { readonly kind: "plan"; readonly enabled: boolean }
   | { readonly kind: "permission-mode"; readonly mode: PermissionMode }
+  | { readonly kind: "status-git" }
+  | { readonly kind: "footer-fields"; readonly fields: readonly FooterField[] }
   | { readonly kind: "new-session"; readonly title?: string }
   | { readonly kind: "resume-session"; readonly id?: string }
   /** An extension command matched; the REPL runs it, since it may be async. */
@@ -112,6 +116,10 @@ export interface SlashCommandContext {
   readonly compactionEnabled?: boolean;
   readonly providerName?: string;
   readonly modelName?: string;
+  /** Configured context-window capacity for this active session, if known. */
+  readonly contextWindow?: number;
+  readonly gitStatusReader?: (cwd: string) => Promise<string>;
+  readonly footerFields?: readonly FooterField[];
   /** Configured search provider, absent when web_search is not registered. */
   readonly webSearch?: { readonly provider: string };
   readonly permissions?: readonly string[];
@@ -159,6 +167,7 @@ export interface SignIn {
 export const BUILT_IN_COMMANDS = [
   "help",
   "status",
+  "statusline",
   "new",
   "resume",
   "rename",
@@ -187,7 +196,8 @@ export const LEGACY_COMMAND_ALIASES = [
 
 export const BUILT_IN_DESCRIPTIONS: Readonly<Record<string, string>> = {
   help: "show this help",
-  status: "show session, model, tokens & permissions",
+  status: "show live session, model, permissions & context capacity",
+  statusline: "configure visible footer fields",
   new: "save and start a fresh session",
   resume: "switch to a saved session in workspace",
   rename: "set current session title",
@@ -205,6 +215,8 @@ export const BUILT_IN_DESCRIPTIONS: Readonly<Record<string, string>> = {
 const HELP = `Commands:
   /help      Show this help
   /status    Show live session, model, permissions, plan state, and usage (alias: /session)
+  /status --git  Ask once, then show the local Git branch
+  /statusline show|hide FIELD · /statusline order FIELD,FIELD
   /compact   Summarise older history for the model; keeps the full transcript
   /plan [on|off]  Toggle restricted read-only Plan Mode
   /permissions [ask-first|workspace|unrestricted|plan]  Inspect or change this process's policy
@@ -260,9 +272,39 @@ export function handleSlashCommand(
       return "handled";
 
     case "/session":
-    case "/status":
       context.write(describeStatus(context));
       return "handled";
+    case "/status":
+      if (trimmed === "/status --git") return { kind: "status-git" };
+      if (trimmed !== "/status") {
+        context.write("Usage: /status [--git]\n");
+        return "handled";
+      }
+      context.write(describeStatus(context));
+      return "handled";
+    case "/statusline": {
+      const argument = trimmed.slice("/statusline".length).trim();
+      const [action, ...rest] = argument.split(/\s+/);
+      const value = rest.join(" ");
+      const current = context.footerFields ?? DEFAULT_FOOTER_FIELDS;
+      if (action === "order") {
+        const fields = parseFooterFields(value);
+        if (fields === undefined) context.write(`Usage: /statusline order ${FOOTER_FIELDS.join(",")} (one or more unique fields)\n`);
+        else return { kind: "footer-fields", fields };
+      } else if (action === "show" || action === "hide") {
+        if (!(FOOTER_FIELDS as readonly string[]).includes(value)) {
+          context.write(`Usage: /statusline ${action} FIELD (${FOOTER_FIELDS.join(", ")})\n`);
+        } else {
+          const field = value as FooterField;
+          const fields = action === "show"
+            ? [...current, ...(current.includes(field) ? [] : [field])]
+            : current.filter(item => item !== field);
+          if (fields.length === 0) context.write("The footer must retain at least one field.\n");
+          else return { kind: "footer-fields", fields };
+        }
+      } else context.write(`Usage: /statusline show|hide FIELD · /statusline order ${FOOTER_FIELDS.join(",")}\n`);
+      return "handled";
+    }
 
     case "/compact":
       return { kind: "compact" };
@@ -491,6 +533,25 @@ function describeStatus(context: SlashCommandContext): string {
   try { contextEstimate = `approximately ${new HeuristicTokenEstimator().estimateMessages(context.session.messages)} tokens (transcript only; excludes system prompt and tool schemas)`; }
   catch { /* inaccessible estimates are reported explicitly */ }
   const sessionFile = context.sessionFileForSession?.(context.session) ?? context.sessionFile;
+  const policy = context.permissionPolicy;
+  const writableRoots = context.session.planMode
+    ? "none (Plan Mode)"
+    : policy === undefined
+      ? context.permissions?.includes("file-write") ? `${context.session.cwd} (enabled by legacy capability)` : "none"
+      : policy.mode === "workspace" || policy.mode === "unrestricted"
+        ? context.session.cwd
+        : `${context.session.cwd} (approval required)`;
+  const shellScope = context.session.planMode
+    ? "disabled (Plan Mode)"
+    : policy === undefined
+      ? context.permissions?.includes("shell")
+        ? `legacy capability; ${context.permissions.includes("approve-all-shell") ? "commands auto-approved" : "each command requires approval"}; network ${context.permissions.includes("network") ? "enabled" : "disabled"}`
+        : "disabled"
+      : policy.mode === "unrestricted"
+        ? "host and network"
+        : policy.mode === "ask-first"
+          ? "workspace, network and host commands all require approval"
+        : "workspace by default; network/host require approval";
   const lines = [
     `provider:  ${context.providers?.provider ?? context.providerName ?? "unavailable"}`,
     `model:     ${context.providers === undefined ? context.modelName ?? "unavailable" : context.providers.model ?? "unavailable"}`,
@@ -500,6 +561,9 @@ function describeStatus(context: SlashCommandContext): string {
     `messages:  ${context.session.messages.length}`,
     `plan:      ${context.session.planMode ? "on (writes and Shell blocked for this session)" : "off"}`,
     ...(context.permissionPolicy === undefined ? [] : [`permissions: ${context.permissionPolicy.mode} (${describePermissionMode(context.permissionPolicy.mode)})`]),
+    `writable roots: ${writableRoots}`,
+    `shell scope: ${shellScope}`,
+    `network policy: ${context.session.planMode ? "disabled (Plan Mode)" : policy === undefined ? context.permissions?.includes("network") ? "enabled by legacy capability" : "disabled by legacy capability" : policy.mode === "unrestricted" ? "enabled for shell; configured web search runs without a prompt" : "disabled by default; scoped access requires approval"}`,
     ...(context.webSearch === undefined ? [] : [
       `web search: ${context.webSearch.provider}${context.permissionPolicy === undefined || context.permissionPolicy.mode === "unrestricted" ? "" : " (each query asks for approval)"}`,
     ]),
@@ -510,6 +574,7 @@ function describeStatus(context: SlashCommandContext): string {
     ] : []),
     ...usage,
     `context:   ${contextEstimate}`,
+    `context capacity: ${context.contextWindow === undefined ? "unavailable" : `${formatTokens(context.contextWindow)} tokens`}`,
     ...(sessionFile !== undefined ? [`log:       ${sessionFile}`] : []),
   ];
   return `${lines.join("\n")}\n`;
@@ -521,7 +586,7 @@ export interface ReplOptions {
   readonly inlineComposer?: boolean;
   readonly session: AgentSession;
   readonly shellApproval?: ShellApprovalGate;
-  readonly liveRegion?: Pick<LiveRegion, "pause" | "resume">;
+  readonly liveRegion?: Pick<LiveRegion, "pause" | "resume"> & Partial<Pick<LiveRegion, "setStatusline">>;
   /** Injectable read-only Git implementation for terminal integration tests. */
   readonly gitDiffReader?: typeof readLiveGitDiff;
   readonly input: NodeJS.ReadableStream;
@@ -536,6 +601,11 @@ export interface ReplOptions {
   readonly compactionEnabled?: boolean;
   readonly providerName?: string;
   readonly modelName?: string;
+  /** Configured context-window capacity; absent for hosts that do not report it. */
+  readonly contextWindow?: number;
+  /** Must only run after the user approves the /status --git prompt. */
+  readonly gitStatusReader?: (cwd: string) => Promise<string>;
+  readonly footerPreferencesFile?: string;
   /** Configured search provider, absent when web_search is not registered. */
   readonly webSearch?: { readonly provider: string };
   readonly permissions?: readonly string[];
@@ -634,9 +704,36 @@ async function runSignIn(
  */
 export async function runRepl(options: ReplOptions): Promise<number> {
   let activeSession = options.session;
+  let footerFields = DEFAULT_FOOTER_FIELDS;
+  let footerPreferencesAvailable = true;
+  if (options.footerPreferencesFile !== undefined) {
+    try { footerFields = await readFooterFields(options.footerPreferencesFile); }
+    catch { footerPreferencesAvailable = false; }
+  }
+  let approvedBranch: { readonly sessionId: string; readonly cwd: string; readonly branch: string } | undefined;
   const write = (text: string): void => {
     options.stderr.write(text);
   };
+  const footerValues = (): Partial<Record<FooterField, string | undefined>> => {
+    const mode = activeSession.planMode
+      ? options.permissionPolicy === undefined ? "Plan · /help" : "Plan · Shift+Tab Auto mode · /help"
+      : options.permissionPolicy?.mode === "workspace" ? "Auto mode · Shift+Tab Ask for me · /help"
+        : options.permissionPolicy?.mode === "unrestricted" ? "Unrestricted · Shift+Tab Plan · /help"
+          : options.permissionPolicy !== undefined ? "Ask for me · Shift+Tab Plan · /help" : "/help for shortcuts";
+    const provider = options.providers?.provider ?? options.providerName;
+    const model = options.providers === undefined ? options.modelName : options.providers.model;
+    return {
+      identity: provider && model ? `${provider} · ${model}` : undefined,
+      mode,
+      workspace: terminalText(activeSession.cwd),
+      context: options.contextWindow === undefined ? undefined : `ctx ${formatTokens(options.contextWindow)}`,
+      session: activeSession.id,
+      tokens: activeSession.usage === undefined ? undefined : `Σ ${formatTokens(activeSession.usage.usage.totalTokens)}${activeSession.usage.complete ? "" : "+"}`,
+      branch: approvedBranch?.sessionId === activeSession.id && approvedBranch.cwd === activeSession.cwd ? approvedBranch.branch : undefined,
+    };
+  };
+  const footerLine = (): string => formatFooterFields(footerFields, footerValues(), terminalWidth({ columns: (options.output as typeof options.output & { columns?: number }).columns })) || "/help for shortcuts";
+  options.liveRegion?.setStatusline?.(footerLine);
   const tuiInput = options.tui ? new TuiInput(options.input) : undefined;
   // Decode independently so readline uses normal editing for every key. Its
   // chunked-paste fast path can lose wrapped cursor rows or overwrite text
@@ -995,29 +1092,15 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       .map(message => message.content)
       .filter(message => message.length > 0)
       .slice(-100);
-    const footerIdentity = (): string | undefined => {
-      const provider = options.providers?.provider ?? options.providerName;
-      // A live Provider wins. Do not fall back to the startup model, and do
-      // not invent a name when the model or provider is still unset.
-      const model = options.providers === undefined ? options.modelName : options.providers.model;
-      if (provider === undefined || provider.length === 0 || model === undefined || model.length === 0) return undefined;
-      return `${provider} · ${model}`;
-    };
     const editor = new EditorController(output, resolveDraft, {
       submitOnEnter: isDefault,
       history: recent,
       slashCommands: commands.map(item => ({ value: item.value, label: item.label })),
       mouse: isDefault && options.tui === true && (output as typeof output & { isTTY?: boolean }).isTTY === true,
       color: isDefault && terminalColorEnabled((output as { isTTY?: boolean }).isTTY === true, process.env),
-      ...(isDefault && options.tui ? { footerIdentity } : {}),
-      ...(isDefault && options.tui && options.permissionPolicy !== undefined ? {
-        footerStatus: () => {
-          if (activeSession.planMode) return "Plan · Shift+Tab Auto mode · /help";
-          if (options.permissionPolicy?.mode === "workspace") return "Auto mode · Shift+Tab Ask for me · /help";
-          if (options.permissionPolicy?.mode === "unrestricted") return "Unrestricted · Shift+Tab Plan · /help";
-          return "Ask for me · Shift+Tab Plan · /help";
-        },
-        onShiftTab: async () => {
+      ...(isDefault && options.tui ? {
+        footerStatus: footerLine,
+        ...(options.permissionPolicy !== undefined ? { onShiftTab: async () => {
           const policy = options.permissionPolicy;
           if (policy === undefined) return;
           if (activeSession.planMode) {
@@ -1028,7 +1111,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
           } else {
             await activeSession.setPlanMode(true);
           }
-        },
+        } } : {}),
       } : {}),
     });
     const resized = (): void => { editor.resized(); };
@@ -1249,6 +1332,9 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         ...(options.compactionEnabled === undefined ? {} : { compactionEnabled: options.compactionEnabled }),
         ...(options.providerName === undefined ? {} : { providerName: options.providerName }),
         ...(options.modelName === undefined ? {} : { modelName: options.modelName }),
+        ...(options.contextWindow === undefined ? {} : { contextWindow: options.contextWindow }),
+        ...(options.gitStatusReader === undefined ? {} : { gitStatusReader: options.gitStatusReader }),
+        footerFields,
         ...(options.webSearch === undefined ? {} : { webSearch: options.webSearch }),
         ...(options.permissions === undefined ? {} : { permissions: options.permissions }),
         ...(options.permissionPolicy === undefined ? {} : { permissionPolicy: options.permissionPolicy }),
@@ -1258,6 +1344,44 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       });
       if (outcome === "exit") {
         break;
+      }
+      if (typeof outcome === "object" && outcome.kind === "status-git") {
+        approvedBranch = undefined;
+        const root = terminalText(activeSession.cwd);
+        write(`Read the local Git branch in:\n${root}\nRuns a bounded, read-only local Git query with no network, hooks, external diff or file writes. Approve once? [y/N]\n`);
+        tuiInput?.acceptLine();
+        tuiInput?.setApprovalMode(true);
+        readline.setPrompt("status-git> ");
+        readline.prompt();
+        let allowed = false;
+        try { allowed = (await readNextLine())?.trim().toLowerCase() === "y"; }
+        finally { tuiInput?.setApprovalMode(false); readline.setPrompt(REPL_PROMPT); }
+        if (!allowed) write("Git branch unavailable; no process started.\n");
+        else {
+          try {
+            const branch = await (options.gitStatusReader ?? ((cwd) => readOnlyGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])))(activeSession.cwd);
+            const cleanBranch = terminalText(branch.trim()) || undefined;
+            approvedBranch = cleanBranch === undefined ? undefined : { sessionId: activeSession.id, cwd: activeSession.cwd, branch: cleanBranch };
+            write(`branch:    ${cleanBranch ?? "unavailable"}\n`);
+          } catch { write("branch:    unavailable\n"); }
+        }
+        if (inputClosed) break;
+        showPrompt();
+        continue;
+      }
+      if (typeof outcome === "object" && outcome.kind === "footer-fields") {
+        if (options.footerPreferencesFile === undefined) write("Footer preferences cannot be saved in this session.\n");
+        else if (!footerPreferencesAvailable) write("Footer preferences could not be read; the existing file was left unchanged.\n");
+        else {
+          try {
+            await writeFooterFields(options.footerPreferencesFile, outcome.fields);
+            footerFields = outcome.fields;
+            write(`Footer fields: ${footerFields.join(", ")}\n`);
+          } catch { write("Could not save footer preferences.\n"); }
+        }
+        if (inputClosed) break;
+        showPrompt();
+        continue;
       }
       if (typeof outcome === "object" && outcome.kind === "login") {
         if (outcome.providerArgument === "__logout__") {
@@ -1413,6 +1537,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
           if (next === undefined) throw new Error("Session creation is unavailable.");
           await activeSession.close();
           activeSession = next;
+          approvedBranch = undefined;
           write(`Started a new session${next.title ? ` · ${next.title}` : ""}. Previous session saved.\n`);
         } catch (error: unknown) { write(`Could not start a new session: ${error instanceof Error ? error.message : String(error)}\n`); }
         showPrompt();
@@ -1430,6 +1555,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
             if (next === undefined) throw new Error(`Unknown session in this workspace: ${id}`);
             await activeSession.close();
             activeSession = next;
+            approvedBranch = undefined;
             write(`Resumed saved session${next.title ? ` · ${next.title}` : ""}.\n`);
           }
         } catch (error: unknown) { write(`Could not resume session: ${error instanceof Error ? error.message : String(error)}\n`); }

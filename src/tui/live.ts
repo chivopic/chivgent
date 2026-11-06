@@ -25,6 +25,7 @@ export interface LiveRegionOptions {
   readonly color?: boolean;
   /** Format interactive answers, never change piped or machine-readable output. */
   readonly markdown?: boolean;
+  readonly statusline?: () => string | undefined;
 }
 
 export interface LiveRegion {
@@ -39,6 +40,8 @@ export interface LiveRegion {
   pause(): void;
   /** Restore the live region without discarding accumulated progress. */
   resume(): void;
+  /** Replace the session aware footer callback while a run is active. */
+  setStatusline(callback: (() => string | undefined) | undefined): void;
 }
 
 /**
@@ -57,6 +60,7 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
   const formatter = new StreamingMarkdownFormatter(options.width, options.color === true);
   let pendingStreamBuffer = "";
   let streamedInThisTurn = false;
+  let statusline = options.statusline;
 
   const paint = (): void => {
     if (paused) return;
@@ -71,6 +75,7 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
       width: Math.max(1, options.width() - 1),
       height: Math.max(1, (options.height?.() ?? 24) - 2),
       now: clock(),
+      footerLine: statusline?.(),
     }));
   };
   const startClock = (): void => {
@@ -91,6 +96,7 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
   };
 
   return {
+    setStatusline: (callback): void => { statusline = callback; paint(); },
     listener: (event: AgentEvent): void => {
       if (event.type === "plan_update") {
         painter.clear();
