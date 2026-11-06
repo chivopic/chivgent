@@ -39,6 +39,9 @@ export interface LiveRegion {
   pause(): void;
   /** Restore the live region without discarding accumulated progress. */
   resume(): void;
+  /** Track only errors actually written by this region for the current prompt. */
+  clearReportedError(): void;
+  hasReportedError(message: string): boolean;
 }
 
 /**
@@ -54,6 +57,7 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
   let state: ViewState = EMPTY_STATE;
   let timer: NodeJS.Timeout | undefined;
   let paused = false;
+  let reportedError: string | undefined;
   const formatter = new StreamingMarkdownFormatter(options.width, options.color === true);
   let pendingStreamBuffer = "";
   let streamedInThisTurn = false;
@@ -147,6 +151,7 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
       state = reduce(state, event, clock());
 
       if (event.type === "agent_start") {
+        reportedError = undefined;
         pendingStreamBuffer = "";
         streamedInThisTurn = false;
         formatter.reset();
@@ -167,19 +172,20 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
         pendingStreamBuffer = "";
         streamedInThisTurn = false;
         formatter.reset();
-        const label = event.status === "completed" ? "Completed"
-          : event.status === "aborted" ? "Stopped"
-          : event.status === "max_turns" ? "Turn limit reached" : "Failed";
-        const parts = [label, `${event.turnCount} turn(s)`];
+        const label = event.status === "completed" ? "✓ Completed"
+          : event.status === "aborted" ? "■ Stopped"
+          : event.status === "max_turns" ? "! Turn limit reached" : "! Failed";
+        const parts = [label, `${event.turnCount} ${event.turnCount === 1 ? "turn" : "turns"}`];
         if (previous.run !== undefined) {
           parts.push(`${Math.max(0, Math.round((clock() - previous.run.startedAt) / 1000))}s`);
         }
-        if (event.usage !== undefined) {
+        if (event.usage !== undefined && (event.usage.complete || event.usage.usage.totalTokens > 0)) {
           parts.push(`${formatTokens(event.usage.usage.totalTokens)} tokens${event.usage.complete ? "" : "+"}`);
         }
         options.stream.write(`${fitLine(parts.join(" · "), options.width() - 1)}\n`);
         if (event.error !== undefined) {
           options.stream.write(`${terminalText(event.error)}\n`);
+          reportedError = event.error;
         }
         return;
       }
@@ -203,10 +209,14 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
       }
     },
 
+    clearReportedError: (): void => { reportedError = undefined; },
+    hasReportedError: (message: string): boolean => reportedError === message,
+
     stop: (): void => {
       stopClock();
       painter.clear();
       state = EMPTY_STATE;
+      reportedError = undefined;
       pendingStreamBuffer = "";
       streamedInThisTurn = false;
       formatter.reset();
@@ -222,6 +232,7 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
       stopClock();
       painter.clear();
       state = EMPTY_STATE;
+      reportedError = undefined;
       pendingStreamBuffer = "";
       streamedInThisTurn = false;
       formatter.reset();

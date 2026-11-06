@@ -521,7 +521,7 @@ export interface ReplOptions {
   readonly inlineComposer?: boolean;
   readonly session: AgentSession;
   readonly shellApproval?: ShellApprovalGate;
-  readonly liveRegion?: Pick<LiveRegion, "pause" | "resume">;
+  readonly liveRegion?: Pick<LiveRegion, "pause" | "resume"> & Partial<Pick<LiveRegion, "clearReportedError" | "hasReportedError">>;
   /** Injectable read-only Git implementation for terminal integration tests. */
   readonly gitDiffReader?: typeof readLiveGitDiff;
   readonly input: NodeJS.ReadableStream;
@@ -1467,6 +1467,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
 
       controller = new AbortController();
       tuiInput?.setBusy(true);
+      options.liveRegion?.clearReportedError?.();
       try {
         const signal = controller.signal;
         const prompt = () => activeSession.prompt(line, { signal, questionPresenter });
@@ -1474,7 +1475,9 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         else await prompt();
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Unknown error";
-        write(`Agent failed: ${message}\n`);
+        // The live region already printed this agent_end error. Errors before
+        // agent_end, or a different later error, still need their own report.
+        if (options.liveRegion?.hasReportedError?.(message) !== true) write(`Agent failed: ${message}\n`);
       } finally {
         controller = undefined;
         tuiInput?.setBusy(false);

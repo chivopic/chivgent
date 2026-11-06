@@ -33,6 +33,20 @@ function recorder() {
 }
 
 describe("view", () => {
+  it("animates the running indicator without hiding the stop shortcut", () => {
+    const first = view(state(), { width: 80, now: NOW })[0] ?? "";
+    const next = view(state(), { width: 80, now: NOW + 1_000 })[0] ?? "";
+    expect(first[0]).not.toBe(next[0]);
+    expect(first).toContain("thinking");
+    expect(first).toContain("ctrl+c to stop");
+  });
+
+  it("describes a running file read as an action while retaining its target", () => {
+    const lines = view(state({ status: "running-tools", running: [{
+      toolCallId: "read-1", name: "read_file", target: "src/agent.ts", progress: "", startedAt: NOW - 2_000,
+    }] }), { width: 80, now: NOW });
+    expect(lines[0]).toContain("Reading src/agent.ts");
+  });
   it("keeps the status visible in a short narrow terminal", () => {
     const lines = view(state({ text: "one\ntwo\nthree" }), { width: 8, height: 1, now: NOW });
     expect(lines).toEqual(["^C stop"]);
@@ -70,14 +84,14 @@ describe("view", () => {
       now: NOW,
     });
 
-    expect(lines.slice(0, 3)).toEqual(["three", "four", "five"]);
+    expect(lines.slice(0, 3)).toEqual([" three", " four", " five"]);
   });
 
   it("keeps newly streamed text visible on a long single line", () => {
     const lines = view(state({ text: "old context ".repeat(12) + "最新回答👩‍💻" }), {
       width: 18, now: NOW,
     });
-    expect(lines[0]).toMatch(/^…/);
+    expect(lines[0]).toMatch(/^ …/);
     expect(lines[0]).toContain("最新回答👩‍💻");
   });
 
@@ -98,7 +112,7 @@ describe("view", () => {
       { width: 120, now: NOW },
     );
 
-    expect(lines[0]).toContain("bash npm test");
+    expect(lines[0]).toContain("Shell npm test");
     expect(lines[0]).toContain("(2s)");
     expect(lines[0]).toContain("newest line");
     expect(lines[0]).not.toContain("old line");
@@ -109,7 +123,7 @@ describe("view", () => {
       toolCallId: "a", name: "read_file", target: "/long/parent/directory/with/many/segments/src/component.ts",
       progress: "initial\nall checks passed", startedAt: NOW - 2_000,
     }] }), { width: 58, now: NOW });
-    expect(lines[0]).toContain("read_file");
+    expect(lines[0]).toContain("Reading");
     expect(lines[0]).toContain("component.ts");
     expect(lines[0]).toContain("all checks passed");
     expect(lines[0]).not.toContain("initial");
@@ -118,7 +132,7 @@ describe("view", () => {
       toolCallId: "a", name: "read_file", target: "/parent/path/component.ts",
       progress: "all checks passed", startedAt: NOW - 2_000,
     }] }), { width: 24, now: NOW });
-    expect(narrow[0]).toContain("read_file");
+    expect(narrow[0]).toContain("Reading");
     expect(narrow[0]).toContain("passed");
     expect(narrow[0]).not.toContain("(…");
   });
@@ -143,7 +157,7 @@ describe("view", () => {
     const lines = view(state({ text: "x".repeat(200) }), { width: 40, now: NOW });
 
     expect(lines[0]).toHaveLength(40);
-    expect(lines[0]?.startsWith("…")).toBe(true);
+    expect(lines[0]?.startsWith(" …")).toBe(true);
   });
 
   it("flags a total that is missing a turn", () => {
