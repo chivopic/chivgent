@@ -1,5 +1,9 @@
-import type { Agent } from "../agent.js";
-import { Agent as AgentClass } from "../agent.js";
+import { Agent, type AgentOptions } from "../agent.js";
+import { AgentSession } from "../session.js";
+import { FileSessionStore, type SessionStore } from "../session-store.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import path from "node:path";
+import { tmpdir } from "node:os";
 import type { AgentEvent } from "../events.js";
 import type { LLMClient } from "../llm.js";
 import type { UsageTotal } from "../providers/usage.js";
@@ -71,6 +75,8 @@ export interface RunnerOptions {
   readonly createClient: () => LLMClient;
   /** Test-only execution override; the default is the Docker sandbox. */
   readonly shellOperations?: ShellOperations;
+  /** Test seam for session recovery failures; production uses FileSessionStore. */
+  readonly createSessionStore?: (home: string) => SessionStore;
   readonly systemPrompt: string;
   readonly capabilities: readonly Capability[];
   readonly attempts?: number;
@@ -107,10 +113,14 @@ async function runAttempt(
   const events: AgentEvent[] = [];
   const startedAt = Date.now();
   let compactionCount = 0;
+  let store: SessionStore | undefined;
+  let sessionRoot: string | undefined;
+  let session: AgentSession | undefined;
+  let ordinaryAgent: Agent | undefined;
 
   try {
     const llm = options.createClient();
-    const agent: Agent = new AgentClass({
+    const agent: Omit<AgentOptions, "onEvent"> = {
       systemPrompt: options.systemPrompt,
       maxTurns: task.maxTurns,
       llm,
@@ -129,27 +139,81 @@ async function runAttempt(
           onCompaction: () => { compactionCount += 1; },
         }),
       }),
-      onEvent: (event) => events.push(event),
-    });
+    };
+    const followUps = task.followUps ?? [];
+    const prompts = [task.prompt, ...followUps];
+    const recoverAfter = new Set(task.recoverAfter ?? []);
+    const sessionId = `eval-${task.name.replaceAll(/[^A-Za-z0-9_-]/g, "-").slice(0, 32)}-${attempt}`;
+    if (followUps.length === 0) {
+      // Keep ordinary benchmark tasks on their original stateless Agent path.
+      ordinaryAgent = new Agent({ ...agent, onEvent: (event) => events.push(event) });
+    } else {
+      sessionRoot = await mkdtemp(path.join(tmpdir(), "chivgent-eval-session-"));
+      store = options.createSessionStore?.(sessionRoot) ?? new FileSessionStore(sessionRoot);
+      session = new AgentSession({ agent, id: sessionId, cwd: workspace.path, store });
+      session.subscribe((event) => events.push(event));
+    }
 
     let status: AttemptFacts["status"] = "error";
     let finalAnswer = "";
     let turnCount = 0;
     let usage: UsageTotal | undefined;
     try {
-      const result = await agent.run(task.prompt, {
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
-      });
-      status = result.status;
-      turnCount = result.turnCount;
-      usage = result.usage;
-      finalAnswer =
-        result.status === "completed" ? result.finalMessage.content : "";
+      if (session === undefined) {
+        const result = await ordinaryAgent!.run(task.prompt, {
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        });
+        status = result.status;
+        turnCount = result.turnCount;
+        usage = result.usage;
+        finalAnswer = result.status === "completed" ? result.finalMessage.content : "";
+      } else {
+        for (const [index, prompt] of prompts.entries()) {
+          const result = await session.prompt(prompt, {
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+          });
+          status = result.status;
+          turnCount += result.turnCount;
+          finalAnswer = result.status === "completed" ? result.finalMessage.content : "";
+          if (result.status !== "completed") break;
+
+          // Recovery follows the production JSONL read/validation path.
+          if (recoverAfter.has(index + 1)) {
+            await store!.flush?.();
+            const saved = await store!.read(sessionId);
+            if (saved === undefined) throw new Error("Eval session recovery could not read its saved session.");
+            await session.close();
+            session = new AgentSession({
+              agent,
+              id: sessionId,
+              cwd: workspace.path,
+              store: store!,
+              messages: saved.messages,
+              ...(saved.compaction === undefined ? {} : { compaction: saved.compaction }),
+              ...(saved.usage === undefined ? {} : { usage: saved.usage }),
+              promptCount: saved.promptCount,
+              ...(saved.title === undefined ? {} : { title: saved.title }),
+              planMode: saved.planMode,
+              resumed: true,
+            });
+            session.subscribe((event) => events.push(event));
+          }
+        }
+        usage = session.usage;
+        // A failed Provider request still emits turn_start but no run result;
+        // count the whole conversation from events so in-flight failed turns
+        // are visible in the benchmark report.
+        turnCount = events.filter((event) => event.type === "turn_start").length;
+      }
     } catch (error: unknown) {
       // A crashed run is a failed attempt, not a failed eval run: the point is
       // to measure how often this happens, not to stop at the first one.
       status = "error";
       finalAnswer = error instanceof Error ? error.message : String(error);
+      usage = session?.usage;
+      if (session !== undefined) {
+        turnCount = events.filter((event) => event.type === "turn_start").length;
+      }
     }
 
     const facts: AttemptFacts = {
@@ -216,7 +280,17 @@ async function runAttempt(
       failures,
     };
   } finally {
-    await workspace.dispose();
+    try {
+      await store?.flush?.().catch(() => undefined);
+      await session?.close();
+      await ordinaryAgent?.close();
+    } finally {
+      try {
+        if (sessionRoot !== undefined) await rm(sessionRoot, { recursive: true, force: true });
+      } finally {
+        await workspace.dispose();
+      }
+    }
   }
 }
 

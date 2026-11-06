@@ -1,0 +1,30 @@
+{
+  "name": "long-session-correction-recovery",
+  "attempts": 3,
+  "maxTurns": 12,
+  "capabilities": [],
+  "prompt": "We are auditing a release. The current rollout route is MEADOW. Read archive.txt and then logs/part1.txt, logs/part2.txt, logs/part3.txt, in that exact order. Read every file fully. Make exactly one read_file call per assistant turn; do not batch calls. Keep the archive release code in memory, but do not repeat it in your response. After all four reads, reply only READY.",
+  "followUps": [
+    "Correction: replace the old rollout-route decision. The route is now HARBOR; MEADOW is obsolete. Continue the audit by reading logs/part4.txt, logs/part5.txt, logs/part6.txt, in order, one read_file call per assistant turn. Do not reread archive.txt or earlier logs. After all three reads reply only READY.",
+    "The process was restarted. Without calling any tools or rereading files, reply exactly RELEASE_CODE=<the code from archive.txt>; ROUTE=<the latest route>. Use the code remembered from the earlier audit and the corrected route."
+  ],
+  "recoverAfter": [
+    2
+  ],
+  "graders": [
+    {
+      "type": "answer-matches",
+      "pattern": "^RELEASE_CODE=CEDAR-731; ROUTE=HARBOR[.!]?$"
+    },
+    {
+      "type": "used-tool",
+      "name": "read_file"
+    },
+    {
+      "type": "max-tool-calls",
+      "name": "read_file",
+      "count": 7
+    }
+  ],
+  "contextWindow": 6000
+}
