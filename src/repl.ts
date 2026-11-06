@@ -1396,7 +1396,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       if (typeof outcome === "object" && outcome.kind === "plan") {
         try {
           await activeSession.setPlanMode(outcome.enabled);
-          write(`Plan Mode ${activeSession.planMode ? "on" : "off"}. ${activeSession.planMode ? "Only built-in read tools and update_plan may execute." : "Session capabilities restored."}\n`);
+          write(`Plan Mode ${activeSession.planMode ? "on" : "off"}. ${activeSession.planMode ? "Built-in read tools, configured web_search, update_plan, and question may execute." : "Session capabilities restored."}\n`);
         } catch (error: unknown) { write(`Could not change Plan Mode: ${error instanceof Error ? error.message : String(error)}\n`); }
         showPrompt();
         continue;
