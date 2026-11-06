@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -32,6 +32,37 @@ const request: LLMRequest = { systemPrompt: "test", tools: [], messages: [{ role
 const answer = { message: { role: "assistant" as const, content: "done", toolCalls: [] } };
 
 describe("OAuth provider integration", () => {
+  it("remembers the current Provider after a successful subscription sign-in", async () => {
+    const file = await credentialFile();
+    const saved = { type: "oauth" as const, provider: "xai" as const, clientId: "test", accessToken: "subscription-token", expiresAt: Date.now() + 3600000, scopes: ["api:access"] };
+    vi.spyOn(oauth, "signInXAI").mockImplementation(async () => {
+      await writeOAuthCredential(saved, file);
+      return saved;
+    });
+    const proxy = new DeferredLLMClient("not configured");
+    const control = new InteractiveProvider(parseCliArgs(["--provider", "xai", "--model", "test"], {}), proxy,
+      defaultProviderRegistry, {}, path.join(path.dirname(file), "auth.json"));
+    expect(await control.oauth("xai")).toBeUndefined();
+    expect(JSON.parse(await readFile(path.join(path.dirname(file), "provider.json"), "utf8"))).toEqual({ provider: "xai" });
+    expect(control.ready()).toBe(true);
+  });
+
+  it("keeps a successful subscription sign-in active when the Provider selection cannot be saved", async () => {
+    const file = await credentialFile();
+    await mkdir(path.join(path.dirname(file), "provider.json"));
+    const saved = { type: "oauth" as const, provider: "xai" as const, clientId: "test", accessToken: "subscription-token", expiresAt: Date.now() + 3600000, scopes: ["api:access"] };
+    vi.spyOn(oauth, "signInXAI").mockImplementation(async () => {
+      await writeOAuthCredential(saved, file);
+      return saved;
+    });
+    const proxy = new DeferredLLMClient("not configured");
+    const control = new InteractiveProvider(parseCliArgs(["--provider", "xai", "--model", "test"], {}), proxy,
+      defaultProviderRegistry, {}, path.join(path.dirname(file), "auth.json"));
+    expect(await control.oauth("xai")).toContain("Signed in to xai for this session, but could not save");
+    expect(control.ready()).toBe(true);
+    expect(await oauth.readOAuthCredentials(file)).toHaveLength(1);
+  });
+
   it("keeps explicit OAuth across model switches, switches back to an entered key, and logs out independently", async () => {
     const file = await credentialFile();
     const saved = { type: "oauth" as const, provider: "xai" as const, clientId: "test", accessToken: "subscription-token", expiresAt: Date.now() + 3600000, scopes: ["api:access"] };

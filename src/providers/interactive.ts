@@ -84,6 +84,11 @@ export class InteractiveProvider implements SignIn, ProviderControl {
       }
       this.oauthModes.add(provider);
       this.llm.set(new OAuthRefreshingLLMClient(provider, model ?? "", this.oauthFile));
+      try {
+        await writeProviderPreference(path.join(path.dirname(this.authFile), "provider.json"), provider, this.registry);
+      } catch {
+        return `Signed in to ${provider} for this session, but could not save the Provider selection for next time.\n`;
+      }
       return undefined;
     } catch (error: unknown) {
       return `${error instanceof Error ? error.message : "OAuth sign-in failed."}\n`;
