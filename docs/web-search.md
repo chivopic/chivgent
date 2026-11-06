@@ -40,6 +40,10 @@ configured search provider. The approval prompt wraps long queries instead of
 truncating them, so the user sees what leaves the machine. A denial, a missing
 approval channel, or cancellation produces a tool error and no request.
 
+In Plan Mode, the configured built-in `web_search` remains available under the
+same authorization rules. It runs exclusively, not in parallel with reads.
+Plan Mode still blocks shell commands and does not enable search on its own.
+
 The tool authorizes the query inside its own execution path. An extension, an
 Agent-level `authorizeToolCall`, or injected context cannot replace that check.
 Extensions cannot register a tool named `web_search`.

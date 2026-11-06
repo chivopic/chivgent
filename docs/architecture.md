@@ -52,10 +52,11 @@ only while the Agent is awaiting the question. The rich TUI temporarily hands
 input to the question prompt, then restores its composer. Question answers are
 requirements only; they cannot change permission mode, approve a write or shell
 command, or start execution after Plan Mode. Plan Mode exposes only the exact
-built-in question implementation alongside its existing read tools and
-`update_plan`; question remains an exclusive tool and never joins parallel
-reads. Headless and remote paths do not have a question presenter in this
-release and receive an unavailable result rather than waiting. The Desktop host has
+built-in question implementation alongside its existing read tools,
+configured `web_search`, and `update_plan`; question and web search remain
+exclusive tools and never join parallel reads. Headless and remote paths do not
+have a question presenter in this release and receive an unavailable result rather
+than waiting. The Desktop host has
 no presenter in this release and returns an unavailable tool result immediately
 without opening UI.
 

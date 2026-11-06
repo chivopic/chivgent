@@ -92,7 +92,7 @@ chivgent --continue                                      # last session in this 
 
 `--permission-mode` replaces the flags for this process. It cannot be combined with `--allow-writes`, `--allow-shell`, `--approve-all-shell`, or `--shell-network`, and it cannot be used with `--serve` or `--connect`. `/permissions` inspects or changes the mode, only in a session that started with one. The choice is not saved in the transcript. Resuming a session uses the mode you selected at startup, not a broader one from last time.
 
-`/plan` is separate. It keeps the agent on read tools and a plan. Writes, shell, and extension tools stay blocked even if the model asks for them.
+`/plan` is separate. It allows read tools and configured `web_search`, with its normal query approval; writes, shell, and extension tools stay blocked even if the model asks for them.
 
 ## Web search
 
