@@ -131,7 +131,7 @@ You pay the provider you picked, at their prices. chivgent shows token counts; i
 
 | Provider | `--provider` | Key | Model |
 | --- | --- | --- | --- |
-| OpenAI, Responses API | `openai` (default) | `OPENAI_API_KEY` | `gpt-5.6` |
+| OpenAI, Responses API | `openai` | `OPENAI_API_KEY` | `gpt-5.6` |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-flash` |
 | Any compatible endpoint | `openai-compatible` | `OPENAI_API_KEY` and `OPENAI_BASE_URL` | set `OPENAI_MODEL` |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | set `OPENROUTER_MODEL` |
@@ -140,6 +140,8 @@ You pay the provider you picked, at their prices. chivgent shows token counts; i
 | Moonshot | `moonshot` | `MOONSHOT_API_KEY` | set `MOONSHOT_MODEL` |
 
 `--model` overrides the model variable. Keys resolve in this order: `--api-key`, then the environment variable, then `~/.chivgent/auth.json`. A custom base URL receives your key and your prompts. Point it only at an endpoint you trust.
+
+The default Provider is OpenAI. In a local interactive session, `/provider` remembers a selected built-in Provider for later interactive starts; `--provider` takes precedence. One-shot and server runs continue to default to OpenAI. Custom compatible endpoints are not remembered. See [TUI](docs/tui.md) for details.
 
 A compatible endpoint must implement `POST /chat/completions` with tool calling. Changing the base URL does not guarantee full compatibility. [Architecture](docs/architecture.md#openai-compatible-providers).
 

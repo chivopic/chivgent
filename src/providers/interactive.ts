@@ -10,6 +10,7 @@ import { createConfiguredClient } from "./client.js";
 import { DeferredLLMClient } from "./deferred-client.js";
 import { OAuthRefreshingLLMClient } from "./oauth-client.js";
 import { defaultProviderRegistry, type ProviderRegistry } from "./registry.js";
+import { writeProviderPreference } from "./preference.js";
 
 interface Choice {
   readonly provider: string;
@@ -135,7 +136,19 @@ export class InteractiveProvider implements SignIn, ProviderControl {
     if (!this.registry.has(id)) {
       return { ok: false, message: "Unknown Provider. Use /provider to see the available choices.\n" };
     }
-    return this.configure(id);
+    const result = await this.configure(id);
+    if (!result.ok) return result;
+    // A custom endpoint can share OPENAI_API_KEY with OpenAI. Restoring it on
+    // startup could send that key to an endpoint selected in an earlier run.
+    if (this.registry.get(id).requiresBaseURL) {
+      return { ...result, message: `${result.message}Custom endpoint selection applies to this session only.\n` };
+    }
+    try {
+      await writeProviderPreference(path.join(path.dirname(this.authFile), "provider.json"), id, this.registry);
+      return result;
+    } catch {
+      return { ...result, message: `${result.message}Could not save Provider selection; it will not be restored next time.\n` };
+    }
   }
 
   async changeModel(model: string): Promise<ProviderSelection> {

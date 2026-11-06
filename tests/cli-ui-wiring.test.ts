@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PermissionPolicy } from "../src/permissions.js";
 import { ShellApprovalGate } from "../src/shell/approval.js";
 import type { ProviderControl } from "../src/repl.js";
@@ -33,7 +36,7 @@ const harness = vi.hoisted(() => {
       exitCode: 0,
     },
     runRepl: vi.fn(async (_options: Record<string, unknown>) => 0),
-    createConfiguredClient: vi.fn(async () => ({})),
+    createConfiguredClient: vi.fn(async (_options: unknown) => ({})),
     createLocalSession: vi.fn((_config: Record<string, unknown>) => ({
       id: "session-test",
       subscribe: vi.fn(() => () => undefined),
@@ -66,14 +69,39 @@ vi.mock("../src/render.js", () => ({
 }));
 
 const { main } = await import("../src/cli.js");
+const home = mkdtempSync(path.join(os.tmpdir(), "chivgent-ui-wiring-"));
+afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 describe("CLI terminal UI wiring", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    harness.process.env = {};
+    rmSync(path.join(home, "provider.json"), { force: true });
+    harness.process.env = { CHIVGENT_HOME: home };
     harness.process.stdin.isTTY = true;
     harness.process.stdout.isTTY = true;
     harness.process.stderr.isTTY = true;
+  });
+
+  it("restores the chosen Provider for a new interactive session and honors an explicit override", async () => {
+    writeFileSync(path.join(home, "provider.json"), JSON.stringify({ provider: "deepseek" }));
+    expect(await main(["--no-session", "--no-extensions"])).toBe(0);
+    expect(harness.createConfiguredClient.mock.calls[0]?.[0]).toMatchObject({ provider: "deepseek", model: "deepseek-flash" });
+    vi.clearAllMocks();
+    expect(await main(["--no-session", "--no-extensions", "--provider", "openai"])).toBe(0);
+    expect(harness.createConfiguredClient.mock.calls[0]?.[0]).toMatchObject({ provider: "openai", model: "gpt-5.6" });
+  });
+
+  it("does not apply the saved Provider to an explicit one-run API key", async () => {
+    writeFileSync(path.join(home, "provider.json"), JSON.stringify({ provider: "deepseek" }));
+    expect(await main(["--no-session", "--no-extensions", "--api-key", "test-key"])).toBe(0);
+    expect(harness.createConfiguredClient.mock.calls[0]?.[0]).toMatchObject({ provider: "openai", apiKey: "test-key" });
+  });
+
+  it("does not silently use a different Provider when the saved selection is malformed", async () => {
+    writeFileSync(path.join(home, "provider.json"), "{");
+    await expect(main(["--no-session", "--no-extensions"])).rejects.toThrow("Invalid Provider preference");
+    expect(harness.createConfiguredClient).not.toHaveBeenCalled();
+    expect(await main(["--no-session", "--no-extensions", "--provider", "openai"])).toBe(0);
   });
 
   it("wires default local TTY sessions to the live region and inline composer", async () => {

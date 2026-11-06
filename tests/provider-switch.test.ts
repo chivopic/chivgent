@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -55,6 +55,37 @@ async function setup() {
 }
 
 describe("interactive Provider selection", () => {
+  it("remembers an explicitly selected Provider across restarts without storing its key in preferences", async () => {
+    const { control, authFile } = await setup();
+    expect((await control.select("second")).ok).toBe(true);
+    expect(await control.submit("second-test-key")).toBeUndefined();
+    const preference = JSON.parse(await readFile(path.join(path.dirname(authFile), "provider.json"), "utf8"));
+    expect(preference).toEqual({ provider: "second" });
+    expect(JSON.parse(await readFile(authFile, "utf8"))).toMatchObject({ second: "second-test-key" });
+  });
+
+  it("preserves other preference fields and reports a failed save without discarding the active selection", async () => {
+    const { control, authFile } = await setup();
+    const file = path.join(path.dirname(authFile), "provider.json");
+    await writeFile(file, JSON.stringify({ provider: "first", futureSetting: "keep" }));
+    expect((await control.select("second")).ok).toBe(true);
+    expect(JSON.parse(await readFile(file, "utf8"))).toEqual({ provider: "second", futureSetting: "keep" });
+    await rm(file);
+    await mkdir(file);
+    const result = await control.select("first");
+    expect(result.ok).toBe(true);
+    expect(result.message).toContain("Could not save Provider selection");
+    expect(control.provider).toBe("first");
+  });
+
+  it("does not restore a custom endpoint that could receive an unrelated environment key", async () => {
+    const { control, authFile } = await setup();
+    await control.select("first");
+    const result = await control.select("custom");
+    expect(result.message).toContain("session only");
+    expect(JSON.parse(await readFile(path.join(path.dirname(authFile), "provider.json"), "utf8"))).toEqual({ provider: "first" });
+  });
+
   it("switches clients without losing conversation history, then restores a previous Provider", async () => {
     const { control, session, authFile, requests } = await setup();
     expect((await control.select("first")).ok).toBe(true);

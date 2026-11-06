@@ -48,6 +48,8 @@ import type { Message } from "./messages.js";
 import { createConfiguredClient } from "./providers/client.js";
 import { DeferredLLMClient } from "./providers/deferred-client.js";
 import { InteractiveProvider } from "./providers/interactive.js";
+import { providerPreferenceFile, readProviderPreference } from "./providers/preference.js";
+import { defaultProviderRegistry } from "./providers/registry.js";
 import { webSearchProviderName } from "./websearch/backend.js";
 
 const EXIT_INTERRUPTED = 130;
@@ -183,7 +185,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     const { runUpdate } = await import("./update.js");
     return runUpdate(argv.slice(1), { version: VERSION });
   }
-  const options = parseCliArgs(argv, process.env);
+  let options = parseCliArgs(argv, process.env);
   if (options.help) {
     process.stdout.write(helpText());
     return 0;
@@ -230,6 +232,15 @@ export async function main(argv: readonly string[]): Promise<number> {
   if (!options.serve && interactive && process.stdin.isTTY !== true) {
     process.stderr.write("Missing prompt. Run chivgent --help for usage.\n");
     return 1;
+  }
+
+  // Restore only in local interactive sessions. A scripted invocation or an
+  // explicit key must not silently send a request to a different Provider.
+  const optionArguments = argv.slice(0, argv.indexOf("--") === -1 ? argv.length : argv.indexOf("--"));
+  if (interactive && !options.serve && !options.json && process.stdin.isTTY === true &&
+      !optionArguments.includes("--provider") && !optionArguments.includes("--api-key")) {
+    const preferred = await readProviderPreference(providerPreferenceFile(process.env), defaultProviderRegistry);
+    if (preferred !== undefined) options = parseCliArgs(argv, process.env, defaultProviderRegistry, preferred);
   }
 
   const richTui = useTui({
