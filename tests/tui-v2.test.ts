@@ -4,6 +4,7 @@ import type { Message } from "../src/messages.js";
 import { DIFF_PAGE_LINES, mostRecentSuccessfulPatch, formatDiffPage } from "../src/tui/diff.js";
 import { formatTerminalMarkdown } from "../src/tui/markdown.js";
 import { createLiveRegion } from "../src/tui/live.js";
+import { displayWidth } from "../src/tui/text.js";
 
 describe("paginated patch review", () => {
   const patch = ["*** Begin Patch", "*** Update File: src/main.ts", "@@", "-old", "+new", "*** End Patch"].join("\n");
@@ -48,6 +49,25 @@ describe("paginated patch review", () => {
 });
 
 describe("terminal Markdown", () => {
+  it("wraps long answers and code without dropping their contents", () => {
+    const prose = "中文回答".repeat(18) + "END-OF-ANSWER";
+    const code = "const value = '" + "x".repeat(80) + "END-OF-CODE';";
+    const renderedProse = formatTerminalMarkdown(prose, 20);
+    expect(renderedProse.replace(/\n ?/g, "").trim()).toBe(prose);
+    expect(renderedProse.split("\n").every(line => displayWidth(line) <= 19)).toBe(true);
+    const renderedCode = formatTerminalMarkdown(`\`\`\`js\n${code}\n\`\`\``, 20);
+    const codeLines = renderedCode.split("\n").filter(line => line.startsWith("  │ "));
+    expect(codeLines.map(line => line.slice(4)).join("")).toBe(code);
+    expect(renderedCode.split("\n").every(line => displayWidth(line) <= 19)).toBe(true);
+  });
+
+  it("wraps prose at word boundaries without losing spaces", () => {
+    const prose = "one two three four five six";
+    const rows = formatTerminalMarkdown(prose, 14).split("\n");
+    expect(rows[0]).toBe(" one two ");
+    expect(rows.map(row => row.slice(1)).join("")).toBe(prose);
+  });
+
   const markdown = [
     "# Overview",
     "",

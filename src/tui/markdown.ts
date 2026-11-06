@@ -1,5 +1,39 @@
-import { fitLine, terminalText } from "./text.js";
+import { displayWidth, fitLine, terminalText } from "./text.js";
 import { highlightCodeLine } from "./syntax.js";
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** Wrap complete graphemes without replacing or discarding answer text. */
+function wrap(text: string, width: number, words: boolean): string[] {
+  const lines: string[] = [];
+  const segments = Array.from(graphemes.segment(text), item => item.segment);
+  let start = 0;
+  while (start < segments.length) {
+    let end = start;
+    let used = 0;
+    let breakAfter = start;
+    while (end < segments.length) {
+      const segment = segments[end]!;
+      const cells = displayWidth(segment);
+      if (end > start && used + cells > width) break;
+      used += cells;
+      end += 1;
+      if (/\s/u.test(segment)) breakAfter = end;
+    }
+    if (words && end < segments.length && breakAfter > start) end = breakAfter;
+    lines.push(segments.slice(start, end).join(""));
+    start = end;
+  }
+  return lines.length === 0 ? [""] : lines;
+}
+
+function wrapped(text: string, width: number, prefix: string, continuation = prefix, words = true): string[] {
+  // Tiny terminals cannot accommodate a gutter; retain the text instead.
+  const first = displayWidth(prefix) < width ? prefix : "";
+  const rest = displayWidth(continuation) < width ? continuation : "";
+  const available = Math.max(1, width - Math.max(displayWidth(first), displayWidth(rest)));
+  return wrap(text, available, words).map((line, index) => `${index === 0 ? first : rest}${line}`);
+}
 
 /**
  * Small terminal-focused renderer. No HTML, no remote resource fetching,
@@ -31,26 +65,31 @@ export class StreamingMarkdownFormatter {
     }
 
     if (this.fenced !== undefined) {
-      const body = fitLine(line, Math.max(1, width - 4));
-      return this.color ? `\u001b[36m  │ \u001b[0m${highlightCodeLine(body, this.fenced)}` : `  │ ${body}`;
+      const language = this.fenced;
+      return wrapped(line, width, "  │ ", "  │ ", false).map((row) => {
+        if (!this.color) return row;
+        const prefix = row.startsWith("  │ ") ? "  │ " : "";
+        return `${prefix ? `\u001b[36m${prefix}\u001b[0m` : ""}${highlightCodeLine(row.slice(prefix.length), language)}`;
+      }).join("\n");
     }
 
     const heading = /^(#{1,4})\s+(.+)$/.exec(line);
     if (heading !== null) {
-      const title = fitLine(`${" ".repeat(Math.max(0, heading[1]!.length - 1))}${heading[2]}`, width);
-      return this.color ? `\u001b[1m${title}\u001b[0m` : title;
+      const title = wrapped(heading[2]!, width, " ".repeat(heading[1]!.length));
+      return title.map(row => this.color ? `\u001b[1m${row}\u001b[0m` : row).join("\n");
     }
     const bullet = /^(\s*)[-*+]\s+(.+)$/.exec(line);
     if (bullet !== null) {
-      return fitLine(`${bullet[1]}• ${bullet[2]}`, width);
+      const prefix = ` ${bullet[1]}• `;
+      return wrapped(bullet[2]!, width, prefix, " ".repeat(displayWidth(prefix))).join("\n");
     }
     const quote = /^>\s?(.*)$/.exec(line);
     if (quote !== null) {
-      const content = fitLine(`┃ ${quote[1]}`, width);
-      return this.color ? `\u001b[2m${content}\u001b[0m` : content;
+      const content = wrapped(quote[1]!, width, " ┃ ");
+      return content.map(row => this.color ? `\u001b[2m${row}\u001b[0m` : row).join("\n");
     }
 
-    return fitLine(line, width);
+    return line.length === 0 ? "" : wrapped(line, width, " ").join("\n");
   }
 
   reset(): void {

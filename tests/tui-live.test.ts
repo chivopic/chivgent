@@ -51,6 +51,8 @@ describe("createLiveRegion", () => {
     expect(answers.written()).toBe("the answer\n");
     expect(terminal.written()).toContain("✓ Read a.ts");
     expect(terminal.written()).toContain("Completed");
+    expect(terminal.written()).toContain("✓ Completed · 1 turn");
+    expect(terminal.written()).not.toContain("turn(s)");
     expect(terminal.written()).not.toContain("the answer");
   });
 
@@ -60,16 +62,31 @@ describe("createLiveRegion", () => {
     const region = createLiveRegion({ stream: terminal.stream, answerStream: answers.stream, width: () => 80, markdown: true });
     region.listener(start);
     region.listener({ type: "message_update", turn: 1, delta: "First line\nSecond line" });
-    expect(answers.written()).toBe("First line\n");
+    expect(answers.written()).toBe(" First line\n");
     region.listener({ type: "message_update", turn: 1, delta: " completed\n" });
-    expect(answers.written()).toBe("First line\nSecond line completed\n");
+    expect(answers.written()).toBe(" First line\n Second line completed\n");
     region.listener({
       type: "turn_end",
       turn: 1,
       message: { role: "assistant", content: "First line\nSecond line completed\n", toolCalls: [] },
       toolResults: [],
     });
-    expect(answers.written()).toBe("First line\nSecond line completed\n");
+    expect(answers.written()).toBe(" First line\n Second line completed\n");
+  });
+
+  it("keeps a complete long streamed answer and leaves redirected output unchanged", () => {
+    const text = "回答".repeat(30) + "END";
+    for (const markdown of [true, false]) {
+      const terminal = recorder();
+      const answers = recorder();
+      const region = createLiveRegion({ stream: terminal.stream, answerStream: answers.stream, width: () => 20, markdown });
+      try {
+        region.listener(start);
+        region.listener({ type: "message_update", turn: 1, delta: text });
+        region.listener({ type: "turn_end", turn: 1, message: { role: "assistant", content: text, toolCalls: [] }, toolResults: [] });
+        expect(markdown ? answers.written().replace(/\n ?/g, "").trim() : answers.written()).toBe(markdown ? text : `${text}\n`);
+      } finally { region.stop(); }
+    }
   });
 
   it("retains unfinished streamed text after cancellation and reports failures", () => {
@@ -131,6 +148,26 @@ describe("createLiveRegion", () => {
     // Erased, and nothing drawn in its place.
     expect(output.written()).toContain(CLEAR_LINE);
     expect(output.written()).not.toContain("thinking");
+  });
+
+  it("does not show a misleading zero-token total when the provider reported no usage", () => {
+    const output = recorder();
+    const region = live(output);
+    region.listener(start);
+    output.chunks.length = 0;
+    region.listener({
+      type: "agent_end", status: "completed", turnCount: 1, messages: [],
+      usage: { usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, complete: false },
+    });
+    expect(output.written()).toContain("✓ Completed · 1 turn");
+    expect(output.written()).not.toContain("0 tokens");
+    output.chunks.length = 0;
+    region.listener(start);
+    region.listener({
+      type: "agent_end", status: "completed", turnCount: 1, messages: [],
+      usage: { usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, complete: true },
+    });
+    expect(output.written()).toContain("0 tokens");
   });
 
   it("clears the region when a run is cancelled, not only when it completes", () => {
