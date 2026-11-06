@@ -191,7 +191,7 @@ export const BUILT_IN_DESCRIPTIONS: Readonly<Record<string, string>> = {
   new: "save and start a fresh session",
   resume: "switch to a saved session in workspace",
   rename: "set current session title",
-  diff: "review workspace Git changes (/diff patch for patch)",
+  diff: "review current Git changes (/diff --staged for index only)",
   clear: "clear transcript in current session",
   compact: "summarise older history for the model",
   permissions: "inspect or change permission policy",
@@ -211,7 +211,7 @@ const HELP = `Commands:
   /new [title]    Save this session and start a fresh session
   /resume [id]    Switch to a saved session in this workspace
   /rename TITLE  Set the current session title
-  /diff [--staged|patch]  Review workspace Git changes (or latest patch)
+  /diff [--staged|patch [page]]  Review current Git changes (or latest patch)
   /clear     Start a new transcript in the same session
   /provider  Choose a Provider (↑↓ and Enter in the TUI)
   /model     Show or change the current model: /model MODEL
@@ -1090,13 +1090,13 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       return;
     }
     if (line !== "/gitdiff" && line !== "/gitdiff --staged") {
-      write("Usage: /gitdiff [--staged]\n");
+      write("Usage: /diff [--staged]\n");
       return;
     }
-    const mode: GitDiffMode = line.endsWith("--staged") ? "staged" : "working";
+    const mode: GitDiffMode = line.endsWith("--staged") ? "staged" : "all";
     // Explicit user confirmation before starting any local Git process.
     const root = terminalText(activeSession.cwd);
-    write(`\nRead-only local Git diff (${mode}) in:\n${root}\nNo network, hooks, external diff or file writes. Approve once? [y/N]\n`);
+    write(`\nRead-only local Git review (${mode === "all" ? "staged, unstaged, and untracked" : "staged"}) in:\n${root}\nNo network, hooks, external diff or repository filters run; no files are written. Approve once? [y/N]\n`);
     tuiInput.acceptLine();
     tuiInput.setApprovalMode(true);
     readline.setPrompt("gitdiff> ");
@@ -1116,10 +1116,10 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     try {
       const diff = await (options.gitDiffReader ?? readLiveGitDiff)(activeSession.cwd, mode);
       if (diff.trim().length === 0) {
-        write(`No ${mode} tracked Git changes found.\n`);
+        write(mode === "all" ? "No Git changes found.\n" : "No staged tracked Git changes found.\n");
         return;
       }
-      await inspectPatch(diff, `live Git diff (${mode})`);
+      await inspectPatch(diff, mode === "all" ? "live Git changes" : "live Git diff (staged)");
     } catch (error: unknown) {
       write(`${error instanceof Error ? error.message : "Git diff unavailable"}\n`);
     }

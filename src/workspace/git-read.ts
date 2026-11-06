@@ -5,10 +5,10 @@ import { promisify } from "node:util";
 const execute = promisify(execFile);
 
 /** Runs a bounded, read-only Git query without a shell or user/system configuration. */
-export async function readOnlyGit(cwd: string, args: readonly string[], maxBuffer = 256 * 1024): Promise<string> {
+export async function readOnlyGit(cwd: string, args: readonly string[], maxBuffer = 256 * 1024, timeout = 7_000): Promise<string> {
   const root = await realpath(cwd);
   const { stdout } = await execute("git", ["-c", "core.fsmonitor=false", "-c", "diff.external=", ...args], {
-    cwd: root, shell: false, windowsHide: true, timeout: 7_000, maxBuffer,
+    cwd: root, shell: false, windowsHide: true, timeout, maxBuffer,
     encoding: "utf8",
     env: {
       PATH: process.env.PATH,
