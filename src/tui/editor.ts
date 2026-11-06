@@ -210,6 +210,7 @@ export interface EditorFrame {
 }
 
 const PLACEHOLDER = "Ask chivgent to do anything";
+export const MAX_INLINE_WIDTH = 100;
 
 function boxRule(left: string, right: string, width: number): string {
   return `${left}${"─".repeat(Math.max(0, width - displayWidth(left) - displayWidth(right)))}${right}`;
@@ -244,7 +245,7 @@ export function editorFrame(document: EditorDocument, width: number, height: num
   const spare = Math.max(1, width - 1);
   const cellWidth = Math.max(8, spare);
   const boxed = submitOnEnter;
-  const boxWidth = Math.min(cellWidth, spare);
+  const boxWidth = Math.min(cellWidth, spare, MAX_INLINE_WIDTH);
   const extra = boxed ? 1 : 0;
   const maxSuggestions = 5;
   const suggestionLimit = Math.max(0, Math.min(maxSuggestions, height - 7));
@@ -293,8 +294,7 @@ export function editorFrame(document: EditorDocument, width: number, height: num
     const row = (() => {
       if (placeholder) {
         const ghost = fitLine(PLACEHOLDER, inputWidth);
-        const painted = color ? `\u001b[2m${ghost}\u001b[0m` : ghost;
-        return closeBox(left, `${marker}${painted}`, innerWidth, right);
+        return closeBox(left, `${marker}${ghost}`, innerWidth, right);
       }
       const baseline = `${marker}${display}`;
       const selection = document.selectionRange();
@@ -320,9 +320,9 @@ export function editorFrame(document: EditorDocument, width: number, height: num
     };
   });
   const header = boxed
-    ? boxRule("┌", "┐", lineWidth)
+    ? boxRule("╭", "╮", lineWidth)
     : fitLine("┌─ Ctrl+S send · Esc cancel · Enter newline", cellWidth);
-  const bottom = boxed ? boxRule("└", "┘", lineWidth) : undefined;
+  const bottom = boxed ? boxRule("╰", "╯", lineWidth) : undefined;
   const popup = displayedSuggestions.map((item, index) => fitLine(
     `  ${suggestionStart + index === selectedSuggestion ? "›" : " "} ${item.label || `/${item.value}`}`,
     lineWidth,

@@ -55,7 +55,7 @@ it("shows a compact wordmark without a session id, provider, or model", () => {
   expect(banner).not.toContain("session-");
   expect(lines).toHaveLength(3);
   expect(welcome({ version: "test", provider: "openai", model: "gpt-test", cwd: "/project", resumed: false, signedOut: true, width: 80, color: true }))
-    .toContain("\u001b[1;36m");
+    .toContain("\u001b[1m");
 });
 
 it("keeps one setup hint and leaves the provider and model off the welcome", () => {

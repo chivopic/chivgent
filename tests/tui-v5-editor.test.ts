@@ -13,6 +13,14 @@ const cmds = [
 ];
 
 describe("default TUI inline slash completion", () => {
+  it("keeps the composer readable and bounded on very wide terminals", () => {
+    const frame = editorFrame(new EditorDocument(), 180, 24, true, [], 0, undefined, true, "deepseek · deepseek-flash");
+    expect(displayWidth(frame.lines[0] ?? "")).toBeLessThanOrEqual(100);
+    expect(frame.lines.join("\n")).toContain("Ask chivgent to do anything");
+    expect(frame.lines.join("\n")).not.toContain("\u001b[2mAsk chivgent");
+    expect(frame.lines.at(-1)).toContain("deepseek · deepseek-flash");
+  });
+
   it("filters registered commands only, excludes prose, and keeps every match", () => {
     expect(slashSuggestions("/gi", 3, cmds).map(item => item.value)).toEqual(["gitdiff", "gitstatus"]);
     expect(slashSuggestions("read /gi", 8, cmds)).toEqual([]);
@@ -169,6 +177,18 @@ describe("default TUI inline slash completion", () => {
 });
 
 describe("mouse caret and selected text", () => {
+  it("ignores clicks outside the bounded composer on a wide terminal", () => {
+    const c = new EditorController({ columns: 180, rows: 24, write: () => {} }, () => {}, {
+      submitOnEnter: true, mouse: true,
+    });
+    c.begin();
+    c.receive(Buffer.from("draft\u0001"));
+    c.receive(Buffer.from("\u001b[12;5R"));
+    c.receive(Buffer.from("\u001b[<0;150;12M"));
+    expect(c.document.position).toEqual({ row: 0, column: 0 });
+    c.cancel();
+  });
+
   it("places the caret on grapheme boundaries and replaces a drag selection", () => {
     const doc = new EditorDocument();
     doc.insert("a👩‍💻b\nsecond");
@@ -180,7 +200,7 @@ describe("mouse caret and selected text", () => {
     expect(selection.lines.join("\n")).toContain("\u001b[7m👩‍💻\u001b[0m");
     const inlineSelection = editorFrame(doc, 50, 16, true);
     expect(inlineSelection.lines.join("\n")).toContain("\u001b[7m👩‍💻\u001b[0m");
-    expect(inlineSelection.lines.join("\n")).toContain("┌");
+    expect(inlineSelection.lines.join("\n")).toContain("╭");
     doc.insert("X");
     expect(doc.text).toBe("aXb\nsecond");
   });
@@ -436,8 +456,8 @@ describe("mouse caret and selected text", () => {
     const doc = new EditorDocument();
     const frame = editorFrame(doc, 60, 12, true, [], 0, "Ask for me · Shift+Tab Plan · /help");
     const lines = frame.lines.join("\n");
-    expect(lines).toContain("┌");
-    expect(lines).toContain("┘");
+    expect(lines).toContain("╭");
+    expect(lines).toContain("╯");
     expect(lines).toContain("Ask chivgent to do anything");
     expect(lines).toContain("Ask for me · Shift+Tab Plan · /help");
     expect(doc.text).toBe("");
@@ -447,10 +467,10 @@ describe("mouse caret and selected text", () => {
     expect(editorFrame(drafted, 60, 12, true).lines.join("\n")).not.toContain("Ask chivgent to do anything");
     expect(editorFrame(new EditorDocument(), 40, 12, false).lines.join("\n")).not.toContain("Ask chivgent");
     const narrow = editorFrame(new EditorDocument(), 8, 6, true);
-    expect(narrow.lines[0]).toMatch(/^┌.*┐$/);
+    expect(narrow.lines[0]).toMatch(/^╭.*╮$/);
     expect(narrow.lines.every(line => displayWidth(line) <= 7)).toBe(true);
     const colored = editorFrame(new EditorDocument(), 60, 12, true, [], 0, undefined, true);
-    expect(colored.lines.join("\n")).toContain("\u001b[2mAsk chivgent to do anything\u001b[0m");
+    expect(colored.lines.join("\n")).toContain("Ask chivgent to do anything");
     expect(editorFrame(new EditorDocument(), 60, 12, true).lines.join("\n")).not.toContain("\u001b[");
   });
 
