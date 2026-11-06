@@ -12,7 +12,9 @@ export interface WelcomeOptions {
   readonly color?: boolean;
 }
 
-const COLOR = "\u001b[1;36m";
+// Use the terminal's foreground instead of bright cyan, which can disappear
+// against light or transparent terminal backgrounds.
+const COLOR = "\u001b[1m";
 const RESET = "\u001b[0m";
 
 /**
