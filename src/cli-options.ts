@@ -98,8 +98,9 @@ export function parseCliArgs(
   argv: readonly string[],
   environment: CliEnvironment,
   registry: ProviderRegistry = defaultProviderRegistry,
+  defaultProvider = "openai",
 ): CliOptions {
-  let provider: Provider = "openai";
+  let provider: Provider = defaultProvider;
   let requestedModel: string | undefined;
   let apiKey: string | undefined;
   let contextWindow = DEFAULT_CONTEXT_WINDOW;
@@ -313,7 +314,7 @@ Usage:
   chivgent update [--check]         Update the npm global installation
 
 Options:
-  --provider NAME  ${registry.ids().join(", ")} (default: openai)
+  --provider NAME  ${registry.ids().join(", ")} (interactive: saved selection; otherwise: openai)
   --model MODEL    Provider model override
   --api-key KEY    API key for this run; prefer an environment variable
   --max-turns N    Tool-calling turn limit (default: ${DEFAULT_MAX_TURNS}, ${DEFAULT_WRITE_MAX_TURNS} with --allow-writes or --allow-shell)

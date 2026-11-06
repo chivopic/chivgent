@@ -131,7 +131,7 @@ CHIVGENT_WEB_SEARCH_TOKEN=… chivgent --web-search https://search.example.com
 
 | 供应商 | `--provider` | Key | 模型 |
 | --- | --- | --- | --- |
-| OpenAI，Responses API | `openai`（默认） | `OPENAI_API_KEY` | `gpt-5.6` |
+| OpenAI，Responses API | `openai` | `OPENAI_API_KEY` | `gpt-5.6` |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-flash` |
 | 任何兼容端点 | `openai-compatible` | `OPENAI_API_KEY` 和 `OPENAI_BASE_URL` | 设置 `OPENAI_MODEL` |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | 设置 `OPENROUTER_MODEL` |
@@ -140,6 +140,8 @@ CHIVGENT_WEB_SEARCH_TOKEN=… chivgent --web-search https://search.example.com
 | Moonshot | `moonshot` | `MOONSHOT_API_KEY` | 设置 `MOONSHOT_MODEL` |
 
 `--model` 覆盖模型变量。key 按这个顺序找：`--api-key`，然后环境变量，然后 `~/.chivgent/auth.json`。自定义的 base URL 会收到你的 key 和提示词。只把它指向你信任的端点。
+
+默认供应商是 OpenAI。本地交互会话中通过 `/provider` 选择内置供应商后，后续交互启动会记住选择；`--provider` 优先。单次提问和服务模式仍默认使用 OpenAI，自定义兼容端点不会被记住。详见 [TUI](docs/tui.md)。
 
 兼容端点必须实现支持工具调用的 `POST /chat/completions`。只换 base URL，并不保证完全兼容。[架构](docs/architecture.md#openai-compatible-providers)。
 
