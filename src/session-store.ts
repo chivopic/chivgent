@@ -260,13 +260,16 @@ export function parseTranscript(
     } else if (record.type === "agent_end" && "messages" in record) {
       if (Array.isArray(record.messages)) {
         messages = record.messages as readonly Message[];
-        const end = record as { compaction?: unknown; sessionUsage?: unknown; compactionTranscriptHash?: unknown; usage?: unknown };
+        const end = record as { compaction?: unknown; sessionUsage?: unknown; compactionTranscriptHash?: unknown; usage?: unknown; turnCount?: unknown; directShellSnapshot?: unknown };
         compaction = end.compactionTranscriptHash === transcriptHash(messages)
           ? validCompaction(end.compaction, messages) : undefined;
         const savedUsage = validUsage(end.sessionUsage);
         if (savedUsage !== undefined) {
           usage = savedUsage;
-        } else {
+        } else if (end.directShellSnapshot !== true) {
+          // A direct shell shortcut writes a transcript snapshot with no model
+          // turn. Do not turn that bookkeeping record into missing provider
+          // usage or a synthetic incomplete usage total.
           const runUsage = validUsage(end.usage);
           usage = addUsage(usage, runUsage?.usage);
           if (runUsage?.complete === false) usage = { usage: usage.usage, complete: false };

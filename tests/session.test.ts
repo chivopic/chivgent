@@ -15,6 +15,9 @@ import {
 } from "../src/session-store.js";
 import type { Tool, ToolOutput } from "../src/tools/tool.js";
 import type { Workspace } from "../src/workspace.js";
+import { BashTool } from "../src/tools/bash.js";
+import type { ShellOperations } from "../src/shell/types.js";
+import { PermissionPolicy } from "../src/permissions.js";
 import {
   assistant,
   FakeLLMClient,
@@ -75,6 +78,139 @@ async function temporaryHome(): Promise<string> {
 }
 
 describe("AgentSession", () => {
+  it("keeps Plan Mode, extension names, and approval denial from bypassing the built-in shell policy", async () => {
+    const calls = { count: 0 };
+    const run = async () => { calls.count += 1; return { exitCode: 0 }; };
+    const operations: ShellOperations = { exec: run };
+    const blockedBash = new BashTool({ cwd: "/workspace", operations, approve: async () => false });
+    const plan = new AgentSession({ planMode: true, agent: {
+      systemPrompt: "System prompt", maxTurns: 1, llm: new FakeLLMClient([]), tools: [blockedBash], workspace, streaming: false,
+    } });
+    expect((await plan.executeShellCommand("echo no")).content).toContain("Plan Mode blocked");
+    expect((await blockedBash.execute({ command: "echo no" }, { workspace })).isError).toBe(true);
+
+    const extensionNamedBash: Tool = { name: "bash", description: "Extension", inputSchema: {}, async execute() {
+      calls.count += 1;
+      return { content: "extension result", isError: false };
+    } };
+    const extension = new AgentSession({ agent: {
+      systemPrompt: "System prompt", maxTurns: 1, llm: new FakeLLMClient([]), tools: [extensionNamedBash], workspace, streaming: false,
+    } });
+    expect((await extension.executeShellCommand("echo no")).content).toContain("unavailable");
+    expect(calls.count).toBe(0);
+    await blockedBash.outputStore.close();
+  });
+
+  it("records direct shell approval refusal, unavailability, cancellation, and thrown review errors without executing", async () => {
+    const cases = [
+      { approve: async () => false, expected: "denied by user" },
+      { approve: undefined, expected: "approval is required" },
+      { approve: async () => ({ approved: false as const, reason: "cancelled" as const }), expected: "approval was cancelled" },
+      { approve: async () => ({ approved: false as const, reason: "unavailable" as const }), expected: "approval is unavailable" },
+    ];
+    for (const item of cases) {
+      let executions = 0;
+      const bash = new BashTool({ cwd: "/workspace", operations: { exec: async () => { executions += 1; return { exitCode: 0 }; } }, approve: item.approve });
+      const session = new AgentSession({ agent: { systemPrompt: "System", maxTurns: 1, llm: new FakeLLMClient([]), tools: [bash], workspace, streaming: false } });
+      const result = await session.executeShellCommand("echo denied");
+      expect(result.content).toContain(item.expected);
+      expect(executions).toBe(0);
+      expect(session.messages.at(-1)).toMatchObject({ role: "tool", isError: true, content: result.content });
+      await bash.outputStore.close();
+    }
+
+    let executions = 0;
+    const bash = new BashTool({ cwd: "/workspace", operations: { exec: async () => { executions += 1; return { exitCode: 0 }; } }, approve: async () => true });
+    const session = new AgentSession({ agent: { systemPrompt: "System", maxTurns: 1, llm: new FakeLLMClient([]), tools: [bash], workspace, streaming: false,
+      authorizeToolCall: async () => { throw new Error(`${"x".repeat(8_000)}\u001b[2J\r`); } } });
+    const result = await session.executeShellCommand("echo denied");
+    expect(result.isError).toBe(true);
+    expect(result.content).not.toContain("\u001b");
+    expect(result.content).not.toContain("\r");
+    expect(result.content.length).toBeLessThan(4_100);
+    expect(executions).toBe(0);
+    expect(session.messages.at(-1)).toMatchObject({ role: "tool", isError: true, content: result.content });
+    await bash.outputStore.close();
+  });
+
+  it("selects configured workspace and host executors through permission-mode policy", async () => {
+    const policy = new PermissionPolicy("workspace");
+    const selected: { scope?: string; allowNetwork?: boolean; allowHostAccess?: boolean }[] = [];
+    const operationsForCall = (scope: "workspace" | "network" | "host" = "workspace"): ShellOperations => {
+      selected.push({ scope, allowNetwork: scope === "network" || scope === "host" || policy.shellNetwork, allowHostAccess: scope === "host" });
+      return { exec: async () => ({ exitCode: 0 }) };
+    };
+    const bash = new BashTool({ cwd: "/workspace", operations: { exec: async () => ({ exitCode: 0 }) },
+      operationsForCall, supportedScopes: ["workspace", "network", "host"],
+      defaultScopeForCall: () => policy.mode === "unrestricted" ? "host" : "workspace",
+      authorize: request => policy.authorizeShell(request.command, request.scope, request.signal) });
+    const session = new AgentSession({ agent: {
+      systemPrompt: "System prompt", maxTurns: 1, llm: new FakeLLMClient([]), tools: [bash], workspace, streaming: false,
+    } });
+    await session.executeShellCommand("echo safe");
+    policy.setMode("unrestricted");
+    await session.executeShellCommand("echo broad");
+    expect(selected).toEqual([
+      { scope: "workspace", allowNetwork: false, allowHostAccess: false },
+      { scope: "host", allowNetwork: true, allowHostAccess: true },
+    ]);
+    await bash.outputStore.close();
+  });
+
+  it("keeps BashTool output sanitized, bounded, and linked to its Output ID", async () => {
+    const home = await temporaryHome();
+    const bash = new BashTool({ cwd: "/workspace", tempDirectory: home,
+      operations: { exec: async (_command, _cwd, options) => {
+        options.onData(Buffer.from(`${"EARLIEST\n"}${Array.from({ length: 2_100 }, (_, index) => `line-${index}\n`).join("")}LATEST\n\u001b[2J`));
+        return { exitCode: 0 };
+      } }, approve: async () => true });
+    const session = new AgentSession({ agent: {
+      systemPrompt: "System prompt", maxTurns: 1, llm: new FakeLLMClient([]), tools: [bash], workspace, streaming: false,
+    } });
+    const result = await session.executeShellCommand("printf large");
+    expect(result.content).toContain("Output ID:");
+    expect(result.content).toContain("Showing lines 104-2103 of 2103");
+    expect(result.content.startsWith("line-102\n")).toBe(true);
+    const bannerIndex = result.content.indexOf("\n[Showing lines");
+    expect(result.content.slice(0, bannerIndex).split("\n")).toHaveLength(2_001);
+    expect(result.content).toContain("LATEST");
+    expect(result.content).not.toContain("EARLIEST");
+    expect(result.content).not.toContain("\u001b");
+    expect(result.shellOutput).toMatchObject({ state: "complete" });
+    expect(session.messages.at(-1)).toMatchObject({ role: "tool", content: result.content, shellOutput: result.shellOutput });
+    await bash.outputStore.close();
+  });
+
+  it("persists direct shell commands as a valid tool exchange that survives resume without provider usage", async () => {
+    const home = await temporaryHome();
+    const store = new FileSessionStore(home);
+    const operations: ShellOperations = { exec: async (_command, _cwd, options) => {
+      options.onData(Buffer.from("direct result\n"));
+      return { exitCode: 0 };
+    } };
+    const bash = new BashTool({ cwd: "/workspace", operations, approve: async () => true });
+    const session = new AgentSession({ id: "direct-shell-resume", cwd: "/workspace", store, agent: {
+      systemPrompt: "System prompt", maxTurns: 4, llm: new FakeLLMClient([]), tools: [bash], workspace, streaming: false,
+    } });
+    await session.executeShellCommand("printf direct");
+    const saved = await store.read(session.id);
+    expect(saved?.messages.map(message => message.role)).toEqual(["user", "assistant", "tool"]);
+    expect(saved?.messages[0]).toMatchObject({ role: "user", content: "!printf direct" });
+    expect(saved?.messages[2]).toMatchObject({ role: "tool", toolName: "bash", content: "direct result\n" });
+    expect(saved?.usage).toBeUndefined();
+
+    const llm = new FakeLLMClient([assistant("Follow-up")]);
+    const resumed = new AgentSession({ id: session.id, cwd: "/workspace", store, resumed: true,
+      messages: saved?.messages, agent: { systemPrompt: "System prompt", maxTurns: 4, llm, tools: [], workspace, streaming: false } });
+    await resumed.prompt("What did that command return?");
+    expect(llm.requests[0]?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "user", content: "!printf direct" }),
+      expect.objectContaining({ role: "tool", content: "direct result\n" }),
+    ]));
+    expect(resumed.usage?.complete).toBe(false); // only the later model turn lacks provider usage
+    await bash.outputStore.close();
+  });
+
   it("ignores malformed optional checkpoint usage without losing the transcript", () => {
     const parsed = parseTranscript([
       JSON.stringify({ type: "session", version: 1, id: "legacy", timestamp: "now", cwd: "/workspace" }),
@@ -94,6 +230,15 @@ describe("AgentSession", () => {
     expect(parsed?.usage).toEqual({
       usage: { inputTokens: 11, outputTokens: 2, totalTokens: 13 }, complete: true,
     });
+  });
+
+  it("counts reported usage on legacy turnCount-zero agent_end records", () => {
+    const parsed = parseTranscript([
+      JSON.stringify({ type: "session", version: 1, id: "legacy-zero-turn", timestamp: "now", cwd: "/workspace" }),
+      JSON.stringify({ type: "agent_end", status: "completed", turnCount: 0, messages: [],
+        usage: { usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 }, complete: true } }),
+    ].join("\n"));
+    expect(parsed?.usage).toEqual({ usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 }, complete: true });
   });
 
   it("preserves incomplete usage when rebuilding older records", () => {

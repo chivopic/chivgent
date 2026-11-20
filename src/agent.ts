@@ -21,6 +21,8 @@ import { INCOMPLETE_PROJECT_GUIDANCE, type ProjectInstructionsProvider } from ".
 import { randomUUID } from "node:crypto";
 import type { QuestionPresenter } from "./questions.js";
 import { QuestionTool } from "./tools/question.js";
+import { BashTool } from "./tools/bash.js";
+import { sanitizeShellOutput } from "./shell/sanitize.js";
 
 export interface AgentOptions {
   /** A callback supplies current host configuration after a provider switch. */
@@ -141,6 +143,32 @@ export class Agent {
     this.authorizeToolCall = options.authorizeToolCall;
     this.clearSessionDataCallback = options.clearSessionData;
     this.closeSessionDataCallback = options.closeSessionData;
+  }
+
+  /** Run a user-entered shell command through the same registered bash tool. */
+  async executeShellCommand(command: string, signal?: AbortSignal, onUpdate?: (content: string) => void): Promise<ToolOutput> {
+    const tool = this.registry.get("bash");
+    if (tool?.constructor !== BashTool) return { content: "Shell commands are unavailable in this session.", isError: true };
+    const bash = tool as BashTool;
+    let latest = "";
+    try {
+      if (this.authorizeToolCall !== undefined && !await this.authorizeToolCall("bash", { command }, signal)) {
+        return { content: "Tool call denied: bash. Approval was declined or unavailable.", isError: true };
+      }
+      return validateToolOutput(await bash.execute({ command }, {
+        workspace: this.workspace,
+        ...(signal === undefined ? {} : { signal }),
+        onUpdate: (content) => { latest = content; onUpdate?.(content); },
+      }));
+    } catch (error: unknown) {
+      if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
+        const safeLatest = sanitizeShellOutput(latest);
+        return { content: `${safeLatest}${safeLatest.length > 0 ? "\n" : ""}Shell command cancelled.`, isError: true };
+      }
+      const safeMessage = sanitizeShellOutput(error instanceof Error ? error.message : String(error));
+      const boundedMessage = safeMessage.length > 4_000 ? `${safeMessage.slice(0, 3_999)}…` : safeMessage;
+      return { content: `Shell command failed: ${boundedMessage}`, isError: true };
+    }
   }
 
   get toolNames(): readonly string[] {

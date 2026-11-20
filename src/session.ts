@@ -4,6 +4,10 @@ import type { Message } from "./messages.js";
 import { ContextCompactionError } from "./context/errors.js";
 import type { AppliedCompaction } from "./context/context-manager.js";
 import type { QuestionPresenter } from "./questions.js";
+import type { ToolOutput } from "./tools/tool.js";
+import { randomUUID } from "node:crypto";
+import { sanitizeShellOutput } from "./shell/sanitize.js";
+import { truncateTail } from "./shell/truncate.js";
 import { transcriptHash } from "./transcript-hash.js";
 import { addUsage, type UsageTotal } from "./providers/usage.js";
 import {
@@ -239,6 +243,37 @@ export class AgentSession {
     } finally {
       this.promptInProgress = false;
     }
+  }
+
+  /** Run a composer shell shortcut through the session's configured bash tool. */
+  async executeShellCommand(command: string, signal?: AbortSignal, onUpdate?: (content: string) => void): Promise<ToolOutput> {
+    if (this.promptInProgress || this.controlInProgress) throw new Error("This session is already running an operation.");
+    this.promptInProgress = true;
+    try {
+      const rawResult = this.planModeEnabled
+        ? { content: "Plan Mode blocked tool: bash. Only built-in read tools, update_plan, and question can run.", isError: true }
+        : await this.agent.executeShellCommand(command, signal, onUpdate);
+      const safeContent = sanitizeShellOutput(rawResult.content);
+      // BashTool has already applied its bounded-tail policy and may have
+      // attached an Output ID; keep that authoritative marker intact.
+      const bounded = rawResult.shellOutput === undefined ? truncateTail(safeContent) : { content: safeContent };
+      const result: ToolOutput = { ...rawResult, content: bounded.content };
+      const toolCallId = `user-shell-${randomUUID()}`;
+      const user = { role: "user" as const, content: `!${command}` };
+      const assistant = { role: "assistant" as const, content: "", toolCalls: [{ id: toolCallId, name: "bash", arguments: { command } }] };
+      const toolResult = { role: "tool" as const, toolCallId, toolName: "bash", content: result.content, isError: result.isError,
+        ...(result.shellOutput === undefined ? {} : { shellOutput: result.shellOutput }) };
+      await this.writeHeader();
+      this.transcript = [...this.transcript, user, assistant, toolResult];
+      this.record({ type: "agent_end", status: "completed", turnCount: 0,
+        directShellSnapshot: true,
+        messages: this.transcript, promptCount: this.promptCount,
+        ...(this.usageTotal === undefined ? {} : { sessionUsage: this.usageTotal }),
+        ...(this.compaction === undefined ? {} : { compaction: this.compaction, compactionTranscriptHash: transcriptHash(this.transcript) }) });
+      await this.flush();
+      return result;
+    }
+    finally { this.promptInProgress = false; }
   }
 
   header(): SessionHeader {
