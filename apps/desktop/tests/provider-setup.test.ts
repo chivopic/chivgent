@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createDesktopSession } from "@chivgent/runtime/desktop-runtime.ts";
+import { createDeepSeekCredentialClient } from "../src/host/deepseek-credentials.js";
 import { HostService } from "../src/host/service.js";
 import type { HostToMain } from "../src/protocol/messages.js";
 
@@ -97,4 +98,19 @@ it("validates the imported key, restores it after restart, and uses it for the f
     await Promise.all(services.map((service) => service.shutdown()));
     await rm(cwd, { recursive: true, force: true });
   }
+});
+
+it("fails promptly when a stored credential exceeds the private IPC limit", async () => {
+  const send = vi.fn();
+  const client = createDeepSeekCredentialClient(send);
+  const result = client.codec.decrypt("x".repeat(8_193));
+  expect(send.mock.calls).toHaveLength(0);
+  await expect(result).rejects.toThrow(/credential/i);
+});
+
+it("refuses to save a ciphertext that would exceed the private IPC limit on restart", async () => {
+  const client = createDeepSeekCredentialClient(({ id }) => {
+    client.receive({ type: "deepseek-credential-result", id, ok: true, value: "x".repeat(8_193) });
+  });
+  await expect(client.codec.encrypt("sk-fixture")).rejects.toThrow(/credential/i);
 });

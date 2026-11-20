@@ -1,4 +1,6 @@
 // Private main/utility exchange. Credential payloads never reach the renderer.
+export const MAX_CREDENTIAL_PAYLOAD_LENGTH = 8_192;
+
 export interface DeepSeekCredentialCodec {
   encrypt(apiKey: string): Promise<string>;
   decrypt(ciphertext: string): Promise<string>;
@@ -21,7 +23,7 @@ export function isCredentialRequest(value: unknown): value is CredentialRequest 
   const request = value as Partial<CredentialRequest>;
   return request.type === "deepseek-credential-request" && Number.isSafeInteger(request.id) &&
     (request.operation === "encrypt" || request.operation === "decrypt") &&
-    typeof request.value === "string" && request.value.length > 0 && request.value.length <= 8_192;
+    typeof request.value === "string" && request.value.length > 0 && request.value.length <= MAX_CREDENTIAL_PAYLOAD_LENGTH;
 }
 
 export function isCredentialResult(value: unknown): value is CredentialResult {
