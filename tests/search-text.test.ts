@@ -2,15 +2,22 @@ import { readOnlyWorkspaceWrites } from "./fakes.js";
 import {
   mkdtemp,
   mkdir,
+  readdir,
   rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SearchTextTool } from "../src/tools/search-text.js";
 import { LocalWorkspace, type Workspace } from "../src/workspace.js";
+import { readDirectory } from "../src/workspace/fs.js";
+
+vi.mock("../src/workspace/fs.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/workspace/fs.js")>();
+  return { ...actual, readDirectory: vi.fn(actual.readDirectory) };
+});
 
 const temporaryDirectories: string[] = [];
 
@@ -25,6 +32,9 @@ afterEach(async () => {
     temporaryDirectories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true }),
     ),
+  );
+  vi.mocked(readDirectory).mockImplementation((directory) =>
+    readdir(directory, { withFileTypes: true }),
   );
 });
 
@@ -152,6 +162,136 @@ describe("SearchTextTool", () => {
       skippedFiles: 0,
       truncated: true,
     });
+  });
+
+  it("returns readable matches and marks incomplete traversal when a nested directory fails", async () => {
+    const root = await temporaryDirectory("chivgent-search-io-");
+    const blocked = path.join(root, "blocked");
+    await mkdir(blocked);
+    await writeFile(path.join(blocked, "hidden.ts"), "needle");
+    await writeFile(path.join(root, "readable.ts"), "needle");
+    vi.mocked(readDirectory).mockImplementation((async (target) => {
+      if (String(target).endsWith(`${path.sep}blocked`)) {
+        const error = new Error("EACCES") as NodeJS.ErrnoException;
+        error.code = "EACCES";
+        throw error;
+      }
+      return readdir(target, { withFileTypes: true });
+    }) as typeof readDirectory);
+
+    const toolResult = await new SearchTextTool().execute(
+      { query: "needle", path: ".", max_results: 50 },
+      { workspace: new LocalWorkspace(root) },
+    );
+
+    expect(toolResult.isError).toBe(false);
+    expect(toolResult.content).toContain("readable.ts:1:needle");
+    expect(toolResult.content).toContain(
+      "[incomplete: some directories could not be scanned]",
+    );
+    expect(toolResult.content).not.toContain(root);
+  });
+
+  it("errors when the explicitly selected directory cannot be enumerated", async () => {
+    const root = await temporaryDirectory("chivgent-search-io-root-");
+    const blocked = path.join(root, "blocked");
+    await mkdir(blocked);
+    vi.mocked(readDirectory).mockImplementation((async (target) => {
+      if (String(target).endsWith(`${path.sep}blocked`)) {
+        const error = new Error("EACCES") as NodeJS.ErrnoException;
+        error.code = "EACCES";
+        throw error;
+      }
+      return readdir(target, { withFileTypes: true });
+    }) as typeof readDirectory);
+
+    const result = await new SearchTextTool().execute(
+      { query: "needle", path: "blocked", max_results: 50 },
+      { workspace: new LocalWorkspace(root) },
+    );
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.content).toContain("cannot be enumerated");
+    expect(result.content).not.toContain(root);
+  });
+
+  it("matches exact identifiers only when opted in while keeping literal search by default", async () => {
+    const root = await temporaryDirectory("chivgent-search-ident-");
+    const contents = [
+      "formatPrices();",
+      `formatPrices(); ${"x".repeat(320)} formatPrice();`,
+      "otherformatPrice;",
+      "formatPrice2;",
+      "$formatPrice;",
+      "\u{10400}formatPrice;",
+      "formatPrice\u{10400};",
+    ].join("\n");
+    await writeFile(
+      path.join(root, "symbols.ts"),
+      contents,
+    );
+    const tool = new SearchTextTool();
+
+    const legacy = await tool.execute(
+      { query: "formatPrice", path: ".", max_results: 50 },
+      { workspace: new LocalWorkspace(root) },
+    );
+    const exact = await tool.execute(
+      {
+        query: "formatPrice",
+        path: ".",
+        max_results: 50,
+        exact_identifier: true,
+      },
+      { workspace: new LocalWorkspace(root) },
+    );
+
+    expect(legacy.content).toContain("symbols.ts:1:formatPrices();");
+    expect(legacy.content).toContain("symbols.ts:5:$formatPrice;");
+    expect(exact.content).toContain("symbols.ts:2:");
+    expect(exact.content).toContain("formatPrice();");
+    // The preview centers the standalone hit, not its longer neighbor.
+    expect(exact.content).not.toContain("formatPrices();");
+    expect(exact.content).not.toContain("symbols.ts:1:");
+    expect(exact.content).not.toContain("symbols.ts:3:");
+    expect(exact.content).not.toContain("symbols.ts:4:");
+    expect(exact.content).not.toContain("symbols.ts:5:");
+    expect(exact.content).not.toContain("symbols.ts:6:");
+    expect(exact.content).not.toContain("symbols.ts:7:");
+  });
+
+  it("rejects exact identifier mode for invalid identifier queries", async () => {
+    const root = await temporaryDirectory("chivgent-search-ident-invalid-");
+    const result = await new SearchTextTool().execute(
+      {
+        query: "format-price",
+        path: ".",
+        max_results: 50,
+        exact_identifier: true,
+      },
+      { workspace: new LocalWorkspace(root) },
+    );
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.content).toContain("Invalid arguments");
+
+    const invalidMode = await new SearchTextTool().execute(
+      {
+        query: "formatPrice",
+        path: ".",
+        max_results: 50,
+        exact_identifier: "yes",
+      },
+      { workspace: new LocalWorkspace(root) },
+    );
+    expect(invalidMode).toMatchObject({ isError: true });
+    expect(invalidMode.content).toContain("Invalid arguments");
+
+    const nullMode = await new SearchTextTool().execute(
+      { query: "formatPrice", path: ".", max_results: 50, exact_identifier: null },
+      { workspace: new LocalWorkspace(root) },
+    );
+    expect(nullMode).toMatchObject({ isError: true });
   });
 
   it("does not follow directory symlinks", async () => {

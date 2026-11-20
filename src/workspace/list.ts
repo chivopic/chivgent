@@ -1,4 +1,5 @@
-import { readdir, lstat } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
+import { readDirectory } from "./fs.js";
 import path from "node:path";
 import {
   DEFAULT_LIST_DEPTH,
@@ -54,6 +55,7 @@ export async function listFiles(
 
   const entries: WorkspaceEntry[] = [];
   let truncated = false;
+  let incomplete = false;
 
   const visit = async (
     absoluteDirectory: string,
@@ -62,10 +64,15 @@ export async function listFiles(
   ): Promise<boolean> => {
     let directoryEntries;
     try {
-      directoryEntries = await readdir(absoluteDirectory, {
-        withFileTypes: true,
-      });
+      directoryEntries = await readDirectory(absoluteDirectory);
     } catch {
+      if (absoluteDirectory === start.realTarget) {
+        throw new WorkspaceError(
+          "discovery_io",
+          `The requested directory cannot be enumerated: ${relativePath}. Check directory permissions and retry.`,
+        );
+      }
+      incomplete = true;
       return true;
     }
     directoryEntries.sort((left, right) =>
@@ -111,5 +118,5 @@ export async function listFiles(
   };
 
   await visit(start.realTarget, rootRelativeDirectory(start.relativePath), 1);
-  return { entries, truncated };
+  return { entries, truncated, ...(incomplete ? { incomplete: true } : {}) };
 }

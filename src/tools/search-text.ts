@@ -1,4 +1,5 @@
 import { WorkspaceError } from "../workspace.js";
+import { isIdentifierQuery } from "../workspace/search.js";
 import type { Tool, ToolContext, ToolOutput } from "./tool.js";
 import { formatBoundedLineOutput } from "./output.js";
 
@@ -26,8 +27,13 @@ const inputSchema = {
       maximum: MAX_RESULTS,
       description: "Maximum matches to return. Usually use 50.",
     },
+    exact_identifier: {
+      type: "boolean",
+      description:
+        "Use true to match a standalone code identifier; false keeps legacy literal search.",
+    },
   },
-  required: ["query", "path", "max_results"],
+  required: ["query", "path", "max_results", "exact_identifier"],
   additionalProperties: false,
 } as const;
 
@@ -35,12 +41,13 @@ interface SearchTextArguments {
   readonly query: string;
   readonly path: string;
   readonly maxResults: number;
+  readonly exactIdentifier: boolean;
 }
 
 export class SearchTextTool implements Tool {
   readonly name = "search_text";
   readonly description =
-    "Search discoverable UTF-8 project files for case-sensitive literal text and return file paths, line numbers, and previews.";
+    "Search discoverable UTF-8 project files for case-sensitive literal text or an exact code identifier and return file paths, line numbers, and previews.";
   readonly inputSchema = inputSchema;
 
   async execute(
@@ -51,7 +58,7 @@ export class SearchTextTool implements Tool {
     if (argumentsObject === undefined) {
       return {
         content:
-          'Invalid arguments. Expected {"query":"literal text","path":".","max_results":50}; query must be one line and max_results must be from 1 to 200.',
+          'Invalid arguments. Expected {"query":"literal text","path":".","max_results":50,"exact_identifier":false}; query must be one line, max_results must be from 1 to 200, and exact_identifier must be boolean (with a valid identifier query when true).',
         isError: true,
       };
     }
@@ -61,6 +68,7 @@ export class SearchTextTool implements Tool {
         query: argumentsObject.query,
         path: argumentsObject.path,
         maxResults: argumentsObject.maxResults,
+        exactIdentifier: argumentsObject.exactIdentifier,
       });
       return {
         content: formatBoundedLineOutput(
@@ -68,8 +76,13 @@ export class SearchTextTool implements Tool {
             (match) => `${match.path}:${match.line}:${match.preview}`,
           ),
           {
-            emptyMessage: "No matches found.",
-            metadata: `[scanned: ${result.scannedFiles} files; skipped: ${result.skippedFiles}]`,
+            emptyMessage: result.incomplete
+              ? "No matches found in scanned files."
+              : "No matches found.",
+            metadata: [
+              `[scanned: ${result.scannedFiles} files; skipped: ${result.skippedFiles}]`,
+              ...(result.incomplete ? ["[incomplete: some directories could not be scanned]"] : []),
+            ].join("\n"),
             truncated: result.truncated,
             truncationMessage:
               "[truncated: narrow path or use a more specific query]",
@@ -93,7 +106,7 @@ function parseArguments(value: unknown): SearchTextArguments | undefined {
   const keys = Object.keys(value);
   if (
     keys.some(
-      (key) => key !== "query" && key !== "path" && key !== "max_results",
+      (key) => key !== "query" && key !== "path" && key !== "max_results" && key !== "exact_identifier",
     )
   ) {
     return undefined;
@@ -102,6 +115,9 @@ function parseArguments(value: unknown): SearchTextArguments | undefined {
   const query = value.query;
   const path = value.path ?? DEFAULT_PATH;
   const maxResults = value.max_results ?? DEFAULT_MAX_RESULTS;
+  const exactIdentifier = value.exact_identifier === undefined
+    ? false
+    : value.exact_identifier;
   if (
     typeof query !== "string" ||
     query.length === 0 ||
@@ -114,11 +130,13 @@ function parseArguments(value: unknown): SearchTextArguments | undefined {
     typeof maxResults !== "number" ||
     !Number.isSafeInteger(maxResults) ||
     maxResults < 1 ||
-    maxResults > MAX_RESULTS
+    maxResults > MAX_RESULTS ||
+    typeof exactIdentifier !== "boolean" ||
+    (exactIdentifier && !isIdentifierQuery(query))
   ) {
     return undefined;
   }
-  return { query, path, maxResults };
+  return { query, path, maxResults, exactIdentifier };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

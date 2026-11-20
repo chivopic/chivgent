@@ -132,14 +132,17 @@ export function splitLines(contents: string): string[] {
   );
 }
 
-export function createMatchPreview(line: string, query: string): string {
+export function createMatchPreview(
+  line: string,
+  query: string,
+  matchingOffset = line.indexOf(query),
+): string {
   const characters = [...line];
   if (characters.length <= MAX_PREVIEW_CHARACTERS) {
     return line;
   }
 
-  const matchIndex = line.indexOf(query);
-  const prefixCharacters = [...line.slice(0, matchIndex)].length;
+  const prefixCharacters = [...line.slice(0, matchingOffset)].length;
   const queryCharacters = [...query].length;
   const initialContext = Math.max(
     0,
