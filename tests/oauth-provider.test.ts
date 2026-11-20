@@ -32,6 +32,34 @@ const request: LLMRequest = { systemPrompt: "test", tools: [], messages: [{ role
 const answer = { message: { role: "assistant" as const, content: "done", toolCalls: [] } };
 
 describe("OAuth provider integration", () => {
+  it("lets guided setup replace an expired OAuth credential", async () => {
+    const file = await credentialFile();
+    const saved = { type: "oauth" as const, provider: "xai" as const, clientId: "test", accessToken: "expired-fake-token", expiresAt: 0, scopes: ["api:access"] };
+    await writeOAuthCredential(saved, file);
+    const renewed = { ...saved, accessToken: "renewed-fake-token", expiresAt: Date.now() + 3600000 };
+    vi.spyOn(oauth, "signInXAI").mockImplementation(async () => {
+      await writeOAuthCredential(renewed, file);
+      return renewed;
+    });
+    const control = new InteractiveProvider(parseCliArgs([], {}), new DeferredLLMClient("not configured"),
+      defaultProviderRegistry, {}, path.join(path.dirname(file), "auth.json"));
+
+    expect((await control.select("xai", "setup")).ok).toBe(true);
+    const selection = await control.changeModel("grok-test-model", "setup");
+    expect(selection.ok).toBe(true);
+    expect(selection.message).toContain("No refresh token is available");
+    expect(control.ready()).toBe(false);
+    expect(await control.oauth("xai")).toBeUndefined();
+    expect(control.ready()).toBe(true);
+    await control.rememberSetup();
+
+    const restarted = new InteractiveProvider(parseCliArgs([], {}), new DeferredLLMClient("not configured"),
+      defaultProviderRegistry, {}, path.join(path.dirname(file), "auth.json"));
+    await restarted.restoreStartupSetup(true);
+    expect(restarted).toMatchObject({ provider: "xai", model: "grok-test-model" });
+    expect(restarted.ready()).toBe(true);
+  });
+
   it("keeps explicit OAuth across model switches, switches back to an entered key, and logs out independently", async () => {
     const file = await credentialFile();
     const saved = { type: "oauth" as const, provider: "xai" as const, clientId: "test", accessToken: "subscription-token", expiresAt: Date.now() + 3600000, scopes: ["api:access"] };

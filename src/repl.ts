@@ -4,7 +4,7 @@ import { readLiveGitDiff, type GitDiffMode } from "./tui/git-diff.js";
 import { displayWidth, terminalText } from "./tui/text.js";
 import { terminalColorEnabled } from "./tui/selection.js";
 import { PatchReviewController } from "./tui/review.js";
-import { ProviderPickerController } from "./tui/provider-picker.js";
+import { ProviderPickerController, providerPickerLabel } from "./tui/provider-picker.js";
 import { InputMenu, type MenuItem } from "./tui/menu.js";
 import { createInterface, emitKeypressEvents, type Interface } from "node:readline";
 import type { AgentSession } from "./session.js";
@@ -134,12 +134,13 @@ export interface ProviderSelection {
 export interface ProviderControl {
   readonly provider: string;
   readonly model?: string;
+  readonly missingSetup?: readonly ("model" | "endpoint")[];
   describe(): string;
   unavailableMessage?(): string;
   providerIds(): readonly string[];
-  select(argument: string): Promise<ProviderSelection>;
-  changeModel(model: string): Promise<ProviderSelection>;
-  changeEndpoint(url: string): Promise<ProviderSelection>;
+  select(argument: string, mode?: "switch" | "setup"): Promise<ProviderSelection>;
+  changeModel(model: string, mode?: "switch" | "setup"): Promise<ProviderSelection>;
+  changeEndpoint(url: string, mode?: "switch" | "setup"): Promise<ProviderSelection>;
 }
 
 export interface SignIn {
@@ -532,6 +533,8 @@ export interface ReplOptions {
   readonly extensionCommands?: readonly RegisteredCommand[];
   readonly signIn?: SignIn;
   readonly providers?: ProviderControl;
+  readonly offerProviderSetup?: boolean;
+  readonly rememberProviderSetup?: () => Promise<void>;
   readonly sessionOptions?: SlashCommandContext["sessionOptions"];
   readonly compactionEnabled?: boolean;
   readonly providerName?: string;
@@ -570,27 +573,28 @@ async function withoutEcho<T>(
   }
 }
 
-/** Plain-REPL Provider chooser; only the API key itself is hidden. */
-async function readProviderChoice(
+async function readSetupChoice(
   readNextLine: () => Promise<string | undefined>,
   write: (text: string) => void,
-  providerIds: readonly string[],
+  ids: readonly string[],
   active: string,
+  title: string,
+  label: (id: string) => string,
 ): Promise<string | undefined> {
-  write("Select a Provider for /login:\n");
-  providerIds.forEach((id, index) => {
-    write(`  ${index + 1}. ${id}${id === active ? " (current)" : ""}\n`);
+  write(`${title}\n`);
+  ids.forEach((id, index) => {
+    write(`  ${index + 1}. ${label(id)}${id === active ? " (current)" : ""}\n`);
   });
-  write("Provider (number or name, Enter cancels): ");
+  write("Choice (number or name, Enter cancels): ");
   const answer = await readNextLine();
   if (answer === undefined) return undefined;
   const choice = answer.trim();
   if (choice.length === 0) return undefined;
   const number = Number(choice);
-  if (Number.isInteger(number) && number >= 1 && number <= providerIds.length) {
-    return providerIds[number - 1];
+  if (Number.isInteger(number) && number >= 1 && number <= ids.length) {
+    return ids[number - 1];
   }
-  return providerIds.find((id) => id.toLowerCase() === choice.toLowerCase());
+  return ids.find((id) => id.toLowerCase() === choice.toLowerCase());
 }
 
 async function runSignIn(
@@ -599,14 +603,21 @@ async function runSignIn(
   write: (text: string) => void,
   signIn: SignIn,
 ): Promise<void> {
-  write(
-    `API key for ${signIn.provider} (hidden, saved locally; Enter skips): `,
-  );
-
   // The key is read from the same line source the loop uses. readline's
   // question() competes with the loop's own iterator for input, so the answer
   // would be swallowed or never arrive.
-  const answer = await withoutEcho(readline, readNextLine);
+  // The hidden readline answer must also be unavailable through the Up key.
+  const discardKey = (history: string[]): void => { history.shift(); };
+  readline.once("history", discardKey);
+  let answer: string | undefined;
+  try {
+    answer = await withoutEcho(readline, () => {
+      write(`API key for ${signIn.provider} (hidden, saved locally; Enter skips): `);
+      return readNextLine();
+    });
+  } finally {
+    readline.off("history", discardKey);
+  }
   write("\n");
   if (answer === undefined) {
     return;
@@ -800,7 +811,6 @@ export async function runRepl(options: ReplOptions): Promise<number> {
   if (options.banner !== undefined) {
     write(options.banner);
   }
-  showPrompt();
 
   const lines = readline[Symbol.asyncIterator]();
   const readNextLine = async (): Promise<string | undefined> => {
@@ -1125,14 +1135,15 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     }
   };
 
-  /** `/login` must name its target before any hidden key prompt. */
-  const chooseLoginProvider = async (): Promise<string | undefined> => {
-    const providers = options.providers;
-    if (providers === undefined) return undefined;
-    const ids = [...providers.providerIds()];
+  const chooseSetupOption = async (
+    ids: readonly string[],
+    active: string,
+    title: string,
+    label: (id: string) => string,
+  ): Promise<string | undefined> => {
     if (ids.length === 0) return undefined;
     if (tuiInput === undefined) {
-      return readProviderChoice(readNextLine, write, ids, providers.provider);
+      return readSetupChoice(readNextLine, write, ids, active, title, label);
     }
 
     menu?.clear();
@@ -1140,7 +1151,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     let resolveChoice!: (provider: string | undefined) => void;
     const pending = new Promise<string | undefined>(resolve => { resolveChoice = resolve; });
     const output = options.output as typeof options.output & { columns?: number; rows?: number };
-    const picker = new ProviderPickerController(output, ids, providers.provider, resolveChoice);
+    const picker = new ProviderPickerController(output, ids, active, resolveChoice, { title, item: label });
     const resized = (): void => { picker.resized(); };
     const closed = (): void => { picker.cancel(); };
     tuiInput.setRawHandler(chunk => { picker.receive(chunk); });
@@ -1155,6 +1166,74 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       output.off("resize", resized);
       readline.off("close", closed);
       options.input.off("end", closed);
+    }
+  };
+
+  const chooseLoginProvider = (title = "Select a Provider for /login"): Promise<string | undefined> => {
+    const providers = options.providers;
+    if (providers === undefined) return Promise.resolve(undefined);
+    return chooseSetupOption(providers.providerIds(), providers.provider, title, providerPickerLabel);
+  };
+
+  const signInWithSubscription = async (target: "openai" | "xai"): Promise<void> => {
+    const signIn = options.signIn;
+    if (signIn?.oauth === undefined) {
+      write("OAuth sign-in is unavailable in this session.\n");
+      return;
+    }
+    controller = new AbortController();
+    tuiInput?.setBusy(true);
+    try {
+      write("Waiting for subscription sign-in. Ctrl+C cancels.\n");
+      const failure = await signIn.oauth(target, controller.signal);
+      write(failure ?? `Signed in to ${target} subscription for this session. Ready for your next prompt.\n`);
+    } finally {
+      tuiInput?.setBusy(false);
+      controller = undefined;
+    }
+  };
+
+  const connectProvider = async (startup: boolean): Promise<void> => {
+    const { providers, signIn } = options;
+    if (providers === undefined || signIn === undefined) return;
+    const wasReady = signIn.ready();
+    signingIn = true;
+    try {
+      const chosen = await chooseLoginProvider(startup ? "Connect a model · Select a Provider" : undefined);
+      if (chosen === undefined) {
+        write("No Provider selected; no key was stored.\n");
+        return;
+      }
+      const selected = await providers.select(chosen, "setup");
+      write(selected.message);
+      if (!selected.ok || (startup && signIn.ready())) return;
+
+      for (const field of providers.missingSetup ?? []) {
+        write(field === "model" ? "Model ID (Enter cancels): " : "API endpoint URL (Enter cancels): ");
+        const value = (await readNextLine())?.trim();
+        if (!value) return;
+        const configured = field === "model" ? await providers.changeModel(value, "setup") : await providers.changeEndpoint(value, "setup");
+        write(configured.message);
+        if (!configured.ok) return;
+      }
+      if (startup && signIn.ready()) return;
+
+      if (signIn.oauth !== undefined && (chosen === "openai" || chosen === "xai")) {
+        const method = await chooseSetupOption(["key", "oauth"], "", `Connect ${chosen} · Choose a sign-in method`, (id) =>
+          id === "key" ? "Enter an API key" : chosen === "openai" ? "Sign in with ChatGPT" : "Sign in with xAI");
+        if (method === undefined) return;
+        if (method === "oauth") {
+          await signInWithSubscription(chosen);
+          return;
+        }
+      }
+      await runSignIn(readline, readNextLine, write, signIn);
+    } finally {
+      signingIn = false;
+      if (!wasReady && signIn.ready()) {
+        try { await options.rememberProviderSetup?.(); }
+        catch (error: unknown) { write(`Could not save model setup: ${error instanceof Error ? error.message : String(error)}\n`); }
+      }
     }
   };
 
@@ -1179,6 +1258,11 @@ export async function runRepl(options: ReplOptions): Promise<number> {
   };
 
   try {
+    if (options.offerProviderSetup && options.signIn?.ready() === false) {
+      await connectProvider(true);
+      if (!inputClosed && !options.signIn.ready()) write("Run /login to connect a model before sending a prompt.\n");
+    }
+    showPrompt();
     for (;;) {
       let line = options.inlineComposer && tuiInput !== undefined
         ? await collectEditor(true)
@@ -1284,11 +1368,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
             write(selected.message);
             if (!selected.ok) { showPrompt(); continue; }
           }
-          controller = new AbortController();
-          try {
-            const failure = await options.signIn.oauth(target, controller.signal);
-            write(failure ?? `Signed in to ${target} subscription for this session. API keys remain preferred on the next launch.\n`);
-          } finally { controller = undefined; }
+          await signInWithSubscription(target);
           showPrompt();
           continue;
         }
@@ -1304,27 +1384,11 @@ export async function runRepl(options: ReplOptions): Promise<number> {
             showPrompt();
             continue;
           }
-        } else if (options.providers !== undefined) {
-          signingIn = true;
-          let chosen: string | undefined;
-          try {
-            chosen = await chooseLoginProvider();
-          } finally {
-            signingIn = false;
-          }
-          if (chosen === undefined) {
-            write("No Provider selected; no key was stored.\n");
-            if (inputClosed) break;
-            showPrompt();
-            continue;
-          }
-          const selected = await options.providers.select(chosen);
-          write(selected.message);
-          if (!selected.ok) {
-            if (inputClosed) break;
-            showPrompt();
-            continue;
-          }
+        } else if (options.providers !== undefined && options.signIn !== undefined) {
+          await connectProvider(false);
+          if (inputClosed) break;
+          showPrompt();
+          continue;
         }
         if (options.signIn !== undefined) {
           signingIn = true;

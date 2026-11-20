@@ -331,7 +331,7 @@ describe("the REPL /login Provider picker", () => {
   }
 
   /** Drives the plain REPL without a TUI. */
-  async function drivePicker(lines: readonly string[], control: SignIn & ProviderControl) {
+  async function drivePicker(lines: readonly string[], control: SignIn & ProviderControl, offerProviderSetup = false) {
     const input = new PassThrough();
     const output = new PassThrough();
     output.resume();
@@ -342,12 +342,49 @@ describe("the REPL /login Provider picker", () => {
       stderr: { write: (chunk: string) => { text += chunk; } },
       signIn: control,
       providers: control,
+      offerProviderSetup,
     });
     for (const line of lines) input.write(`${line}\n`);
     input.end();
     await finished;
     return text;
   }
+
+  it("offers Provider setup before the first prompt and accepts a DeepSeek key", async () => {
+    const { control, submitted } = pickerControl();
+    control.ready = () => submitted.length > 0;
+
+    const output = await drivePicker(["2", "fake-deepseek-key", "Hello"], control, true);
+
+    expect(output).toContain("Connect a model");
+    expect(output).toContain("deepseek (Recommended)");
+    expect(submitted).toEqual(["deepseek:fake-deepseek-key"]);
+    expect(output).toContain("Stored the key for deepseek. Ready for your next prompt.");
+  });
+
+  it("offers subscription sign-in for OpenAI in setup", async () => {
+    const { control, submitted } = pickerControl();
+    const signedIn: string[] = [];
+    control.ready = () => signedIn.length > 0;
+    control.oauth = async (provider) => { signedIn.push(provider); return undefined; };
+
+    const output = await drivePicker(["openai", "2", "/exit"], control, true);
+
+    expect(output).toContain("Sign in with ChatGPT");
+    expect(signedIn).toEqual(["openai"]);
+    expect(submitted).toEqual([]);
+  });
+
+  it("keeps model prompts gated after cancelling startup setup and lets /login reopen it", async () => {
+    const { control, submitted } = pickerControl();
+    control.ready = () => submitted.length > 0;
+
+    const output = await drivePicker(["", "first prompt", "/login", "deepseek", "fake-deepseek-key", "/exit"], control, true);
+
+    expect(output).toContain("Run /login to connect a model before sending a prompt.");
+    expect(output).toContain("No API key for openai.");
+    expect(submitted).toEqual(["deepseek:fake-deepseek-key"]);
+  });
 
   it("lists Providers and stores the key for the chosen one", async () => {
     const { control, selected, submitted } = pickerControl();
