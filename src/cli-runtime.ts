@@ -27,7 +27,7 @@ import { WriteFileTool } from "./tools/write-file.js";
 import { UpdatePlanTool } from "./tools/update-plan.js";
 import { QuestionTool } from "./tools/question.js";
 import { QuestionBroker } from "./questions.js";
-import { SearxngBackend } from "./websearch/backend.js";
+import { SearxngBackend, type WebSearchBackend } from "./websearch/backend.js";
 import { LocalWorkspace } from "./workspace.js";
 
 interface LocalSessionConfig {
@@ -49,6 +49,7 @@ interface LocalSessionConfig {
   readonly store?: SessionStore;
   readonly shellApproval?: ShellApprovalGate;
   readonly permissionPolicy?: PermissionPolicy;
+  readonly webSearchBackend?: WebSearchBackend;
   readonly allowShellForPolicy?: boolean;
 }
 
@@ -60,12 +61,12 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
   const allowWrites = modernPolicy || options.allowWrites;
   const allowShell = modernPolicy ? (config.allowShellForPolicy ?? true) : options.allowShell;
   const shellOutputStore = allowShell ? new ShellOutputStore() : undefined;
-  const webSearchBackend = options.webSearch === undefined
+  const webSearchBackend = config.webSearchBackend ?? (options.webSearch === undefined || !("url" in options.webSearch)
     ? undefined
     : new SearxngBackend({
         baseURL: options.webSearch.url,
         ...(options.webSearch.token === undefined ? {} : { token: options.webSearch.token }),
-      });
+      }));
   if (allowWrites) prompt.push(WRITE_SYSTEM_PROMPT);
   if (allowShell) prompt.push(modernPolicy ? MODERN_SHELL_SYSTEM_PROMPT : SHELL_SYSTEM_PROMPT);
   if (webSearchBackend !== undefined) prompt.push(WEB_SEARCH_SYSTEM_PROMPT);
@@ -98,7 +99,7 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
       new SearchTextTool(),
       ...(webSearchBackend === undefined ? [] : [new WebSearchTool({
         backend: webSearchBackend,
-        ...(modernPolicy ? {
+        ...(modernPolicy && options.webSearch?.approved !== true ? {
           authorize: (query: string, signal?: AbortSignal) =>
             config.permissionPolicy!.authorizeWebSearch(query, webSearchBackend.name, signal),
         } : {}),

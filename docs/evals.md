@@ -145,3 +145,30 @@ Streamed Chat Completions only report usage when asked, so chivgent sends
 endpoint that predates that field may reject the request; `--no-stream` is the
 fallback.
 
+
+## Web search
+
+The web suite runs the built CLI in a temporary, empty workspace with session
+logging and extensions disabled. It has nine public questions and five fixed
+responses. Use the same model, selected tasks, and attempt count to compare
+runs. The fixture backend runs locally. It still calls the DeepSeek model.
+
+```sh
+npm run eval:web -- --backend deepseek --dry-run
+npm run eval:web -- --backend off --attempts 2 --json off.json
+npm run eval:web -- --backend deepseek --attempts 2 --json deepseek.json
+npm run eval:web -- --backend fixture --json fixture.json
+```
+
+Pass a SearXNG URL as the backend to compare another live index. Search-enabled
+runs use `ask-first` with explicit startup search approval and have no approval
+input, so an accidental per-query prompt makes the attempt fail. Fixture scoring
+also checks that the backend saw the expected request and returned the expected
+tool outcome.
+
+The report distinguishes correct facts, useful evidence returned by the search,
+and citations that match returned URLs with supporting evidence. These checks
+use case-specific patterns from [the question set](../evals-web/tasks.json).
+Review the recorded answers and snippets before drawing conclusions. The
+public questions record their reference pages. Recheck time-sensitive answers
+before changing the benchmark date.

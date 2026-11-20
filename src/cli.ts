@@ -45,10 +45,11 @@ import {
 } from "./remote/socket-path.js";
 import { runRemoteRepl } from "./remote/repl.js";
 import type { Message } from "./messages.js";
-import { createConfiguredClient } from "./providers/client.js";
+import { createConfiguredClient, defaultCredentialResolver } from "./providers/client.js";
 import { DeferredLLMClient } from "./providers/deferred-client.js";
 import { InteractiveProvider } from "./providers/interactive.js";
-import { webSearchProviderName } from "./websearch/backend.js";
+import { defaultProviderRegistry } from "./providers/registry.js";
+import { DeepSeekSearchBackend, webSearchProviderName } from "./websearch/backend.js";
 
 const EXIT_INTERRUPTED = 130;
 
@@ -255,6 +256,21 @@ export async function main(argv: readonly string[]): Promise<number> {
     }
   }
 
+  const searchOptions = options.webSearch;
+  let webSearchBackend: DeepSeekSearchBackend | undefined;
+  if (searchOptions !== undefined && "provider" in searchOptions) {
+    const resolver = defaultCredentialResolver(options.provider === "deepseek" ? options : {});
+    const credential = await resolver.resolve(defaultProviderRegistry.get("deepseek"));
+    if (credential === undefined) {
+      process.stderr.write("DeepSeek Search needs a DeepSeek API key. Set DEEPSEEK_API_KEY or use /login deepseek and restart.\n");
+      return 1;
+    }
+    webSearchBackend = new DeepSeekSearchBackend({ apiKey: credential.apiKey });
+  }
+  const webSearchConfig = webSearchBackend === undefined ? {} : { webSearchBackend };
+  const webSearchName = webSearchBackend?.name ??
+    (searchOptions !== undefined && "url" in searchOptions ? webSearchProviderName(searchOptions.url) : undefined);
+
   const configured = await createConfiguredClient(options);
   let signedOutMessage =
     typeof configured === "string" ? configured : undefined;
@@ -318,6 +334,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   });
   const session = createLocalSession({
     options,
+    ...webSearchConfig,
     cwd,
     llm,
     modelSelection,
@@ -397,9 +414,12 @@ export async function main(argv: readonly string[]): Promise<number> {
         compactionEnabled: options.compaction,
         providerName: options.provider,
         modelName: options.model,
-        ...(options.webSearch === undefined
+        ...(webSearchName === undefined
           ? {}
-          : { webSearch: { provider: webSearchProviderName(options.webSearch.url) } }),
+          : { webSearch: {
+              provider: webSearchName,
+              ...(searchOptions?.approved === true ? { approved: true } : {}),
+            } }),
         permissions: [
           ...(options.permissionMode === undefined ? [] : [`mode:${options.permissionMode}`]),
           ...(options.allowWrites ? ["file-write"] : []),
@@ -410,7 +430,7 @@ export async function main(argv: readonly string[]): Promise<number> {
           list: async () => (await store.list({ cwd })).map(({ id, title }) => ({ id, ...(title === undefined ? {} : { title }) })),
           create: async (title) => {
             await store.flush?.();
-            const next = createLocalSession({ options, cwd, llm, modelSelection, ...(shellApproval === undefined ? {} : { shellApproval }), ...(permissionPolicy === undefined ? {} : { permissionPolicy }), ...(registry === undefined ? {} : { extensions: registry }), restored: { resumed: false }, store });
+            const next = createLocalSession({ options, ...webSearchConfig, cwd, llm, modelSelection, ...(shellApproval === undefined ? {} : { shellApproval }), ...(permissionPolicy === undefined ? {} : { permissionPolicy }), ...(registry === undefined ? {} : { extensions: registry }), restored: { resumed: false }, store });
             await next.initialize();
             if (title) await next.rename(title);
             attachSession(next);
@@ -420,7 +440,7 @@ export async function main(argv: readonly string[]): Promise<number> {
             await store.flush?.();
             const record = await store.read(id);
             if (record === undefined || record.header.cwd !== cwd) return undefined;
-            const next = createLocalSession({ options, cwd, llm, modelSelection, ...(shellApproval === undefined ? {} : { shellApproval }), ...(permissionPolicy === undefined ? {} : { permissionPolicy }), ...(registry === undefined ? {} : { extensions: registry }), restored: { id, messages: record.messages, compaction: record.compaction, promptCount: record.promptCount, usage: record.usage, title: record.title, planMode: record.planMode, resumed: true }, store });
+            const next = createLocalSession({ options, ...webSearchConfig, cwd, llm, modelSelection, ...(shellApproval === undefined ? {} : { shellApproval }), ...(permissionPolicy === undefined ? {} : { permissionPolicy }), ...(registry === undefined ? {} : { extensions: registry }), restored: { id, messages: record.messages, compaction: record.compaction, promptCount: record.promptCount, usage: record.usage, title: record.title, planMode: record.planMode, resumed: true }, store });
             attachSession(next);
             return next;
           },

@@ -66,7 +66,7 @@ export async function createConfiguredClient(
   });
 }
 
-function defaultCredentialResolver(options: CliOptions): CredentialResolver {
+export function defaultCredentialResolver(options: Pick<CliOptions, "apiKey">): CredentialResolver {
   return new CredentialResolver([
     new RuntimeCredentialSource(options.apiKey),
     new EnvCredentialSource(process.env),

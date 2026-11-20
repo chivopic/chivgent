@@ -113,7 +113,7 @@ export interface SlashCommandContext {
   readonly providerName?: string;
   readonly modelName?: string;
   /** Configured search provider, absent when web_search is not registered. */
-  readonly webSearch?: { readonly provider: string };
+  readonly webSearch?: { readonly provider: string; readonly approved?: boolean };
   readonly permissions?: readonly string[];
   readonly permissionPolicy?: PermissionPolicy;
   readonly tui?: boolean;
@@ -477,7 +477,7 @@ function describeStatus(context: SlashCommandContext): string {
     `plan:      ${context.session.planMode ? "on (writes and Shell blocked for this session)" : "off"}`,
     ...(context.permissionPolicy === undefined ? [] : [`permissions: ${context.permissionPolicy.mode} (${describePermissionMode(context.permissionPolicy.mode)})`]),
     ...(context.webSearch === undefined ? [] : [
-      `web search: ${context.webSearch.provider}${context.permissionPolicy === undefined || context.permissionPolicy.mode === "unrestricted" ? "" : " (each query asks for approval)"}`,
+      `web search: ${context.webSearch.provider}${context.webSearch.approved ? " (approved for this process)" : context.permissionPolicy === undefined || context.permissionPolicy.mode === "unrestricted" ? "" : " (each query asks for approval)"}`,
     ]),
     ...(context.permissionPolicy === undefined ? [
       `file write grant: ${context.permissions === undefined ? "unavailable" : context.permissions.includes("file-write") ? "enabled" : "disabled"}`,
@@ -513,7 +513,7 @@ export interface ReplOptions {
   readonly providerName?: string;
   readonly modelName?: string;
   /** Configured search provider, absent when web_search is not registered. */
-  readonly webSearch?: { readonly provider: string };
+  readonly webSearch?: { readonly provider: string; readonly approved?: boolean };
   readonly permissions?: readonly string[];
   readonly permissionPolicy?: PermissionPolicy;
   readonly sessionFileForSession?: SlashCommandContext["sessionFileForSession"];

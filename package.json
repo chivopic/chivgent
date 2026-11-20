@@ -44,6 +44,7 @@
     "prepublishOnly": "npm run check && npm test",
     "prepack": "npm run build",
     "eval": "npm run build && node dist/evals/cli.js",
+    "eval:web": "npm run build && node scripts/eval-web-search.mjs",
     "desktop:dev": "npm --prefix apps/desktop run dev",
     "desktop:build": "npm --prefix apps/desktop run build",
     "desktop:pack": "npm --prefix apps/desktop run pack",

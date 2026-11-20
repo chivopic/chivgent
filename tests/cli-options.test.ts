@@ -335,6 +335,13 @@ describe("web search options", () => {
     });
   });
 
+  it("resolves the built-in DeepSeek search and keeps the endpoint token out of its options", () => {
+    expect(parseCliArgs(["--web-search", "deepseek", "--approve-web-search"], {
+      CHIVGENT_WEB_SEARCH_TOKEN: "search-only-token",
+    }).webSearch).toEqual({ provider: "deepseek", approved: true });
+    expect(() => parseCliArgs(["--approve-web-search"], {})).toThrow(/requires --web-search/);
+  });
+
   it.each([
     ["a relative URL", "search.example"],
     ["a non-HTTP scheme", "file:///etc/passwd"],

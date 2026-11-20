@@ -99,10 +99,11 @@ chivgent --continue                                  # 这个目录里的上一�
 只有指定后端时才会注册 `web_search`：
 
 ```bash
+chivgent --provider deepseek --web-search deepseek --approve-web-search
 CHIVGENT_WEB_SEARCH_TOKEN=… chivgent --web-search https://search.example.com
 ```
 
-后端是启用了 JSON API 的 SearXNG 实例。token 从环境变量读取，不放在命令行参数里。`ask-first` 和 `workspace` 每次查询都会显示完整查询文本并要求确认；`unrestricted` 直接查询；旧开关 `--allow-writes` / `--allow-shell` 会话把 `--web-search` 本身当作同意。离开本机的只有查询内容，不会发送模型 key 或对话历史。结果有上限，并作为不可信数据处理。见[网页搜索](docs/web-search.md)。
+可以选内置的 DeepSeek Search API，也可以填写 SearXNG 的 JSON 接口。加上 `--approve-web-search` 后，本进程对该后端的查询直接执行。见[网页搜索](docs/web-search.md)。
 
 ## 它怎么接在一起
 
@@ -122,7 +123,7 @@ CHIVGENT_WEB_SEARCH_TOKEN=… chivgent --web-search https://search.example.com
 | 读这个项目 | 开着 | 当前目录。被忽略的、生成的和凭据路径会跳过。 |
 | 改文件 | `--allow-writes` | 工作区内的文件。修改必须精确匹配，写入是原子的。 |
 | 跑命令 | `--allow-shell` | macOS 用 Seatbelt，其他系统用 Docker。默认没有网络。每条命令都要确认。 |
-| 搜索网页 | `--web-search URL` | 配置好的 SearXNG JSON 接口。离开本机的只有获准的查询；ask-first 和 workspace 每次都问。 |
+| 搜索网页 | `--web-search URL\|deepseek` | 选择搜索后端。加 `--approve-web-search` 可授权本进程的查询。 |
 | 选一种策略 | `--permission-mode` | `ask-first`、`workspace` 或 `unrestricted`。在这个进程里代替上面的开关。 |
 
 费用付给你选的供应商，按他们的价格。chivgent 显示 token 数，不折算成费用。

@@ -37,6 +37,8 @@ const harness = vi.hoisted(() => {
     },
     runRepl: vi.fn(async (_options: Record<string, unknown>) => 0),
     createConfiguredClient: vi.fn(async (): Promise<object | string> => ({})),
+    resolveCredential: vi.fn(async () => ({ apiKey: "fake-deepseek-key" })),
+    defaultCredentialResolver: vi.fn(),
     createLocalSession: vi.fn((_config: Record<string, unknown>) => ({
       id: "session-test",
       subscribe: vi.fn(() => () => undefined),
@@ -54,6 +56,7 @@ vi.mock("../src/repl.js", () => ({
 }));
 vi.mock("../src/providers/client.js", () => ({
   createConfiguredClient: harness.createConfiguredClient,
+  defaultCredentialResolver: harness.defaultCredentialResolver,
 }));
 vi.mock("../src/cli-runtime.js", () => ({
   createLocalSession: harness.createLocalSession,
@@ -206,6 +209,19 @@ describe("CLI terminal UI wiring", () => {
     });
     expect(harness.createLocalSession.mock.calls[0]?.[0].options).toMatchObject({
       webSearch: { url: "https://search.example" },
+    });
+  });
+
+  it("uses only the DeepSeek credential source for approved DeepSeek web search", async () => {
+    harness.defaultCredentialResolver.mockReturnValue({ resolve: harness.resolveCredential });
+    expect(await main([
+      "--provider", "openai", "--api-key", "openai-only-key", "--no-session", "--no-extensions",
+      "--web-search", "deepseek", "--approve-web-search",
+    ])).toBe(0);
+    expect(harness.defaultCredentialResolver).toHaveBeenCalledWith({});
+    expect(harness.resolveCredential).toHaveBeenCalledWith(expect.objectContaining({ id: "deepseek" }));
+    expect(harness.runRepl.mock.calls[0]?.[0]).toMatchObject({
+      webSearch: { provider: "DeepSeek Search (api.deepseek.com)", approved: true },
     });
   });
 
