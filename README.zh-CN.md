@@ -166,7 +166,7 @@ CHIVGENT_WEB_SEARCH_TOKEN=… chivgent --web-search https://search.example.com
 
 在已提交的代码上工作。不信任的仓库，用一份副本。
 
-这个仓库还包含 Electron 桌面应用。它通过原生目录选择器打开项目，并用同一 Agent 运行已配置的 Provider。可在应用设置中保存 Provider、模型、API Key 和兼容端点；Node host 将桌面配置保存在应用 userData 下权限仅限本用户的文件中，环境变量和 CLI `auth.json` 中的密钥优先，Renderer 与会话历史不接收已保存的密钥。每次运行默认只读；也可选择逐项审批文件修改，或允许修改所选项目目录内的文件。Shell 和命令执行仍未启用；应用重启后权限恢复只读。桌面端不会读取 `oauth.json` 或刷新订阅 OAuth 凭证。仅通过 `/login oauth` 登录的用户，使用桌面端前还需配置 API Key。选择兼容 Provider 时，请先核对界面显示的请求端点，再发送项目内容。目前每个项目保留一个会话：窗口刷新可恢复当前运行，应用重启后加载历史供用户主动续聊。中断运行标记为结果未知，不自动重放；完整历史导航和 CLI 会话导入仍待实现。设置 `CHIVGENT_DESKTOP_DEMO=1` 可显式启用离线演示。使用 `npm run desktop:dev` 开发；本地离线真实 adapter 验收运行 `npm run desktop:build && node apps/desktop/scripts/verify-readonly.mjs --allow-ui`，会打开可见窗口。重复 GUI 验收由 CI 在 Xvfb 下运行。[桌面行为与限制](docs/desktop-architecture.md)。
+这个仓库还包含 Electron 桌面应用。它通过原生目录选择器打开项目，并用同一 Agent 运行已配置的 Provider。缺少可用模型配置时，桌面会提示选择 DeepSeek 并导入 API Key。连接后选择项目目录即可聊天，也可在设置中管理供应商与模型。Node host 将桌面配置保存在应用 userData 下权限仅限本用户的文件中，新录入的 DeepSeek 密钥使用系统凭证存储加密，并优先用于桌面端 DeepSeek 请求。其他密钥沿用现有解析顺序。Renderer 与会话历史不接收已保存的密钥。每次运行默认只读；也可选择逐项审批文件修改，或允许修改所选项目目录内的文件。Shell 和命令执行仍未启用；应用重启后权限恢复只读。桌面端不会读取 `oauth.json` 或刷新订阅 OAuth 凭证。仅通过 `/login oauth` 登录的用户，使用桌面端前还需配置 API Key。选择兼容 Provider 时，请先核对界面显示的请求端点，再发送项目内容。目前每个项目保留一个会话：窗口刷新可恢复当前运行，应用重启后加载历史供用户主动续聊。中断运行标记为结果未知，不自动重放；完整历史导航和 CLI 会话导入仍待实现。设置 `CHIVGENT_DESKTOP_DEMO=1` 可显式启用离线演示。使用 `npm run desktop:dev` 开发；本地离线真实 adapter 验收运行 `npm run desktop:build && node apps/desktop/scripts/verify-readonly.mjs --allow-ui`，会打开可见窗口。重复 GUI 验收由 CI 在 Xvfb 下运行。[桌面行为与限制](docs/desktop-architecture.md)。
 
 ## 文档
 

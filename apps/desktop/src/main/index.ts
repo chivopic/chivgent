@@ -13,13 +13,14 @@ import {
   type IpcResult,
 } from "../protocol/messages.js";
 import { createHostBridge, type HostBridge } from "./host-bridge.js";
+import { deepSeekCredentialCodec } from "./deepseek-credentials.js";
 import { routeApproval } from "./approval-routing.js";
 import { RendererLifecycle } from "./renderer-lifecycle.js";
 
 let mainWindow: BrowserWindow | undefined;
 let quitting = false;
 let activeWorkspacePath: string | undefined;
-const bridge: HostBridge = createHostBridge();
+const bridge: HostBridge = createHostBridge(deepSeekCredentialCodec);
 const pendingApprovals = new Map<string, Extract<HostToMain, { type: "approval" }>>();
 const rendererLifecycle = new RendererLifecycle();
 
@@ -96,6 +97,12 @@ function installIpc(): void {
     const choice = await dialog.showOpenDialog(mainWindow!, { properties: ["openDirectory", "createDirectory"] });
     if (choice.canceled || choice.filePaths[0] === undefined) return failure("cancelled", "未选择项目目录。");
     return callHost({ type: "select-project", requestId: `project-${randomUUID()}`, path: choice.filePaths[0] });
+  });
+  ipcMain.handle(IPC.connectDeepSeek, async (event, apiKey: unknown) => {
+    assertSender(event.sender);
+    const request = validateMainToHost({ type: "connect-deepseek", requestId: `connect-${randomUUID()}`, apiKey });
+    if (typeof request === "string") return failure("bad_request", request);
+    return callHost(request);
   });
   ipcMain.handle(IPC.saveProviderProfile, async (event, payload: unknown) => {
     assertSender(event.sender);

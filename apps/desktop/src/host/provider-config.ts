@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { defaultProviderRegistry } from "@chivgent/providers/registry.ts";
+import type { DeepSeekCredentialCodec } from "../protocol/credentials.js";
 import type { SaveProviderProfileRequest } from "../protocol/messages.js";
 
 export interface DesktopProviderProfile {
@@ -10,7 +11,13 @@ export interface DesktopProviderProfile {
   readonly model: string;
   readonly baseURL?: string;
   readonly apiKey: string;
+  readonly encrypted?: true;
 }
+
+type StoredProfile = Omit<DesktopProviderProfile, "apiKey" | "encrypted"> & (
+  | { readonly apiKey: string; readonly encryptedApiKey?: never }
+  | { readonly apiKey?: never; readonly encryptedApiKey: string }
+);
 
 export interface DesktopProviderProfileSummary {
   readonly provider: string;
@@ -36,13 +43,26 @@ export class DesktopProviderConfig {
   private readonly recoveryPath: string;
   private saveQueue: Promise<void> = Promise.resolve();
 
-  constructor(directory: string) {
+  constructor(directory: string, private readonly codec?: DeepSeekCredentialCodec) {
     this.filePath = join(directory, "provider-profiles.json");
     this.recoveryPath = join(directory, "provider-profiles-recovered.json");
   }
 
   async read(): Promise<Record<string, DesktopProviderProfile>> {
-    return (await this.readWithPath()).profiles;
+    const profiles = (await this.readWithPath()).profiles;
+    return Object.fromEntries(await Promise.all(Object.entries(profiles).map(async ([id, profile]) => [id, await this.resolve(profile)])));
+  }
+
+  async readProvider(provider: string): Promise<DesktopProviderProfile | undefined> {
+    const profile = (await this.readWithPath()).profiles[provider];
+    return profile === undefined ? undefined : this.resolve(profile);
+  }
+
+  private async resolve(profile: StoredProfile): Promise<DesktopProviderProfile> {
+    if (profile.encryptedApiKey === undefined) return profile;
+    if (this.codec === undefined) throw new Error("系统凭证存储不可用。");
+    const { encryptedApiKey, ...metadata } = profile;
+    return { ...metadata, apiKey: await this.codec.decrypt(encryptedApiKey), encrypted: true };
   }
 
   save(request: SaveProviderProfileRequest): Promise<DesktopProviderProfileSummary & { readonly recovered?: true }> {
@@ -57,7 +77,7 @@ export class DesktopProviderConfig {
     if (!model || model.length > 160) throw new Error("请输入有效的模型名称（最多 160 个字符）。");
     if (request.baseURL !== undefined && request.provider !== "openai-compatible") throw new Error("只有 OpenAI compatible Provider 可以配置自定义 endpoint。");
 
-    let loaded: { profiles: Record<string, DesktopProviderProfile>; path: string; recovered: boolean };
+    let loaded: { profiles: Record<string, StoredProfile>; path: string; recovered: boolean };
     let repaired = false;
     try {
       loaded = await this.readWithPath();
@@ -69,13 +89,21 @@ export class DesktopProviderConfig {
     }
 
     const prior = loaded.profiles[request.provider];
-    const apiKey = request.apiKey?.trim() || prior?.apiKey;
-    if (!apiKey) throw new Error("请输入 API key。损坏的 profile 无法恢复其密钥，请重新输入。");
+    const apiKey = request.apiKey?.trim();
+    const previousCredential = prior?.encryptedApiKey !== undefined
+      ? { encryptedApiKey: prior.encryptedApiKey }
+      : prior === undefined ? undefined : { apiKey: prior.apiKey };
+    const credential = apiKey
+      ? request.provider === "deepseek" && this.codec !== undefined
+        ? { encryptedApiKey: await this.codec.encrypt(apiKey) }
+        : { apiKey }
+      : previousCredential;
+    if (credential === undefined) throw new Error("请输入 API key。损坏的 profile 无法恢复其密钥，请重新输入。");
     let baseURL: string | undefined;
     if (definition.requiresBaseURL || request.baseURL !== undefined || prior?.baseURL !== undefined) {
       baseURL = normalizeEndpoint(request.baseURL?.trim() || prior?.baseURL || "");
     }
-    loaded.profiles[request.provider] = { provider: request.provider, model, apiKey, ...(baseURL === undefined ? {} : { baseURL }) };
+    loaded.profiles[request.provider] = { ...credential, provider: request.provider, model, ...(baseURL === undefined ? {} : { baseURL }) };
     await this.writeAtomically(loaded.path, loaded.profiles);
     return { provider: request.provider, model, ...(baseURL === undefined ? {} : { baseURL }), configured: true, ...(repaired ? { recovered: true } : {}) };
   }
@@ -98,7 +126,7 @@ export class DesktopProviderConfig {
     }
   }
 
-  private async readWithPath(): Promise<{ profiles: Record<string, DesktopProviderProfile>; path: string; recovered: boolean }> {
+  private async readWithPath(): Promise<{ profiles: Record<string, StoredProfile>; path: string; recovered: boolean }> {
     try {
       return { profiles: parseProfiles(await readFile(this.filePath, "utf8")), path: this.filePath, recovered: false };
     } catch (error: unknown) {
@@ -118,7 +146,7 @@ export class DesktopProviderConfig {
     }
   }
 
-  private readSyncWithPath(): { profiles: Record<string, DesktopProviderProfile>; recovered: boolean } {
+  private readSyncWithPath(): { profiles: Record<string, StoredProfile>; recovered: boolean } {
     try { return { profiles: parseProfiles(readFileSync(this.filePath, "utf8")), recovered: false }; }
     catch (error: unknown) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -137,7 +165,7 @@ export class DesktopProviderConfig {
     }
   }
 
-  private async writeAtomically(destination: string, profiles: Record<string, DesktopProviderProfile>): Promise<void> {
+  private async writeAtomically(destination: string, profiles: Record<string, StoredProfile>): Promise<void> {
     await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
     await chmod(dirname(destination), 0o700);
     const temporary = `${destination}.${randomUUID()}.tmp`;
@@ -164,27 +192,34 @@ export class DesktopProviderConfig {
   }
 }
 
-function parseProfiles(raw: string): Record<string, DesktopProviderProfile> {
+function parseProfiles(raw: string): Record<string, StoredProfile> {
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { throw new ProviderProfileCorruptError(); }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new ProviderProfileCorruptError();
-  const result: Record<string, DesktopProviderProfile> = {};
+  const result: Record<string, StoredProfile> = {};
   for (const [provider, value] of Object.entries(parsed)) {
     if (!defaultProviderRegistry.has(provider) || typeof value !== "object" || value === null || Array.isArray(value)) throw new ProviderProfileCorruptError();
     const item = value as Record<string, unknown>;
-    if (item.provider !== provider || typeof item.model !== "string" || item.model.trim().length === 0 || item.model.length > 160 || typeof item.apiKey !== "string" || item.apiKey.trim().length === 0) throw new ProviderProfileCorruptError();
+    if (item.provider !== provider || typeof item.model !== "string" || item.model.trim().length === 0 || item.model.length > 160) throw new ProviderProfileCorruptError();
     let baseURL: string | undefined;
     if (item.baseURL !== undefined) {
       if (typeof item.baseURL !== "string" || provider !== "openai-compatible") throw new ProviderProfileCorruptError();
       try { baseURL = normalizeEndpoint(item.baseURL); }
       catch { throw new ProviderProfileCorruptError(); }
     }
-    result[provider] = { provider, model: item.model, apiKey: item.apiKey, ...(baseURL === undefined ? {} : { baseURL }) };
+    const metadata = { provider, model: item.model, ...(baseURL === undefined ? {} : { baseURL }) };
+    if (provider === "deepseek" && item.apiKey === undefined && typeof item.encryptedApiKey === "string" && item.encryptedApiKey.length > 0) {
+      result[provider] = { ...metadata, encryptedApiKey: item.encryptedApiKey };
+    } else if (item.encryptedApiKey === undefined && typeof item.apiKey === "string" && item.apiKey.trim().length > 0) {
+      result[provider] = { ...metadata, apiKey: item.apiKey };
+    } else {
+      throw new ProviderProfileCorruptError();
+    }
   }
   return result;
 }
 
-function toSummaries(profiles: Record<string, DesktopProviderProfile>): readonly DesktopProviderProfileSummary[] {
+function toSummaries(profiles: Record<string, StoredProfile>): readonly DesktopProviderProfileSummary[] {
   return Object.values(profiles).map(({ provider, model, baseURL }) => ({ provider, model, ...(baseURL === undefined ? {} : { baseURL }), configured: true }));
 }
 

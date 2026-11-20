@@ -27,15 +27,32 @@ afterEach(() => {
   fakeProcesses.length = 0;
 });
 
-function bridgeWithFakeHost() {
+function bridgeWithFakeHost(credentials?: Parameters<typeof createHostBridge>[0]) {
   const host = new FakeUtilityProcess();
   fakeProcesses.push(host);
   fork.mockReturnValue(host);
-  const bridge = createHostBridge();
+  const bridge = createHostBridge(credentials);
   bridge.start();
   host.emit("spawn");
   return { bridge, host };
 }
+
+it("keeps DeepSeek credential exchange private to main and the host", async () => {
+  const key = "sk-private-bridge-fixture";
+  const credentials = { encrypt: vi.fn(async () => "sealed"), decrypt: vi.fn(async () => key) };
+  const { bridge, host } = bridgeWithFakeHost(credentials);
+  const onEvent = vi.fn();
+  bridge.onEvent(onEvent);
+  host.emit("message", { type: "deepseek-credential-request", id: 1, operation: "encrypt", value: key });
+  host.emit("message", { type: "deepseek-credential-request", id: 2, operation: "decrypt", value: "sealed" });
+  await vi.waitFor(() => expect(host.posts).toEqual([
+    { type: "deepseek-credential-result", id: 1, ok: true, value: "sealed" },
+    { type: "deepseek-credential-result", id: 2, ok: true, value: key },
+  ]));
+  expect(credentials.encrypt).toHaveBeenCalledWith(key);
+  expect(onEvent).not.toHaveBeenCalled();
+  host.emit("exit", 0);
+});
 
 describe("HostBridge shutdown", () => {
   it("does not resolve after kill until the owned utility process emits exit", async () => {

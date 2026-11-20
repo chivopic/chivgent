@@ -2,7 +2,7 @@
 
 更新：2026-10-19。状态：P1 首批真实只读运行已实现；#68 的单项目历史与最小恢复首批已实现，完整任务导航、旧 CLI 导入及 M1 后续能力仍未实现。
 
-默认运行真实 Agent，权限模式默认为只读。用户通过 main process 原生目录对话框选择项目；host 解析规范路径并为其创建 `AgentSession`，复用 CLI Provider、凭证解析、流式事件与文件工具。用户可在本次运行选择只读、逐项审批写入或工作区自动写入；逐项审批由 host 校验并在执行前可靠记录。Shell 仍未接入。Provider、模型、兼容 endpoint、API key 与权限模式可从会话设置配置。Renderer 只在密码输入框中短暂持有新输入；Node host 将 Provider 配置保存到应用 userData 的 `desktop-config-v1/provider-profiles.json`，目录权限为 0700、文件为 0600，状态读取不返回 key。配置不写入 CLI `auth.json`。环境 key 优先，其次 CLI `auth.json`，最后是该 Provider 的桌面 key。OAuth 刷新仍未接入。
+默认运行真实 Agent，权限模式默认为只读。用户通过 main process 原生目录对话框选择项目；host 解析规范路径并为其创建 `AgentSession`，复用 CLI Provider、凭证解析、流式事件与文件工具。用户可在本次运行选择只读、逐项审批写入或工作区自动写入；逐项审批由 host 校验并在执行前可靠记录。Shell 仍未接入。Provider、模型、兼容 endpoint、API key 与权限模式可从会话设置配置。Renderer 只在密码输入框中短暂持有新输入；Node host 将 Provider 配置保存到应用 userData 的 `desktop-config-v1/provider-profiles.json`，目录权限为 0700、文件为 0600，状态读取不返回 key。配置不写入 CLI `auth.json`。启动时检查本地模型配置，缺少可用配置时显示 DeepSeek 连接表单。凭证解析详见[第 9 节](#9-审批凭证与应用生命周期)。OAuth 刷新仍未接入。
 
 每个项目当前提供一个最小会话，支持多轮上下文；切换到有历史的项目会恢复其会话，首次打开才开始新上下文，运行期间不能切换。Provider/model 改变时用旧 transcript 重建 session。真实运行现在把当前项目及版本化运行记录保存在应用 userData 下的 `desktop-history-v1`；可用 `CHIVGENT_DESKTOP_HISTORY_DIR` 为验证指定隔离目录。host 初始化时恢复所选项目的原子快照；Renderer 刷新不重新提交任务，重启只读取历史和上下文，不自动运行模型或工具。未结束运行显示 interrupted/unknown；未完成工具提示检查工作区。运行期间 host 退出、host 失败或当前 run 报错时，仍为 running 的工具立即显示“结果未知”，保留已有工具输出和部分回答；已完成或已报错的工具保持原状态。历史损坏和写入失败会显示错误，损坏日志保持只读。记录不含凭证配置字段，序列化内容会对常见 token/key 形态脱敏。离线演示仅在显式设置 `CHIVGENT_DESKTOP_DEMO=1` 时启用，当前 demo 路径不持久化。macOS arm64 `.app` 本地打包未签名；这不代表公开发布或签名/安装包已通过 CI；当前桌面 CI 范围以 [workflow](../.github/workflows/ci.yml) 为准。完整恢复与 CLI 兼容仍见 [#68](https://github.com/chivopic/chivgent/issues/68)，UI 后续见 [#69](https://github.com/chivopic/chivgent/issues/69)。
 
@@ -174,7 +174,7 @@ M1 同一 host 只执行一个 Run，其他会话可查看、编辑草稿或等�
 | session/subscribe、unsubscribe | 原子快照与后续事件 |
 | run/start、read、interrupt | 提交、查询、取消 |
 | approval/respond | 带 hostInstanceId/sessionId/runId/approvalId 回答指定文件动作；单次消费 |
-| provider/list、status | 模型能力与脱敏配置状态 |
+| provider/list、status、connect-deepseek | 模型能力、脱敏配置状态与 DeepSeek 首次连接 |
 | workspace/diff、file/read | 有权限边界与容量限制的只读检查 |
 | host/shutdown | 受控停止与刷新 |
 
@@ -229,7 +229,7 @@ hostInstanceId 改变后原请求结果视为未知，不跨 host 自动重试�
 
 BrowserWindow 开启 contextIsolation/sandbox，关闭 nodeIntegration。preload 暴露明确方法，主进程校验发送者与参数；Markdown 和链接按不可信内容处理。文件预览、diff、编辑器打开同样校验项目边界，不能成为任意文件读取通道。
 
-Desktop 设置支持各 Provider 独立的桌面 API key；兼容 endpoint 只属于 `openai-compatible` profile。凭证按环境变量、CLI `auth.json`、桌面 profile 的顺序解析。`openai` 和 `openai-compatible` 共用环境变量名 `OPENAI_API_KEY`，但面向不同的目标端点。桌面端只允许进程启动时选中的 Provider 使用该共享环境 Key；切换到另一个 Provider 时，不会把启动 Provider 的环境 key 转给目标 Provider。桌面 profile 按 Provider 分开保存，Renderer 从不读取已保存的 key，提交后输入框清空，协议状态和历史都不含 key。配置位于应用 userData，不写入 CLI `auth.json`；文件是 owner-only 权限的明文 JSON，具备本机账户文件访问权的进程仍可读取。Desktop 不调用 OAuth refresh。
+Desktop 设置支持各 Provider 独立的桌面 API key；兼容 endpoint 只属于 `openai-compatible` profile。凭证按环境变量、CLI `auth.json`、桌面 profile 的顺序解析。`openai` 和 `openai-compatible` 共用环境变量名 `OPENAI_API_KEY`，但面向不同的目标端点。桌面端只允许进程启动时选中的 Provider 使用该共享环境 Key；切换到另一个 Provider 时，不会把启动 Provider 的环境 key 转给目标 Provider。桌面 profile 按 Provider 分开保存，Renderer 从不读取已保存的 key，提交后输入框清空，协议状态和历史都不含 key。配置位于应用 userData，不写入 CLI `auth.json`。首次连接通过 DeepSeek 官方[模型列表](https://api-docs.deepseek.com/zh-cn/api/list-models/)验证密钥，请求只携带鉴权头。验证通过后保存 profile，默认模型为 `deepseek-flash`。新录入的 DeepSeek 密钥由主进程调用 Electron `safeStorage` 加密后写入 profile，并优先用于桌面 DeepSeek 请求。主进程和 host 的加解密消息不会转发到 Renderer。已有明文 profile 继续按原顺序解析，用户重新录入 DeepSeek 密钥时更新为加密格式。系统凭证存储不可用时，保存会显示错误，环境变量或 CLI 凭证仍可用于首次配置。Desktop 不调用 OAuth refresh。
 
 首版不承诺新凭证自动写回 CLI 的明文 auth.json；界面说明保存范围。
 

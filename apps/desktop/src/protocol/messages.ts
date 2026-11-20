@@ -13,6 +13,7 @@ export const HOST_CAPABILITIES = ["project-select", "start", "interrupt", "works
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,80}$/;
 export const MAX_PROMPT_LENGTH = 32_000;
 export const MAX_MODEL_LENGTH = 160;
+export const MAX_API_KEY_LENGTH = 512;
 const MAX_ACCEPTED_REQUESTS = 100;
 
 export type HostPhase = "starting" | "ready" | "failed" | "exited";
@@ -63,6 +64,12 @@ export interface SaveProviderProfileRequest {
   readonly baseURL?: string;
 }
 
+export interface ConnectDeepSeekRequest {
+  readonly type: "connect-deepseek";
+  readonly requestId: string;
+  readonly apiKey: string;
+}
+
 export interface InterruptRequest {
   readonly type: "interrupt";
   readonly requestId: string;
@@ -84,6 +91,7 @@ export type MainToHost =
   | InitializeRequest
   | SelectProjectRequest
   | SaveProviderProfileRequest
+  | ConnectDeepSeekRequest
   | StartRequest
   | InterruptRequest
   | ApprovalRespondRequest
@@ -100,6 +108,7 @@ export interface InitializedMessage {
   readonly compatibleBaseURL?: string;
   readonly providerProfiles?: readonly { readonly provider: string; readonly model: string; readonly baseURL?: string; readonly configured: true }[];
   readonly providerConfigNotice?: string;
+  readonly readyProviders?: readonly string[];
   readonly snapshot?: SessionSnapshot;
   readonly historyNotice?: string;
 }
@@ -284,6 +293,11 @@ export function validateMainToHost(value: unknown): MainToHost | string {
         return "path must be a non-empty directory path.";
       }
       return { type: "select-project", requestId: record.requestId, path: record.path };
+    case "connect-deepseek": {
+      const apiKey = typeof record.apiKey === "string" && record.apiKey.length <= MAX_API_KEY_LENGTH ? record.apiKey.trim() : "";
+      if (!/^[\x21-\x7e]+$/.test(apiKey)) return "请输入有效的 DeepSeek API Key。";
+      return { type: "connect-deepseek", requestId: record.requestId, apiKey };
+    }
     case "save-provider-profile":
       if (typeof record.provider !== "string" || !/^[a-z0-9-]{1,80}$/.test(record.provider)) return "provider is invalid.";
       if (typeof record.model !== "string" || record.model.trim().length === 0 || record.model.length > MAX_MODEL_LENGTH) return `model must be 1-${MAX_MODEL_LENGTH} non-empty characters.`;
@@ -342,8 +356,9 @@ export function isHostToMain(value: unknown): value is HostToMain {
         Array.isArray(record.capabilities) &&
         record.capabilities.every((capability) => typeof capability === "string") &&
         typeof record.defaultProvider === "string" &&
+        (record.readyProviders === undefined || (Array.isArray(record.readyProviders) && record.readyProviders.every((provider) => typeof provider === "string"))) &&
         (record.compatibleBaseURL === undefined || typeof record.compatibleBaseURL === "string") &&
-        (record.providerProfiles === undefined || (Array.isArray(record.providerProfiles) && record.providerProfiles.every((profile) => typeof profile === "object" && profile !== null && typeof profile.provider === "string" && typeof profile.model === "string" && profile.configured === true && !("apiKey" in profile)))) &&
+        (record.providerProfiles === undefined || (Array.isArray(record.providerProfiles) && record.providerProfiles.every((profile) => typeof profile === "object" && profile !== null && typeof profile.provider === "string" && typeof profile.model === "string" && profile.configured === true && !("apiKey" in profile) && !("encryptedApiKey" in profile)))) &&
         (record.providerConfigNotice === undefined || typeof record.providerConfigNotice === "string") &&
         (record.historyNotice === undefined || typeof record.historyNotice === "string") &&
         (record.snapshot === undefined || isSessionSnapshot(record.snapshot))
@@ -352,7 +367,7 @@ export function isHostToMain(value: unknown): value is HostToMain {
       return isRequestId(record.requestId) && typeof record.path === "string" && record.path.length > 0;
     case "provider-profile-saved": {
       const profile = record.profile as Record<string, unknown> | null;
-      return isRequestId(record.requestId) && typeof profile === "object" && profile !== null && typeof profile.provider === "string" && typeof profile.model === "string" && profile.configured === true && (profile.recovered === undefined || profile.recovered === true) && !("apiKey" in profile);
+      return isRequestId(record.requestId) && typeof profile === "object" && profile !== null && typeof profile.provider === "string" && typeof profile.model === "string" && profile.configured === true && (profile.recovered === undefined || profile.recovered === true) && !("apiKey" in profile) && !("encryptedApiKey" in profile);
     }
     case "workspace-review":
       return isRequestId(record.requestId) && typeof record.projectPath === "string" && isWorkspaceReview(record.review);

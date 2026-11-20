@@ -15,11 +15,15 @@ import {
   HOST_CAPABILITIES,
   validateMainToHost,
   type HostToMain,
+  type InitializedMessage,
   type SaveProviderProfileRequest,
   type StartRequest,
   type ApprovalRespondRequest,
 } from "../protocol/messages.js";
 import { DesktopProviderConfig, type DesktopProviderProfile } from "./provider-config.js";
+import { readProviderAvailability, validateDeepSeekKey } from "./providers.js";
+import type { DeepSeekCredentialCodec } from "../protocol/credentials.js";
+import { resolveDesktopProvider } from "@chivgent/runtime/desktop-runtime.ts";
 
 export interface AcceptedStart {
   readonly requestId: string;
@@ -40,6 +44,8 @@ export interface HostServiceOptions {
   readonly createId?: () => string;
   readonly historyDirectory?: string;
   readonly providerConfigDirectory?: string;
+  readonly deepSeekCredentialCodec?: DeepSeekCredentialCodec;
+  readonly providerEnvironment?: NodeJS.ProcessEnv;
   readonly permissionMode?: "read-only" | "ask-first" | "workspace";
 }
 
@@ -92,6 +98,10 @@ export class HostService {
   private cachedCompaction: AppliedCompaction | undefined;
   private readonly historyDirectory: string | undefined;
   private readonly providerConfig: DesktopProviderConfig | undefined;
+  private readonly deepSeekSetupEnabled: boolean;
+  private readonly providerEnvironment: NodeJS.ProcessEnv;
+  private providerVersion = 0;
+  private providerConnection: Promise<void> | undefined;
   private history: DesktopHistory | undefined;
   private loadedHistory: LoadedHistory | undefined;
   private timelineEvents: HistoryEvent[] = [];
@@ -107,7 +117,9 @@ export class HostService {
     this.createSession = options.createSession;
     this.createId = options.createId ?? (() => randomBytes(8).toString("hex"));
     this.historyDirectory = options.historyDirectory;
-    this.providerConfig = options.providerConfigDirectory === undefined ? undefined : new DesktopProviderConfig(options.providerConfigDirectory);
+    this.providerConfig = options.providerConfigDirectory === undefined ? undefined : new DesktopProviderConfig(options.providerConfigDirectory, options.deepSeekCredentialCodec);
+    this.deepSeekSetupEnabled = options.deepSeekCredentialCodec !== undefined;
+    this.providerEnvironment = options.providerEnvironment ?? process.env;
     this.permissionMode = options.permissionMode ?? "read-only";
     this.defaultProvider = options.defaultProvider || "openai";
     this.compatibleBaseURL = safeEndpoint(options.compatibleBaseURL);
@@ -132,20 +144,14 @@ export class HostService {
     switch (request.type) {
       case "initialize":
         this.restoreLastProject();
-        const providerConfigStatus = this.providerConfig?.statusSync();
-        this.send({
-          type: "initialized",
-          requestId: request.requestId,
-          protocolVersion: DESKTOP_PROTOCOL_VERSION,
-          hostInstanceId: this.instanceId,
-          capabilities: [...HOST_CAPABILITIES, this.createSession === undefined ? "demo-agent" : "real-agent"],
-          defaultProvider: this.defaultProvider,
-          ...(this.compatibleBaseURL === undefined ? {} : { compatibleBaseURL: this.compatibleBaseURL }),
-          ...(providerConfigStatus === undefined ? {} : { providerProfiles: providerConfigStatus.profiles }),
-          ...(providerConfigStatus?.notice === undefined ? {} : { providerConfigNotice: providerConfigStatus.notice }),
-          ...(this.historyNotice === undefined ? {} : { historyNotice: this.historyNotice }),
-          ...(this.snapshot() === undefined ? {} : { snapshot: this.snapshot() }),
-        });
+        if (this.providerConfig !== undefined && this.deepSeekSetupEnabled) {
+          void this.initializeProviders(request.requestId, this.providerConfig);
+        } else {
+          this.sendInitialization(request.requestId);
+        }
+        return;
+      case "connect-deepseek":
+        this.connectDeepSeek(request.requestId, request.apiKey);
         return;
       case "start":
         this.start(request);
@@ -169,6 +175,67 @@ export class HostService {
         void this.shutdown(request.requestId);
         return;
     }
+  }
+
+  private async initializeProviders(requestId: string, config: DesktopProviderConfig): Promise<void> {
+    await this.providerConnection;
+    const version = this.providerVersion;
+    const status = await readProviderAvailability(config, this.providerEnvironment, this.defaultProvider);
+    if (this.closed) return;
+    if (version !== this.providerVersion || this.providerConnection !== undefined) {
+      await this.initializeProviders(requestId, config);
+      return;
+    }
+    this.sendInitialization(requestId, status);
+  }
+
+  private sendInitialization(requestId: string, status?: { defaultProvider: string; readyProviders: readonly string[]; warning: boolean }): void {
+    const profiles = this.providerConfig?.statusSync();
+    const notice = profiles?.notice ?? (status?.warning ? "部分模型配置无法读取，请检查本地凭证。" : undefined);
+    const snapshot = this.snapshot();
+    const message: InitializedMessage = {
+      type: "initialized",
+      requestId,
+      protocolVersion: DESKTOP_PROTOCOL_VERSION,
+      hostInstanceId: this.instanceId,
+      capabilities: [...HOST_CAPABILITIES, this.createSession === undefined ? "demo-agent" : "real-agent"],
+      defaultProvider: status?.defaultProvider ?? this.defaultProvider,
+      ...(status === undefined ? {} : { readyProviders: status.readyProviders }),
+      ...(this.compatibleBaseURL === undefined ? {} : { compatibleBaseURL: this.compatibleBaseURL }),
+      ...(profiles === undefined ? {} : { providerProfiles: profiles.profiles }),
+      ...(notice === undefined ? {} : { providerConfigNotice: notice }),
+      ...(this.historyNotice === undefined ? {} : { historyNotice: this.historyNotice }),
+      ...(snapshot === undefined ? {} : { snapshot }),
+    };
+    this.send(message);
+  }
+
+  private connectDeepSeek(requestId: string, apiKey: string): void {
+    if (this.providerConfig === undefined || !this.deepSeekSetupEnabled) {
+      this.send({ type: "error", requestId, code: "unsupported", message: "当前模式无法连接 DeepSeek。" });
+      return;
+    }
+    if (this.active !== undefined || this.providerConnection !== undefined) {
+      this.send({ type: "error", requestId, code: "busy", message: "请等待当前操作结束后再连接 DeepSeek。" });
+      return;
+    }
+    const config = this.providerConfig;
+    this.providerConnection = (async () => {
+      const failure = await validateDeepSeekKey(apiKey);
+      if (failure !== undefined) {
+        this.send({ type: "error", requestId, code: failure.code, message: failure.message });
+        return;
+      }
+      if (this.closed) return;
+      const { model } = await resolveDesktopProvider({
+        provider: "deepseek", environment: this.providerEnvironment, importedDeepSeekKey: apiKey,
+      });
+      const profile = await config.save({ type: "save-provider-profile", requestId, provider: "deepseek", model, apiKey });
+      this.providerVersion += 1;
+      this.send({ type: "provider-profile-saved", requestId, profile });
+    })().catch(() => {
+      this.send({ type: "error", requestId, code: "save_failed", message: "无法保存 DeepSeek API Key，请检查系统钥匙串和桌面应用的数据目录。" });
+    }).finally(() => { this.providerConnection = undefined; });
   }
 
   async shutdown(requestId = "shutdown"): Promise<void> {
@@ -217,12 +284,12 @@ export class HostService {
       });
       return;
     }
-    if (this.active !== undefined) {
+    if (this.active !== undefined || this.providerConnection !== undefined) {
       this.send({
         type: "error",
         requestId: request.requestId,
         code: "busy",
-        message: "A run is already in progress.",
+        message: this.active === undefined ? "请等待模型连接完成后再发送。" : "A run is already in progress.",
       });
       return;
     }
@@ -287,7 +354,18 @@ export class HostService {
 
     const run = async (): Promise<void> => {
       if (this.createSession !== undefined) {
-        const profile = request.provider === undefined ? undefined : (await this.providerConfig?.read())?.[request.provider];
+        let profile: DesktopProviderProfile | undefined;
+        if (this.providerConfig !== undefined) {
+          const profileResult = await awaitWithAbort(
+            this.providerConfig.readProvider(request.provider ?? this.defaultProvider),
+            controller.signal,
+          );
+          if (profileResult.aborted) {
+            this.send({ type: "error", requestId: request.requestId, runId, code: "cancelled", message: "运行已停止。" });
+            return;
+          }
+          profile = profileResult.value;
+        }
         const profileKeyFingerprint = profile === undefined ? null : createHash("sha256").update(profile.apiKey).digest("hex");
         const mode = request.permissionMode ?? this.permissionMode;
         // A new session binds approvals to this run's abort signal and broker.
@@ -368,6 +446,7 @@ export class HostService {
     try {
       if (this.providerConfig === undefined) throw new Error("桌面配置目录不可用。");
       const profile = await this.providerConfig.save(request);
+      this.providerVersion += 1;
       this.send({ type: "provider-profile-saved", requestId: request.requestId, profile });
     } catch (error: unknown) {
       this.send({ type: "error", requestId: request.requestId, code: "provider_config_failed", message: error instanceof Error ? error.message : "无法保存 Provider 配置。" });

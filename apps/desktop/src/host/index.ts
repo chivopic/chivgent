@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDemoAgent, VISIBLE_DEMO_TIMING } from "./demo-agent.js";
 import { HostService } from "./service.js";
+import { createDeepSeekCredentialClient } from "./deepseek-credentials.js";
 import type { HostToMain } from "../protocol/messages.js";
 import { createDesktopSession } from "@chivgent/runtime/desktop-runtime.ts";
 
@@ -29,6 +30,8 @@ const workspaceRoot = mkdtempSync(join(tmpdir(), "chivgent-desktop-"));
 const parentPid = process.ppid;
 const demoMode = process.env["CHIVGENT_DESKTOP_DEMO"] === "1";
 
+const desktopCredentials = createDeepSeekCredentialClient((message) => port.postMessage(message));
+
 const service = new HostService({
   send: (message: HostToMain) => {
     port.postMessage(message);
@@ -39,15 +42,16 @@ const service = new HostService({
   ...(demoMode ? {} : {
     historyDirectory: process.env["CHIVGENT_DESKTOP_HISTORY_DIR"],
     providerConfigDirectory: process.env["CHIVGENT_DESKTOP_CONFIG_DIR"],
+    deepSeekCredentialCodec: desktopCredentials.codec,
     createSession: async (cwd, provider, model, messages, compaction, permissionMode, approval, profile) => {
       return createDesktopSession({ cwd, provider, model, messages, compaction, permissionMode, approval,
-        ...(profile === undefined ? {} : { desktopApiKey: profile.apiKey, baseURL: profile.baseURL }) });
+        ...(profile === undefined ? {} : { desktopApiKey: profile.apiKey, importedDeepSeekKey: profile.encrypted ? profile.apiKey : undefined, baseURL: profile.baseURL }) });
     },
   }),
 });
 
 port.on("message", (event) => {
-  service.handle(event.data);
+  if (!desktopCredentials.receive(event.data)) service.handle(event.data);
 });
 
 // utilityProcess is not a shell sandbox, and a dead parent does not always
