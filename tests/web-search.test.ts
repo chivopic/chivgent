@@ -130,6 +130,40 @@ describe("SearxngBackend", () => {
     }
   });
 
+  it.each([
+    { kind: "timeout", message: "did not respond" },
+    { kind: "aborted", message: "was cancelled" },
+  ])("reports $kind while reading a partial response body", async ({ kind, message }) => {
+    const interruption = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    if (kind === "timeout") timeout.mockReturnValueOnce(interruption.signal);
+    const backend = new SearxngBackend({
+      baseURL: "http://127.0.0.1",
+      fetch: async (_input, options) => {
+        const signal = options?.signal;
+        if (signal == null) throw new Error("Expected the request to have an abort signal.");
+        return new Response(new ReadableStream<Uint8Array>({
+          start(body) {
+            body.enqueue(new TextEncoder().encode('{"results":['));
+            signal.addEventListener("abort", () => body.error(signal.reason), { once: true });
+          },
+          pull() {
+            interruption.abort();
+          },
+        }));
+      },
+    });
+    try {
+      await expect(backend.search({
+        query: "slow body",
+        maxResults: 1,
+        ...(kind === "aborted" ? { signal: interruption.signal } : {}),
+      })).rejects.toMatchObject({ kind, message: expect.stringContaining(message) });
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
   it("maps HTTP 429 and other statuses to safe errors", async () => {
     let status = 429;
     const server = await startServer((_request, response) => {

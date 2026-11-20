@@ -113,6 +113,17 @@ export class SearxngBackend implements WebSearchBackend {
     const signal = request.signal === undefined
       ? timeout
       : AbortSignal.any([request.signal, timeout]);
+    const throwIfInterrupted = (): void => {
+      if (request.signal?.aborted) {
+        throw new WebSearchBackendError("aborted", "the search was cancelled");
+      }
+      if (timeout.aborted) {
+        throw new WebSearchBackendError(
+          "timeout",
+          `the search provider did not respond within ${Math.ceil(this.timeoutMs / 1_000)} seconds`,
+        );
+      }
+    };
     const url = new URL(this.searchURL);
     url.searchParams.set("q", request.query);
     url.searchParams.set("format", "json");
@@ -129,15 +140,7 @@ export class SearxngBackend implements WebSearchBackend {
         signal,
       });
     } catch {
-      if (request.signal?.aborted) {
-        throw new WebSearchBackendError("aborted", "the search was cancelled");
-      }
-      if (timeout.aborted) {
-        throw new WebSearchBackendError(
-          "timeout",
-          `the search provider did not respond within ${Math.ceil(this.timeoutMs / 1_000)} seconds`,
-        );
-      }
+      throwIfInterrupted();
       throw new WebSearchBackendError("network", "could not reach the search provider");
     }
 
@@ -159,6 +162,7 @@ export class SearxngBackend implements WebSearchBackend {
       payload = JSON.parse(await readBoundedBody(response));
     } catch (error: unknown) {
       if (error instanceof WebSearchBackendError) throw error;
+      throwIfInterrupted();
       throw new WebSearchBackendError(
         "invalid_response",
         "the search provider returned an invalid response",

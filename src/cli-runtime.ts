@@ -84,8 +84,13 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
     },
   });
 
+  let webSearchDatePrompt: string | undefined;
   const agent: Omit<AgentOptions, "onEvent"> = {
-    systemPrompt: () => [...prompt, modelSelectionPrompt(config.modelSelection?.() ?? options)].join("\n"),
+    systemPrompt: () => [
+      ...prompt,
+      ...(webSearchDatePrompt === undefined ? [] : [webSearchDatePrompt]),
+      modelSelectionPrompt(config.modelSelection?.() ?? options),
+    ].join("\n"),
     maxTurns: options.maxTurns,
     llm,
     tools: [
@@ -144,7 +149,7 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
     contextManager,
     projectInstructions: new ScopedProjectInstructions(cwd, Math.min(16_384, options.contextWindow)),
   };
-  return new AgentSession({
+  const session = new AgentSession({
     agent,
     cwd,
     resumed: restored.resumed,
@@ -157,4 +162,13 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
     planMode: restored.planMode ?? false,
     ...(store === undefined ? {} : { store }),
   });
+  if (webSearchBackend !== undefined) {
+    session.subscribe((event) => {
+      if (event.type === "agent_start") {
+        // Keep the provider prompt stable through tool calls, even at midnight.
+        webSearchDatePrompt = `Current date (UTC): ${new Date().toISOString().slice(0, 10)}`;
+      }
+    });
+  }
+  return session;
 }

@@ -61,13 +61,15 @@ and the adapter emits no request when approval is denied.
 | Query | 256 characters, no control characters |
 | Title / snippet / date | 200 / 400 / 64 characters |
 | Result URL | 2048 characters, `http` or `https` only, no credentials |
-| HTTP timeout | 10 seconds |
+| HTTP timeout | 10 seconds, including reading the response body |
 | Client rate limit | 10 searches per minute per session |
 | Response body | 256 KiB |
 
 Results are normalized, de-duplicated by URL, and treated as untrusted data.
 The tool output starts with that warning and serializes every result as JSON, so
 titles and snippets cannot become instructions or forge the surrounding format.
+Search-enabled sessions supply the UTC date at the start of each run to the model
+for time-sensitive questions.
 HTTP 429, other non-success statuses, timeouts, unreadable bodies, and malformed
 JSON become bounded tool errors with no response body. Failures are not retried.
 
