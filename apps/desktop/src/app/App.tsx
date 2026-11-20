@@ -2,12 +2,13 @@ import { useEffect, useLayoutEffect, useReducer, useRef, useState, type JSX } fr
 import { nextRequestId, shouldSubmitOnEnter } from "./input.js";
 import { initialDeskState, phaseLabel, reduceDesk, type TimelineItem } from "./reduce.js";
 import { isNearBottom } from "./scroll.js";
-import { MAX_MODEL_LENGTH, MAX_PROMPT_LENGTH, type ApprovalMessage, type HostStatus, type HostToMain, type IpcResult } from "../protocol/messages.js";
+import { MAX_API_KEY_LENGTH, MAX_MODEL_LENGTH, MAX_PROMPT_LENGTH, type ApprovalMessage, type HostStatus, type HostToMain, type IpcResult } from "../protocol/messages.js";
 import leafMark from "./assets/chivgent-leaf-mark.png";
 
 interface DesktopApi {
   initialize(): Promise<IpcResult<HostToMain>>;
   selectProject(): Promise<IpcResult<HostToMain>>;
+  connectDeepSeek(apiKey: string): Promise<IpcResult<HostToMain>>;
   saveProviderProfile(payload: { requestId: string; provider: string; model: string; apiKey?: string; baseURL?: string }): Promise<IpcResult<HostToMain>>;
   start(payload: { requestId: string; prompt: string; provider?: string; model?: string; permissionMode?: "read-only" | "ask-first" | "workspace" }): Promise<IpcResult<HostToMain>>;
   interrupt(payload: { requestId: string; runId: string }): Promise<IpcResult<HostToMain>>;
@@ -37,6 +38,12 @@ export function App(): JSX.Element {
   const [demoMode, setDemoMode] = useState(false);
   const [provider, setProvider] = useState("openai");
   const [model, setModel] = useState("");
+  const [readyProviders, setReadyProviders] = useState<readonly string[] | undefined>();
+  const [setupProvider, setSetupProvider] = useState("");
+  const [setupApiKey, setSetupApiKey] = useState("");
+  const [connecting, setConnecting] = useState(false);
+  const [setupError, setSetupError] = useState("");
+  const connectPendingRef = useRef(false);
   const [apiKey, setApiKey] = useState("");
   const [profileStatus, setProfileStatus] = useState("");
   const [providerConfigNotice, setProviderConfigNotice] = useState("");
@@ -81,6 +88,7 @@ export function App(): JSX.Element {
           providerDefaultAppliedRef.current = true;
         }
         compatibleBaseURLRef.current = message.compatibleBaseURL ?? "";
+        setReadyProviders(message.readyProviders);
         setProviderProfiles(message.providerProfiles ?? []);
         setProviderConfigNotice(message.providerConfigNotice ?? "");
         if (firstInitialization) {
@@ -216,7 +224,7 @@ export function App(): JSX.Element {
     if (api === undefined || projectPath.length === 0 || text.trim().length === 0 || state.phase === "running" || pendingStartRef.current !== null) {
       return;
     }
-    if (state.host.phase !== "ready") {
+    if (state.host.phase !== "ready" || showSetup || connectPendingRef.current) {
       return;
     }
     if (text.length > MAX_PROMPT_LENGTH || model.trim().length > MAX_MODEL_LENGTH) return;
@@ -299,6 +307,7 @@ export function App(): JSX.Element {
       setProviderProfiles((current) => [...current.filter((item) => item.provider !== provider), savedProfile]);
       setApiKey("");
       setProviderConfigNotice("");
+      if (readyProviders !== undefined) void api.initialize();
       setProfileStatus(savedProfile.recovered
         ? "已创建恢复配置。原损坏文件已保留；其中其他 Provider 需要重新录入。"
         : "配置已保存。API key 已从输入框清除。");
@@ -367,8 +376,71 @@ export function App(): JSX.Element {
     }
   }
 
+  async function connectDeepSeek(): Promise<void> {
+    const api = window.chivgent;
+    const key = setupApiKey.trim();
+    if (api === undefined || setupProvider !== "deepseek" || key.length === 0 || connectPendingRef.current || running) return;
+    connectPendingRef.current = true;
+    setConnecting(true);
+    setSetupError("");
+    try {
+      const result = await api.connectDeepSeek(key);
+      if (!result.ok) {
+        setSetupError(result.message);
+      } else if (result.value.type === "provider-profile-saved") {
+        setReadyProviders((current) => current?.includes("deepseek") ? current : [...(current ?? []), "deepseek"]);
+        setProvider("deepseek");
+        const profile = result.value.profile;
+        setProviderProfiles((current) => [...current.filter((item) => item.provider !== profile.provider), profile]);
+        setModel(profile.model);
+        setSetupApiKey("");
+        setSetupProvider("");
+      } else {
+        setSetupError("无法确认 DeepSeek 是否已连接，请重试。");
+      }
+    } catch {
+      setSetupError("无法连接 DeepSeek，请重试。");
+    } finally {
+      connectPendingRef.current = false;
+      setConnecting(false);
+    }
+  }
+
   const running = state.phase === "running";
   const label = phaseLabel(state.phase, state.host);
+  const showSetup = !demoMode && readyProviders !== undefined && (
+    provider === "deepseek" ? !readyProviders.includes(provider) : readyProviders.length === 0 && model.trim().length === 0
+  );
+  const setupForm = showSetup ? (
+    <form className="model-setup settings-form" data-testid="provider-setup" aria-labelledby="model-setup-title" onSubmit={(event) => {
+      event.preventDefault();
+      void connectDeepSeek();
+    }}>
+      <div className="model-setup-heading">
+        <Mark />
+        <div><h2 id="model-setup-title">连接模型</h2><p>选择供应商，导入 API Key 后即可发送消息。</p></div>
+      </div>
+      <label>模型供应商
+        <select aria-label="模型供应商" value={setupProvider} disabled={connecting} onChange={(event) => setSetupProvider(event.target.value)}>
+          <option value="" disabled>选择供应商</option>
+          <option value="deepseek">DeepSeek</option>
+        </select>
+      </label>
+      {setupProvider === "deepseek" && (
+        <label>DeepSeek API Key
+          <input aria-label="DeepSeek API Key" type="password" value={setupApiKey} placeholder="sk-…" maxLength={MAX_API_KEY_LENGTH}
+            autoComplete="off" spellCheck={false} disabled={connecting} onChange={(event) => setSetupApiKey(event.target.value)} />
+        </label>
+      )}
+      {providerConfigNotice && <p className="model-setup-error" role="alert">{providerConfigNotice}</p>}
+      {setupError && <p className="model-setup-error" data-testid="provider-setup-error" role="alert">{setupError}</p>}
+      <div className="model-setup-actions">
+        <button className="connect-action" type="submit" disabled={state.host.phase !== "ready" || running || connecting || setupApiKey.trim().length === 0}>
+          {connecting ? "正在验证…" : "连接并保存"}
+        </button>
+      </div>
+    </form>
+  ) : null;
 
   return (
     <div className={`desk ${state.items.length === 0 ? "desk-home" : "desk-chat"} ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`}>
@@ -448,7 +520,7 @@ export function App(): JSX.Element {
           {detailPanel === "settings" && <>
             <div className="dialog-head"><div><h2 id="details-title">会话设置</h2><p>Provider 和模型的更改仅用于下一轮运行。</p></div><button type="button" className="dialog-close" aria-label="关闭设置" onClick={() => detailsDialogRef.current?.close()}>×</button></div>
             <div className="settings-form">
-              <label>Provider <select aria-label="Provider" data-testid="provider-select" value={provider} disabled={running} onChange={(event) => { const next = event.target.value; const profile = providerProfiles.find((item) => item.provider === next); setProvider(next); setModel(profile?.model ?? ""); setCompatibleEndpoint(profile?.baseURL ?? (next === "openai-compatible" ? compatibleBaseURLRef.current : "")); setApiKey(""); setProfileStatus(""); }}>
+              <label>Provider <select aria-label="Provider" data-testid="provider-select" value={provider} disabled={running || connecting} onChange={(event) => { const next = event.target.value; const profile = providerProfiles.find((item) => item.provider === next); setProvider(next); setModel(profile?.model ?? ""); setCompatibleEndpoint(profile?.baseURL ?? (next === "openai-compatible" ? compatibleBaseURLRef.current : "")); setApiKey(""); setProfileStatus(""); setSetupApiKey(""); setSetupProvider(""); setSetupError(""); }}>
                 <option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="openai-compatible">OpenAI compatible</option><option value="openrouter">OpenRouter</option><option value="groq">Groq</option><option value="xai">xAI</option><option value="moonshot">Moonshot</option>
               </select></label>
               <label>Model <input aria-label="Model" data-testid="model-input" value={model} placeholder="填写 Provider 模型名称" disabled={running} onChange={(event) => setModel(event.target.value)} /></label>
@@ -457,7 +529,7 @@ export function App(): JSX.Element {
               </select></label>
               {provider === "openai-compatible" && <label>兼容 endpoint <input aria-label="兼容 endpoint" data-testid="compatible-endpoint" value={compatibleEndpoint} placeholder="https://example.com/v1" disabled={running} onChange={(event) => setCompatibleEndpoint(event.target.value)} /></label>}
               <label>API key <input aria-label="API key" data-testid="provider-api-key" type="password" autoComplete="new-password" value={apiKey} placeholder={providerProfiles.some((item) => item.provider === provider) ? "已保存；留空保持当前密钥" : "输入 API key"} disabled={running} onChange={(event) => setApiKey(event.target.value)} /></label>
-              <button type="button" className="secondary-action" disabled={running || (apiKey.trim().length === 0 && !providerProfiles.some((item) => item.provider === provider))} onClick={() => void saveProviderProfile()}>保存 Provider 配置</button>
+              <button type="button" className="secondary-action" disabled={running || connecting || (apiKey.trim().length === 0 && !providerProfiles.some((item) => item.provider === provider))} onClick={() => void saveProviderProfile()}>保存 Provider 配置</button>
               {providerConfigNotice && <p role="alert" data-testid="provider-config-notice">{providerConfigNotice}</p>}
               {profileStatus && <p role="status" data-testid="provider-config-status">{profileStatus}</p>}
               {runtimeConfig && <div className="detail-block" data-testid="runtime-config"><span className="detail-label">{running ? "当前运行的有效配置" : "最近一次运行的有效配置"}</span><code className="path-value">{runtimeConfig.provider} · {runtimeConfig.model}{runtimeConfig.endpoint ? ` · ${runtimeConfig.endpoint}` : ""}</code></div>}
@@ -470,6 +542,7 @@ export function App(): JSX.Element {
             {state.host.message && <div className="detail-block"><span className="detail-label">诊断信息</span><code className="path-value">{state.host.message}</code></div>}
           </>}
         </dialog>
+        {state.items.length > 0 && setupForm}
         <div
           className="timeline"
           ref={timelineRef}
@@ -482,7 +555,7 @@ export function App(): JSX.Element {
           }}
         >
           {state.items.length === 0 ? (
-            <Empty />
+            setupForm ?? <Empty />
           ) : (
             state.items.map((item) => (
               <ItemView
@@ -535,8 +608,8 @@ export function App(): JSX.Element {
             title="Enter 发送，Shift+Enter 换行"
             rows={2}
             value={draft}
-            placeholder="描述你想让 chivgent 做的事"
-            disabled={state.host.phase !== "ready" || !projectPath}
+            placeholder={showSetup ? "请先连接模型" : !projectPath ? "请先选择项目目录" : "描述你想让 chivgent 做的事"}
+            disabled={state.host.phase !== "ready" || !projectPath || showSetup || connecting}
             onChange={(event) => {
               draftRevisionRef.current += 1;
               setDraft(event.target.value);
@@ -583,7 +656,7 @@ export function App(): JSX.Element {
                 className="send"
                 data-testid="send"
                 aria-label="发送消息"
-                disabled={state.host.phase !== "ready" || !projectPath || draft.trim().length === 0 || draft.length > MAX_PROMPT_LENGTH || model.trim().length > MAX_MODEL_LENGTH || pendingStartRef.current !== null}
+                disabled={state.host.phase !== "ready" || !projectPath || showSetup || connecting || draft.trim().length === 0 || draft.length > MAX_PROMPT_LENGTH || model.trim().length > MAX_MODEL_LENGTH || pendingStartRef.current !== null}
               >
                 <span aria-hidden="true">↑</span>
               </button>

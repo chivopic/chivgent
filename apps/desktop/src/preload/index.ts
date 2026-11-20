@@ -5,6 +5,7 @@ import { isHostToMain, type HostStatus, type IpcResult, type ApprovalRespondRequ
 export interface DesktopApi {
   initialize(): Promise<IpcResult<unknown>>;
   selectProject(): Promise<IpcResult<unknown>>;
+  connectDeepSeek(apiKey: string): Promise<IpcResult<unknown>>;
   saveProviderProfile(payload: { requestId: string; provider: string; model: string; apiKey?: string; baseURL?: string }): Promise<IpcResult<unknown>>;
   start(payload: { requestId: string; prompt: string; provider?: string; model?: string; permissionMode?: "read-only" | "ask-first" | "workspace" }): Promise<IpcResult<unknown>>;
   interrupt(payload: { requestId: string; runId: string }): Promise<IpcResult<unknown>>;
@@ -18,6 +19,7 @@ export interface DesktopApi {
 const api: DesktopApi = {
   initialize: () => ipcRenderer.invoke(IPC.initialize),
   selectProject: () => ipcRenderer.invoke(IPC.selectProject),
+  connectDeepSeek: (apiKey) => ipcRenderer.invoke(IPC.connectDeepSeek, apiKey),
   saveProviderProfile: (payload) => ipcRenderer.invoke(IPC.saveProviderProfile, payload),
   start: (payload) => ipcRenderer.invoke(IPC.start, payload),
   interrupt: (payload) => ipcRenderer.invoke(IPC.interrupt, payload),

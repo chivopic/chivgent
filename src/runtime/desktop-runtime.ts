@@ -16,6 +16,7 @@ export interface DesktopRuntimeConfig {
   readonly model?: string;
   /** Desktop-local profile credential, lower priority than environment and auth.json. */
   readonly desktopApiKey?: string;
+  readonly importedDeepSeekKey?: string;
   readonly baseURL?: string;
   readonly environment?: NodeJS.ProcessEnv;
   readonly authFile?: string;
@@ -26,18 +27,22 @@ export interface DesktopRuntimeConfig {
   readonly createClient?: (config: { apiKey: string; model: string; baseURL?: string }) => import("../llm.js").LLMClient;
 }
 
-export async function createDesktopSession(config: DesktopRuntimeConfig) {
+type DesktopProviderOptions = Pick<DesktopRuntimeConfig, "provider" | "model" | "desktopApiKey" | "importedDeepSeekKey" | "baseURL" | "environment" | "authFile">;
+
+export class DesktopProviderNotConfigured extends Error {}
+
+export async function resolveDesktopProvider(config: DesktopProviderOptions) {
   const environment = config.environment ?? process.env;
   const registry = defaultProviderRegistry;
   const provider = config.provider ?? environment.CHIVGENT_PROVIDER ?? "openai";
   const definition = registry.get(provider);
   const model = config.model ?? first(environment, definition.modelEnvKeys) ?? definition.defaultModel;
   if (model === undefined || model.length === 0) {
-    throw new Error(`需要为 ${provider} 配置模型名称。`);
+    throw new DesktopProviderNotConfigured(`需要为 ${provider} 配置模型名称。`);
   }
   const baseURL = first(environment, definition.baseUrlEnvKeys) ?? config.baseURL ?? definition.defaultBaseURL;
   if (definition.requiresBaseURL && baseURL === undefined) {
-    throw new Error(`${definition.baseUrlEnvKeys.join(" 或 ")} 需要配置。`);
+    throw new DesktopProviderNotConfigured(`${definition.baseUrlEnvKeys.join(" 或 ")} 需要配置。`);
   }
   const credentialEnvironment = { ...environment };
   // Both Providers declare OPENAI_API_KEY, but they can target different
@@ -48,13 +53,19 @@ export async function createDesktopSession(config: DesktopRuntimeConfig) {
     delete credentialEnvironment.OPENAI_API_KEY;
   }
   const credential = await new CredentialResolver([
+    new RuntimeCredentialSource(provider === "deepseek" ? config.importedDeepSeekKey : undefined),
     new EnvCredentialSource(credentialEnvironment),
     new FileCredentialSource(config.authFile ?? defaultAuthFile(environment)),
     new RuntimeCredentialSource(config.desktopApiKey),
   ]).resolve(definition);
   if (credential === undefined) {
-    throw new Error(`尚未配置 ${provider} API key。请设置 ${definition.envKeys.join(" 或 ")}，或在 CLI 的 auth.json 中配置。`);
+    throw new DesktopProviderNotConfigured(`尚未配置 ${provider} API key。请设置 ${definition.envKeys.join(" 或 ")}，或在 CLI 的 auth.json 中配置。`);
   }
+  return { provider, definition, credential, model, baseURL };
+}
+
+export async function createDesktopSession(config: DesktopRuntimeConfig) {
+  const { provider, definition, credential, model, baseURL } = await resolveDesktopProvider(config);
   const llm = new RetryingLLMClient(config.createClient === undefined
     ? definition.createClient({ apiKey: credential.apiKey, model, ...(baseURL === undefined ? {} : { baseURL }) })
     : config.createClient({ apiKey: credential.apiKey, model, ...(baseURL === undefined ? {} : { baseURL }) }));

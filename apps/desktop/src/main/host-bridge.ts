@@ -7,9 +7,11 @@ import {
   type MainToHost,
 } from "../protocol/messages.js";
 import { hostEntryError, hostEntryPath } from "./paths.js";
+import { isCredentialRequest, type CredentialRequest, type CredentialResult, type DeepSeekCredentialCodec } from "../protocol/credentials.js";
 
 const HOST_SERVICE_NAME = "chivgent-agent-host";
 const REQUEST_TIMEOUT_MS = 8_000;
+const CREDENTIAL_REQUEST_TIMEOUT_MS = 60_000;
 const HOST_SHUTDOWN_TIMEOUT_MS = 2_000;
 
 export interface HostBridge {
@@ -20,7 +22,7 @@ export interface HostBridge {
   readonly shutdown: () => Promise<void>;
 }
 
-export function createHostBridge(): HostBridge {
+export function createHostBridge(credentials?: DeepSeekCredentialCodec): HostBridge {
   let child: UtilityProcess | undefined;
   let spawned: Promise<void> = Promise.resolve();
   let status: HostStatus = { phase: "starting" };
@@ -45,6 +47,19 @@ export function createHostBridge(): HostBridge {
       pending.delete(requestId);
       waiter.reject(new Error(message));
     }
+  }
+
+  async function respondToCredentialRequest(target: UtilityProcess, message: CredentialRequest): Promise<void> {
+    const { id, operation, value } = message;
+    let result: CredentialResult;
+    try {
+      if (credentials === undefined) throw new Error("Desktop credentials unavailable.");
+      const resultValue = await credentials[operation](value);
+      result = { type: "deepseek-credential-result", id, ok: true, value: resultValue };
+    } catch {
+      result = { type: "deepseek-credential-result", id, ok: false };
+    }
+    if (target === child) target.postMessage(result);
   }
 
   function spawn(): HostStatus {
@@ -97,6 +112,11 @@ export function createHostBridge(): HostBridge {
       // Drain so a piped host cannot block on a full buffer.
     });
     started.on("message", (message: unknown) => {
+      if (isCredentialRequest(message)) {
+        // This exchange stays between the utility and main process.
+        void respondToCredentialRequest(started, message).catch(() => undefined);
+        return;
+      }
       if (!isHostToMain(message)) {
         publish({
           phase: status.phase === "ready" ? "ready" : status.phase,
@@ -158,7 +178,7 @@ export function createHostBridge(): HostBridge {
         const timer = setTimeout(() => {
           pending.delete(message.requestId);
           reject(new Error("Agent host 没有在时限内回应。"));
-        }, REQUEST_TIMEOUT_MS);
+        }, isCredentialOperation(message) ? CREDENTIAL_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
         pending.set(message.requestId, {
           resolve: (value) => {
             clearTimeout(timer);
@@ -258,4 +278,8 @@ export function createHostBridge(): HostBridge {
       return shutdownPromise;
     },
   };
+}
+
+function isCredentialOperation(message: MainToHost): boolean {
+  return message.type === "connect-deepseek" || message.type === "initialize" || message.type === "save-provider-profile";
 }

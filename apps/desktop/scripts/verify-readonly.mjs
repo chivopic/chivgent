@@ -296,17 +296,19 @@ try {
   const beforeMissingKey = requests.length;
   await page.getByRole("button", { name: "设置" }).click();
   await page.getByTestId("provider-select").selectOption("deepseek");
-  await page.getByTestId("model-input").fill("desktop-fixture");
   await page.getByRole("button", { name: "完成", exact: true }).click();
-  await page.getByTestId("composer").fill("缺凭证测试");
-  await page.getByTestId("send").click();
-  await page.getByTestId("notice").filter({ hasText: "API key" }).waitFor();
-  await page.getByTestId("run-status").getByText("出错").waitFor();
+  await page.getByTestId("provider-setup").waitFor({ state: "visible" });
+  await page.getByLabel("模型供应商").selectOption("deepseek");
+  assert.equal(await page.getByLabel("DeepSeek API Key").getAttribute("type"), "password");
+  assert.equal(await page.getByTestId("composer").isDisabled(), true);
+  assert.equal(await page.getByTestId("send").isDisabled(), true);
+  assert.equal(await page.getByRole("button", { name: "连接并保存" }).isDisabled(), true);
   assert.equal(requests.length, beforeMissingKey);
   await page.getByRole("button", { name: "设置" }).click();
   await page.getByTestId("provider-select").selectOption("openai-compatible");
   await page.getByTestId("model-input").fill("desktop-fixture");
   await page.getByRole("button", { name: "完成", exact: true }).click();
+  await page.getByTestId("provider-setup").waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "展开侧栏" }).click();
   // Repro: open the native folder picker, start a task while it is pending,
   // then accept a project change while the task is still running.
@@ -315,7 +317,7 @@ try {
       globalThis.__resolveDesktopProjectPicker = resolve;
     });
   });
-  progress("missing credential rejection verified; testing picker and cancellation race");
+  progress("missing credential setup verified; testing picker and cancellation race");
   await page.getByRole("button", { name: "切换项目目录" }).click();
   await page.getByTestId("composer").fill("取消测试");
   await page.getByTestId("send").click();

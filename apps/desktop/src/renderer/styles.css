@@ -157,6 +157,15 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .settings-form select, .settings-form input { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--sidebar); color: var(--ink); }
 .settings-form input::placeholder { color: var(--mute); }
 .settings-form :disabled { opacity: .6; }
+.model-setup { width: min(100%, 420px); margin: 12px auto; padding: 24px; border: 1px solid var(--line); border-radius: 16px; background: var(--card); box-shadow: 0 8px 28px #3327170d; }
+.model-setup-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 5px; }
+.model-setup-heading h2 { margin: 0; font-size: 20px; font-weight: 600; }
+.model-setup-heading p { margin: 2px 0 0; color: #625e56; font-size: 13px; }
+.model-setup-error { margin: 0; color: #962e42; font-size: 13px; }
+.model-setup-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.connect-action { border: 1px solid #37342e; border-radius: 8px; padding: 8px 14px; color: #fff; background: #37342e; font-size: 13px; }
+.connect-action:not(:disabled):hover { background: #211f1b; }
+.connect-action:disabled { cursor: default; }
 .secondary-action { border: 1px solid #ded9cf; border-radius: 8px; background: #f7f5ef; padding: 8px 11px; font-size: 12px; }
 .secondary-action:hover { background: #efede6; }
 .copy-feedback { margin: 8px 0 0; color: #557363; font-size: 12px; }

@@ -37,6 +37,7 @@ interface TestApi {
   initialize: () => Promise<any>;
   selectProject: () => Promise<any>;
   saveProviderProfile: (payload: any) => Promise<any>;
+  connectDeepSeek: (key: string) => Promise<any>;
   interrupt: () => Promise<any>;
   onEvent: (listener: (message: any) => void) => () => void;
   onHostStatus: (listener: (status: any) => void) => () => void;
@@ -71,6 +72,7 @@ describe("App submit flow", () => {
       }),
       selectProject: vi.fn(async () => ({ ok: false, code: "cancelled", message: "cancelled" })),
       saveProviderProfile: vi.fn(async (payload) => ({ ok: true, value: { type: "provider-profile-saved", requestId: payload.requestId, profile: { provider: payload.provider, model: payload.model, ...(payload.baseURL ? { baseURL: payload.baseURL } : {}), configured: true } } })),
+      connectDeepSeek: vi.fn(),
       interrupt: vi.fn(async () => ({ ok: true, value: { type: "interrupted" } })),
       onEvent: vi.fn((listener) => { eventListener = listener; return () => {}; }),
       onHostStatus: vi.fn((listener) => { statusListener = listener; return () => {}; }),
@@ -89,6 +91,56 @@ describe("App submit flow", () => {
     await recover.props.onClick();
     expect(api.initialize).toHaveBeenCalledTimes(2);
     expect(api.start).not.toHaveBeenCalled();
+  });
+
+  it("guides a first launch through DeepSeek setup and sends the first message with it", async () => {
+    const initialize = api.initialize;
+    api.initialize = async () => {
+      const result = await initialize();
+      publishEvent({ type: "initialized", defaultProvider: "openai", capabilities: ["real-agent"], readyProviders: [] });
+      return result;
+    };
+    let tree = await renderApp();
+    expect(find(tree, "provider-setup"), "missing model credentials should show provider setup before sending").not.toBeNull();
+    expect(find(tree, "send").props.disabled).toBe(true);
+    findByLabel(tree, "模型供应商").props.onChange({ target: { value: "deepseek" } });
+    tree = await renderApp();
+    const password = findByLabel(tree, "DeepSeek API Key");
+    expect(password.props.type).toBe("password");
+    password.props.onChange({ target: { value: "  sk-test-desktop  " } });
+    tree = await renderApp();
+    api.connectDeepSeek = vi.fn()
+      .mockResolvedValueOnce({ ok: false, code: "invalid_key", message: "DeepSeek 拒绝了此 API Key。" })
+      .mockResolvedValueOnce({ ok: true, value: { type: "provider-profile-saved", profile: { provider: "deepseek", model: "deepseek-flash", configured: true } } });
+    await find(tree, "provider-setup").props.onSubmit({ preventDefault() {} });
+    tree = await renderApp();
+    expect(find(tree, "provider-setup-error").props.children).toContain("拒绝");
+    expect(find(tree, "send").props.disabled).toBe(true);
+    await find(tree, "provider-setup").props.onSubmit({ preventDefault() {} });
+    tree = await renderApp();
+    expect(api.connectDeepSeek).toHaveBeenLastCalledWith("sk-test-desktop");
+    expect(find(tree, "provider-setup")).toBeNull();
+    find(tree, "composer").props.onChange({ target: { value: "你好" } });
+    tree = await renderApp();
+    await findType(tree, "form").props.onSubmit({ preventDefault() {} });
+    expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ provider: "deepseek", prompt: "你好" }));
+  });
+
+  it("lets a compatible provider finish setup with an explicitly supplied session model", async () => {
+    await renderApp();
+    publishEvent({ type: "initialized", defaultProvider: "openai", capabilities: ["real-agent"], readyProviders: [] });
+    let tree = await renderApp();
+    findByText(tree, "设置").props.onClick();
+    tree = await renderApp();
+    findByLabel(tree, "Provider").props.onChange({ target: { value: "openai-compatible" } });
+    tree = await renderApp();
+    findByLabel(tree, "Model").props.onChange({ target: { value: "custom-session-model" } });
+    tree = await renderApp();
+    expect(find(tree, "provider-setup")).toBeNull();
+    find(tree, "composer").props.onChange({ target: { value: "hello" } });
+    tree = await renderApp();
+    await findType(tree, "form").props.onSubmit({ preventDefault() {} });
+    expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ provider: "openai-compatible", model: "custom-session-model" }));
   });
 
   it("keeps a prompt after a history write rejection and allows a corrected retry", async () => {
