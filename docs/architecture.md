@@ -36,6 +36,18 @@ only when those tools are registered, plus process-local permission policy and
 extension contributions. This is inspired by Codex's layered instructions, but
 tool access remains enforced by chivgent's runtime, not by text.
 
+### Workspace discovery
+
+`list_files` and `search_text` return an error when the requested directory
+cannot be enumerated. If a nested directory cannot be enumerated, the tools
+return the results from readable branches with an `[incomplete: ...]` marker.
+Depth, entry, search and output limits follow their existing truncation rules.
+
+`search_text` finds case-sensitive substrings by default. Use
+`exact_identifier: true` with a single ECMAScript identifier to match complete
+names, such as `formatPrice` within `formatPrice()`. The search scans source
+text, including comments and strings.
+
 ### Structured questions
 
 The built-in `question` tool pauses its current Agent run while the local REPL

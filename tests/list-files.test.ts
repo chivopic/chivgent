@@ -2,15 +2,22 @@ import { readOnlyWorkspaceWrites } from "./fakes.js";
 import {
   mkdtemp,
   mkdir,
+  readdir,
   rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ListFilesTool } from "../src/tools/list-files.js";
 import { LocalWorkspace, type Workspace } from "../src/workspace.js";
+import { readDirectory } from "../src/workspace/fs.js";
+
+vi.mock("../src/workspace/fs.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/workspace/fs.js")>();
+  return { ...actual, readDirectory: vi.fn(actual.readDirectory) };
+});
 
 const temporaryDirectories: string[] = [];
 
@@ -25,6 +32,9 @@ afterEach(async () => {
     temporaryDirectories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true }),
     ),
+  );
+  vi.mocked(readDirectory).mockImplementation((directory) =>
+    readdir(directory, { withFileTypes: true }),
   );
 });
 
@@ -147,6 +157,49 @@ describe("ListFilesTool", () => {
       ],
       truncated: true,
     });
+  });
+
+  it("marks partial recursive listings and errors when the requested directory cannot be read", async () => {
+    const root = await temporaryDirectory("chivgent-list-io-");
+    const blocked = path.join(root, "blocked");
+    await mkdir(blocked);
+    await writeFile(path.join(root, "readable.ts"), "readable");
+    vi.mocked(readDirectory).mockImplementation((async (target) => {
+      if (String(target).endsWith(`${path.sep}blocked`)) {
+        const error = new Error("EACCES") as NodeJS.ErrnoException;
+        error.code = "EACCES";
+        throw error;
+      }
+      return readdir(target, { withFileTypes: true });
+    }) as typeof readDirectory);
+
+    const workspace = new LocalWorkspace(root);
+    const parentListing = await workspace.listFiles();
+    const parentToolResult = await new ListFilesTool().execute(
+      { path: ".", max_depth: 4 },
+      { workspace },
+    );
+    const scoped = await new ListFilesTool().execute(
+      { path: "blocked", max_depth: 4 },
+      { workspace },
+    );
+
+    expect(parentListing).toMatchObject({
+      entries: [
+        { path: "blocked/", type: "directory" },
+        { path: "readable.ts", type: "file" },
+      ],
+      incomplete: true,
+    });
+    expect(scoped).toMatchObject({ isError: true });
+    expect(scoped.content).toContain("cannot be enumerated");
+    expect(scoped.content).not.toContain(root);
+    expect(parentToolResult).toMatchObject({ isError: false });
+    expect(parentToolResult.content).toContain("blocked/");
+    expect(parentToolResult.content).toContain("readable.ts");
+    expect(parentToolResult.content).toContain(
+      "[incomplete: some directories could not be scanned]",
+    );
   });
 
   it("formats tool output and accepts legacy omitted defaults", async () => {

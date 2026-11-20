@@ -1,4 +1,5 @@
-import { readdir, lstat } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
+import { readDirectory } from "./fs.js";
 import path from "node:path";
 import {
   DEFAULT_SEARCH_RESULTS,
@@ -34,6 +35,7 @@ interface SearchState {
   examinedFiles: number;
   scannedBytes: number;
   truncated: boolean;
+  incomplete: boolean;
 }
 
 function emptySearchResult(): SearchTextResult {
@@ -46,6 +48,7 @@ function searchResult(state: SearchState): SearchTextResult {
     truncated: state.truncated,
     scannedFiles: state.scannedFiles,
     skippedFiles: state.skippedFiles,
+    ...(state.incomplete ? { incomplete: true } : {}),
   };
 }
 
@@ -54,6 +57,9 @@ export async function searchText(
   options: SearchTextOptions,
 ): Promise<SearchTextResult> {
   validateSearchQuery(options.query);
+  if (options.exactIdentifier && !isIdentifierQuery(options.query)) {
+    throw new TypeError("exact_identifier requires a valid code identifier.");
+  }
   const relativePath = options.path ?? ".";
   const maxResults = boundedPositiveInteger(
     options.maxResults ?? DEFAULT_SEARCH_RESULTS,
@@ -85,6 +91,7 @@ export async function searchText(
     examinedFiles: 0,
     scannedBytes: 0,
     truncated: false,
+    incomplete: false,
   };
 
   const scanFile = async (
@@ -135,7 +142,13 @@ export async function searchText(
     const lines = splitLines(contents);
     for (let index = 0; index < lines.length; index += 1) {
       const line = lines[index];
-      if (line === undefined || !line.includes(options.query)) {
+      const matchIndex =
+        line === undefined
+          ? -1
+          : options.exactIdentifier
+            ? findExactIdentifier(line, options.query)
+            : line.indexOf(options.query);
+      if (line === undefined || matchIndex < 0) {
         continue;
       }
       if (state.matches.length >= maxResults) {
@@ -145,7 +158,7 @@ export async function searchText(
       state.matches.push({
         path: workspaceRelativeFile,
         line: index + 1,
-        preview: createMatchPreview(line, options.query),
+        preview: createMatchPreview(line, options.query, matchIndex),
       });
     }
     return true;
@@ -162,10 +175,15 @@ export async function searchText(
   ): Promise<boolean> => {
     let directoryEntries;
     try {
-      directoryEntries = await readdir(absoluteDirectory, {
-        withFileTypes: true,
-      });
+      directoryEntries = await readDirectory(absoluteDirectory);
     } catch {
+      if (absoluteDirectory === start.realTarget) {
+        throw new WorkspaceError(
+          "discovery_io",
+          `The requested directory cannot be enumerated: ${relativePath}. Check directory permissions and retry.`,
+        );
+      }
+      state.incomplete = true;
       return true;
     }
     directoryEntries.sort((left, right) =>
@@ -203,4 +221,28 @@ export async function searchText(
 
   await visit(start.realTarget, rootRelativeDirectory(start.relativePath));
   return searchResult(state);
+}
+
+const IDENTIFIER_CONTINUE = /[$_\p{ID_Continue}\u200C\u200D]/u;
+const IDENTIFIER_QUERY = /^[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*$/u;
+
+function findExactIdentifier(line: string, identifier: string): number {
+  let offset = line.indexOf(identifier);
+  while (offset >= 0) {
+    // A Unicode code point uses at most two UTF-16 code units.
+    const before = [...line.slice(Math.max(0, offset - 2), offset)].at(-1);
+    const after = line.codePointAt(offset + identifier.length);
+    if (
+      (before === undefined || !IDENTIFIER_CONTINUE.test(before)) &&
+      (after === undefined || !IDENTIFIER_CONTINUE.test(String.fromCodePoint(after)))
+    ) {
+      return offset;
+    }
+    offset = line.indexOf(identifier, offset + 1);
+  }
+  return -1;
+}
+
+export function isIdentifierQuery(identifier: string): boolean {
+  return IDENTIFIER_QUERY.test(identifier);
 }

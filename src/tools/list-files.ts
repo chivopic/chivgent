@@ -59,6 +59,9 @@ export class ListFilesTool implements Tool {
           result.entries.map((entry) => entry.path),
           {
             emptyMessage: "No discoverable files found.",
+            metadata: result.incomplete
+              ? "[incomplete: some directories could not be scanned]"
+              : undefined,
             truncated: result.truncated,
             truncationMessage:
               "[truncated: narrow path or reduce max_depth to inspect a smaller subtree]",

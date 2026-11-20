@@ -28,7 +28,8 @@ export type WorkspaceErrorCode =
   | "too_large"
   | "binary_file"
   | "invalid_utf8"
-  | "invalid_range";
+  | "invalid_range"
+  | "discovery_io";
 
 export class WorkspaceError extends Error {
   constructor(
@@ -68,12 +69,16 @@ export interface WorkspaceEntry {
 export interface ListFilesResult {
   readonly entries: readonly WorkspaceEntry[];
   readonly truncated: boolean;
+  /** True when one or more nested directories could not be enumerated. */
+  readonly incomplete?: boolean;
 }
 
 export interface SearchTextOptions {
   readonly query: string;
   readonly path?: string;
   readonly maxResults?: number;
+  /** Match query as a standalone ECMAScript identifier. Defaults to false. */
+  readonly exactIdentifier?: boolean;
 }
 
 export interface SearchMatch {
@@ -87,6 +92,8 @@ export interface SearchTextResult {
   readonly truncated: boolean;
   readonly scannedFiles: number;
   readonly skippedFiles: number;
+  /** True when one or more nested directories could not be enumerated. */
+  readonly incomplete?: boolean;
 }
 
 /** Configuration every workspace operation needs, passed explicitly. */
