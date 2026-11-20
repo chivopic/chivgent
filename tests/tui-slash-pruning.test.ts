@@ -25,6 +25,7 @@ describe("pruned TUI slash commands", () => {
     expect(BUILT_IN_COMMANDS).toEqual([
       "help",
       "status",
+      "statusline",
       "new",
       "resume",
       "rename",
@@ -78,6 +79,48 @@ describe("pruned TUI slash commands", () => {
     expect(statusOut).toContain("messages:  0");
   });
 
+  it("shows current permission boundaries and the configured context capacity", () => {
+    const session = dummySession("/workspace/my-app", "sess-123");
+    let output = "";
+    handleSlashCommand("/status", {
+      session,
+      write: (text) => { output += text; },
+      providerName: "live-provider",
+      modelName: "live-model",
+      contextWindow: 64_000,
+      permissionPolicy: new PermissionPolicy("workspace"),
+    });
+
+    expect(output).toContain("provider:  live-provider");
+    expect(output).toContain("model:     live-model");
+    expect(output).toContain("permissions: workspace");
+    expect(output).toContain("writable roots: /workspace/my-app");
+    expect(output).toContain("shell scope: workspace by default; network/host require approval");
+    expect(output).toContain("context capacity: 64.0k tokens");
+    expect(output).not.toContain("context used:");
+  });
+
+  it("does not invent context capacity when the active host has not supplied it", () => {
+    const session = dummySession();
+    let output = "";
+    handleSlashCommand("/status", { session, write: (text) => { output += text; } });
+    expect(output).toContain("context capacity: unavailable");
+    expect(output).not.toContain("128000");
+    expect(output).not.toContain("permissions: ask-first");
+  });
+
+  it("reports Plan Mode as read-only even when the process policy is unrestricted", async () => {
+    const session = dummySession("/workspace/plan");
+    await session.setPlanMode(true);
+    let output = "";
+    handleSlashCommand("/status", {
+      session, write: text => { output += text; }, permissionPolicy: new PermissionPolicy("unrestricted"),
+    });
+    expect(output).toContain("writable roots: none (Plan Mode)");
+    expect(output).toContain("shell scope: disabled (Plan Mode)");
+    expect(output).toContain("network policy: disabled (Plan Mode)");
+  });
+
   it("supports /permissions plan to switch plan mode", () => {
     const session = dummySession();
     expect(session.planMode).toBe(false);
@@ -94,6 +137,22 @@ describe("pruned TUI slash commands", () => {
       permissionPolicy: new PermissionPolicy("ask-first"),
     });
     expect(offOutcome).toEqual({ kind: "plan", enabled: false });
+  });
+
+  it("accepts explicit footer field selection and ordering", () => {
+    const session = dummySession();
+    let output = "";
+    const shown = handleSlashCommand("/statusline show context", {
+      session, write: text => { output += text; }, footerFields: ["identity", "mode"],
+    });
+    expect(shown).toEqual({ kind: "footer-fields", fields: ["identity", "mode", "context"] });
+    expect(handleSlashCommand("/statusline order mode,context,identity", {
+      session, write: () => {}, footerFields: ["identity", "mode"],
+    })).toEqual({ kind: "footer-fields", fields: ["mode", "context", "identity"] });
+    expect(handleSlashCommand("/statusline order mode,mode", {
+      session, write: text => { output += text; }, footerFields: ["identity", "mode"],
+    })).toBe("handled");
+    expect(output).toContain("Usage: /statusline order");
   });
 
   it("supports /login logout as an alias for subscription sign-out", () => {
