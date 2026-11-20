@@ -16,6 +16,7 @@ const llm = {
   async stream(request, handlers) {
     const last = request.messages.at(-1);
     if (last?.role !== 'tool') {
+      await delay(900, undefined, { signal: request.signal });
       for (const delta of ['我会', '检查当前任务。', ' Testing Unicode: 👩‍💻 中文。']) {
         await delay(300, undefined, { signal: request.signal });
         handlers.onTextDelta(delta);
@@ -45,16 +46,17 @@ const session = new AgentSession({ cwd: process.cwd(), agent: {
     },
   }],
 } });
+const useColor = process.env.NO_COLOR === undefined && process.env.TERM !== 'dumb';
 const region = createLiveRegion({ stream: process.stderr, answerStream: process.stdout,
   width: () => terminalWidth(process.stderr), height: () => process.stderr.rows || 24,
-  color: process.env.NO_COLOR === undefined && process.env.TERM !== "dumb" });
+  color: useColor, synchronizedOutput: true });
 session.subscribe(region.listener);
 process.stderr.on('resize', region.resized);
 try {
   await runRepl({ session, input: process.stdin, output: process.stderr, stderr: process.stderr, tui: true, inlineComposer: true,
-    liveRegion: region,
+    liveRegion: region, providerName: 'offline', modelName: 'stub',
     banner: welcome({ version: 'demo', provider: 'offline', model: 'stub', cwd: session.cwd,
-      sessionId: session.id, resumed: false, signedOut: false, width: terminalWidth(process.stderr) }),
+      resumed: false, signedOut: false, width: terminalWidth(process.stderr), color: useColor }),
   });
 } finally {
   process.stderr.off('resize', region.resized);

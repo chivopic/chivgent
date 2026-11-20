@@ -210,6 +210,10 @@ export interface EditorFrame {
 }
 
 const PLACEHOLDER = "Ask chivgent to do anything";
+const RESET = "\u001b[0m";
+const DIM = "\u001b[2m";
+const YELLOW = "\u001b[33m";
+const BOLD_CYAN = "\u001b[1;36m";
 
 function boxRule(left: string, right: string, width: number): string {
   return `${left}${"─".repeat(Math.max(0, width - displayWidth(left) - displayWidth(right)))}${right}`;
@@ -220,23 +224,27 @@ function closeBox(left: string, inner: string, innerWidth: number, right: string
 }
 
 /**
- * Provider and model sit on the left. When the line is tight, the mode hint
- * stays whole and the model name is the side that shrinks.
+ * Provider and model sit on the left while the mode hint aligns to the right.
+ * When the line is tight, the mode hint stays whole and the model name shrinks.
  */
-function composeFooter(identity: string | undefined, status: string, columns: number): string {
+function composeFooter(identity: string | undefined, status: string, columns: number, color = false): string {
   const width = Math.max(0, Math.floor(columns));
   if (width === 0) return "";
   const cleanStatus = terminalText(status).replace(/\n/g, " ");
   const cleanIdentity = identity === undefined ? "" : terminalText(identity).replace(/\n/g, " ");
-  if (cleanIdentity.length === 0) return fitLine(cleanStatus, width);
+  const paintStatus = (value: string): string => (color && value.length > 0 ? `${DIM}${value}${RESET}` : value);
+  if (cleanIdentity.length === 0) return paintStatus(fitLine(cleanStatus, width));
   const statusWidth = displayWidth(cleanStatus);
-  if (statusWidth >= width) return fitLine(cleanStatus, width);
+  if (statusWidth >= width) return paintStatus(fitLine(cleanStatus, width));
   const identityWidth = displayWidth(cleanIdentity);
-  const gap = 2;
-  if (identityWidth + gap + statusWidth <= width) return `${cleanIdentity}${" ".repeat(gap)}${cleanStatus}`;
-  const room = width - statusWidth - gap;
-  if (room < 2) return cleanStatus;
-  return `${fitLine(cleanIdentity, room)}${" ".repeat(gap)}${cleanStatus}`;
+  const minGap = 2;
+  if (identityWidth + minGap + statusWidth <= width) {
+    const gap = width - identityWidth - statusWidth;
+    return `${cleanIdentity}${" ".repeat(gap)}${paintStatus(cleanStatus)}`;
+  }
+  const room = width - statusWidth - minGap;
+  if (room < 2) return paintStatus(cleanStatus);
+  return `${fitLine(cleanIdentity, room)}${" ".repeat(minGap)}${paintStatus(cleanStatus)}`;
 }
 
 /** Fixed-height viewport; keep caret in frame even on small terminals. */
@@ -261,6 +269,8 @@ export function editorFrame(document: EditorDocument, width: number, height: num
   const visible = rows.slice(first, first + rowLimit);
   const left = boxed ? "│ " : "";
   const right = boxed ? " │" : "";
+  const styledLeft = boxed && color ? `${DIM}${left}${RESET}` : left;
+  const styledRight = boxed && color ? `${DIM}${right}${RESET}` : right;
   const lineWidth = boxed ? boxWidth : cellWidth;
   const innerWidth = Math.max(1, lineWidth - displayWidth(left) - displayWidth(right));
   const inputWidth = boxed ? Math.max(1, innerWidth - 2) : Math.max(1, cellWidth - 3);
@@ -286,17 +296,21 @@ export function editorFrame(document: EditorDocument, width: number, height: num
       }
       display = fitLine(display, inputWidth);
     }
+    const isCurrentRow = index + first === position.row;
     const marker = submitOnEnter
-      ? (index + first === position.row ? "› " : "  ")
+      ? (isCurrentRow ? "› " : "  ")
       : "│ ";
+    const styledMarker = submitOnEnter && color && isCurrentRow
+      ? `${BOLD_CYAN}›${RESET} `
+      : marker;
     const gutterCells = displayWidth(left) + displayWidth(marker);
     const row = (() => {
       if (placeholder) {
         const ghost = fitLine(PLACEHOLDER, inputWidth);
-        const painted = color ? `\u001b[2m${ghost}\u001b[0m` : ghost;
-        return closeBox(left, `${marker}${painted}`, innerWidth, right);
+        const painted = color ? `${DIM}${ghost}${RESET}` : ghost;
+        return closeBox(styledLeft, `${styledMarker}${painted}`, innerWidth, styledRight);
       }
-      const baseline = `${marker}${display}`;
+      const baseline = `${styledMarker}${display}`;
       const selection = document.selectionRange();
       let inner = baseline;
       if (selection !== undefined && display === original) {
@@ -307,10 +321,10 @@ export function editorFrame(document: EditorDocument, width: number, height: num
         if (hi > lo) {
           // ANSI reverse video applies only after width clipping, so it does
           // not affect terminal columns or permit untrusted escape injection.
-          inner = `${marker}${original.slice(0, lo)}\u001b[7m${original.slice(lo, hi)}\u001b[0m${original.slice(hi)}`;
+          inner = `${styledMarker}${original.slice(0, lo)}\u001b[7m${original.slice(lo, hi)}\u001b[0m${original.slice(hi)}`;
         }
       }
-      return boxed ? closeBox(left, inner, innerWidth, right) : inner.includes("\u001b") ? inner : fitLine(inner, cellWidth);
+      return boxed ? closeBox(styledLeft, inner, innerWidth, styledRight) : inner.includes("\u001b") ? inner : fitLine(inner, cellWidth);
     })();
     return {
       row,
@@ -319,24 +333,42 @@ export function editorFrame(document: EditorDocument, width: number, height: num
       gutterCells,
     };
   });
-  const header = boxed
-    ? boxRule("┌", "┐", lineWidth)
+  const plainHeader = boxed
+    ? boxRule("╭", "╮", lineWidth)
     : fitLine("┌─ Ctrl+S send · Esc cancel · Enter newline", cellWidth);
-  const bottom = boxed ? boxRule("└", "┘", lineWidth) : undefined;
-  const popup = displayedSuggestions.map((item, index) => fitLine(
-    `  ${suggestionStart + index === selectedSuggestion ? "›" : " "} ${item.label || `/${item.value}`}`,
-    lineWidth,
-  ));
+  const header = boxed && color ? `${DIM}${plainHeader}${RESET}` : plainHeader;
+  const plainBottom = boxed ? boxRule("╰", "╯", lineWidth) : undefined;
+  const bottom = plainBottom === undefined
+    ? undefined
+    : (color ? `${DIM}${plainBottom}${RESET}` : plainBottom);
+  const popup = displayedSuggestions.map((item, index) => {
+    const isSelected = suggestionStart + index === selectedSuggestion;
+    const text = fitLine(`  ${isSelected ? "›" : " "} ${item.label || `/${item.value}`}`, lineWidth);
+    if (!color) return text;
+    if (isSelected && text.startsWith("  ›")) {
+      return `  ${BOLD_CYAN}›${RESET}${text.slice(3)}`;
+    }
+    return `${DIM}${text}${RESET}`;
+  });
   const selection = document.selectionRange();
   const idleStatus = footerStatus ?? (submitOnEnter
     ? "/help for shortcuts"
     : `└─ ${rows.length} lines · ${Buffer.byteLength(document.text, "utf8")} bytes · ↑↓←→ move`);
-  const footerText = document.warning || (suggestions.length > 0
-    ? "↑↓ choose · Tab/Enter complete · Esc close"
-    : selection !== undefined
-      ? `${submitOnEnter ? "" : "└─ "}Selected ${selection.end - selection.start} code units · type to replace`
-      : composeFooter(footerIdentity, idleStatus, lineWidth));
-  const footer = fitLine(footerText, lineWidth);
+  const footer = (() => {
+    if (document.warning) {
+      const fitted = fitLine(document.warning, lineWidth);
+      return color && fitted.length > 0 ? `${YELLOW}${fitted}${RESET}` : fitted;
+    }
+    if (suggestions.length > 0) {
+      const fitted = fitLine("↑↓ choose · Tab/Enter complete · Esc close", lineWidth);
+      return color && fitted.length > 0 ? `${DIM}${fitted}${RESET}` : fitted;
+    }
+    if (selection !== undefined) {
+      const fitted = fitLine(`${submitOnEnter ? "" : "└─ "}Selected ${selection.end - selection.start} code units · type to replace`, lineWidth);
+      return color && fitted.length > 0 ? `${DIM}${fitted}${RESET}` : fitted;
+    }
+    return composeFooter(footerIdentity, idleStatus, lineWidth, color);
+  })();
   return {
     lines: [header, ...body.map(item => item.row), ...(bottom === undefined ? [] : [bottom]), ...popup, footer],
     cursorRow: 1 + (position.row - first),

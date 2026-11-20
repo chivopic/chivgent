@@ -339,6 +339,7 @@ export async function main(argv: readonly string[]): Promise<number> {
         answerStream: process.stdout,
         markdown: process.stdout.isTTY === true && process.env.TERM !== "dumb",
         color: terminalColorEnabled(process.stderr.isTTY === true, process.env),
+        synchronizedOutput: process.stderr.isTTY === true && process.env.TERM !== "dumb",
       })
     : undefined;
   const renderer = options.json

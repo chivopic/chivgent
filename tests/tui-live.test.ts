@@ -206,4 +206,63 @@ describe("createLiveRegion", () => {
 
     expect(output.chunks).toEqual([]);
   });
+
+  it("ticks animation frames on its own and stops ticking when paused or ended", async () => {
+    let now = 1_000;
+    const output = recorder();
+    const region = createLiveRegion({
+      stream: output.stream,
+      width: () => 80,
+      now: () => now,
+      tickMs: 5,
+    });
+    region.listener(start);
+    output.chunks.length = 0;
+
+    now = 1_100;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(output.written()).toContain("⠙ thinking");
+
+    region.pause();
+    output.chunks.length = 0;
+    now = 1_300;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(output.chunks).toEqual([]);
+
+    region.resume();
+    expect(output.written()).toContain("⠸ thinking");
+
+    region.listener({ type: "agent_end", status: "completed", turnCount: 1, messages: [] });
+    output.chunks.length = 0;
+    now = 1_600;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(output.chunks).toEqual([]);
+  });
+
+  it("never leaks spinner frames or ANSI styling into answerStream", () => {
+    const terminal = recorder();
+    const answers = recorder();
+    let now = 1_000;
+    const region = createLiveRegion({
+      stream: terminal.stream,
+      answerStream: answers.stream,
+      width: () => 80,
+      now: () => now,
+      color: true,
+    });
+    region.listener(start);
+    now = 1_100;
+    region.listener({ type: "message_update", turn: 1, delta: "Hello\n" });
+    region.listener({
+      type: "turn_end",
+      turn: 1,
+      message: { role: "assistant", content: "Hello\n", toolCalls: [] },
+      toolResults: [],
+    });
+    region.listener({ type: "agent_end", status: "completed", turnCount: 1, messages: [] });
+
+    expect(answers.written()).toBe("Hello\n");
+    expect(terminal.written()).toContain("\u001b[");
+    expect(terminal.written()).toContain("⠋");
+  });
 });

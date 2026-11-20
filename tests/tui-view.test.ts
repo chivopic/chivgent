@@ -42,7 +42,7 @@ describe("view", () => {
     const lines = view(state({ usage: { usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 }, complete: true } }), {
       width: 30, now: NOW,
     });
-    expect(lines).toEqual(["thinking  ·  3s  ·  ^C stop"]);
+    expect(lines).toEqual(["⠋ thinking  ·  3s  ·  ^C stop"]);
     expect(view(state({ status: "running-tools" }), { width: 24, now: NOW })).toEqual([
       "tools  ·  3s  ·  ^C stop",
     ]);
@@ -155,6 +155,30 @@ describe("view", () => {
     expect(view(state({ usage }), { width: 120, now: NOW })[0]).toContain(
       "120 tokens+",
     );
+  });
+
+  it("animates status and concurrent tools across timestamps, and supports static mode", () => {
+    const running = [
+      { toolCallId: "a", name: "read_file", target: "src/a.ts", progress: "", startedAt: NOW - 3_000 },
+      { toolCallId: "b", name: "bash", target: "npm test", progress: "", startedAt: NOW - 3_000 },
+    ];
+    const t0 = view(state({ status: "running-tools", running }), { width: 80, now: NOW });
+    const t1 = view(state({ status: "running-tools", running }), { width: 80, now: NOW + 100 });
+    expect(t0[0]).toMatch(/^  ⠋ read_file/);
+    expect(t0[1]).toMatch(/^  ⠹ bash/);
+    expect(t0[2]).toMatch(/^⠋ running tools/);
+    expect(t1[0]).toMatch(/^  ⠙ read_file/);
+    expect(t1[1]).toMatch(/^  ⠸ bash/);
+    expect(t1[2]).toMatch(/^⠙ running tools/);
+
+    const responding = view(state({ status: "responding" }), { width: 80, now: NOW + 200 });
+    expect(responding[0]).toMatch(/^⠹ responding/);
+
+    const staticView = view(state({ status: "running-tools", running: [running[0]!] }), {
+      width: 80, now: NOW + 100, animate: false,
+    });
+    expect(staticView[0]).toMatch(/^  ↳ read_file/);
+    expect(staticView[1]).toMatch(/^running tools/);
   });
 });
 

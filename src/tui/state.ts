@@ -37,7 +37,7 @@ export interface RunState {
   readonly failedTools?: number;
 }
 
-export type RunStatus = "thinking" | "running-tools";
+export type RunStatus = "thinking" | "responding" | "running-tools";
 
 export interface RunningTool {
   readonly toolCallId: string;
@@ -108,7 +108,15 @@ export function reduce(
     case "message_update":
       // A DELTA. Appending is the only correct move: replacing would leave the
       // last token and lose the answer.
-      return { run: { ...run, text: run.text + event.delta } };
+      return {
+        run: {
+          ...run,
+          text: run.text + event.delta,
+          ...(run.running.length === 0 && event.delta.length > 0
+            ? { status: "responding" as const }
+            : {}),
+        },
+      };
 
     case "message_end":
       // The authoritative message, after any deltas. Taking it wholesale also

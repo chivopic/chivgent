@@ -180,7 +180,7 @@ describe("mouse caret and selected text", () => {
     expect(selection.lines.join("\n")).toContain("\u001b[7m👩‍💻\u001b[0m");
     const inlineSelection = editorFrame(doc, 50, 16, true);
     expect(inlineSelection.lines.join("\n")).toContain("\u001b[7m👩‍💻\u001b[0m");
-    expect(inlineSelection.lines.join("\n")).toContain("┌");
+    expect(inlineSelection.lines.join("\n")).toContain("╭");
     doc.insert("X");
     expect(doc.text).toBe("aXb\nsecond");
   });
@@ -432,12 +432,12 @@ describe("mouse caret and selected text", () => {
     expect(modal.lines.join("\n")).toContain("Ctrl+S send · Esc cancel · Enter ne…");
   });
 
-  it("draws an empty inline draft inside a box and does not treat the placeholder as text", () => {
+  it("draws an empty inline draft inside a rounded box and does not treat the placeholder as text", () => {
     const doc = new EditorDocument();
     const frame = editorFrame(doc, 60, 12, true, [], 0, "Ask for me · Shift+Tab Plan · /help");
     const lines = frame.lines.join("\n");
-    expect(lines).toContain("┌");
-    expect(lines).toContain("┘");
+    expect(lines).toContain("╭");
+    expect(lines).toContain("╯");
     expect(lines).toContain("Ask chivgent to do anything");
     expect(lines).toContain("Ask for me · Shift+Tab Plan · /help");
     expect(doc.text).toBe("");
@@ -447,25 +447,33 @@ describe("mouse caret and selected text", () => {
     expect(editorFrame(drafted, 60, 12, true).lines.join("\n")).not.toContain("Ask chivgent to do anything");
     expect(editorFrame(new EditorDocument(), 40, 12, false).lines.join("\n")).not.toContain("Ask chivgent");
     const narrow = editorFrame(new EditorDocument(), 8, 6, true);
-    expect(narrow.lines[0]).toMatch(/^┌.*┐$/);
+    expect(narrow.lines[0]).toMatch(/^╭.*╮$/);
     expect(narrow.lines.every(line => displayWidth(line) <= 7)).toBe(true);
     const colored = editorFrame(new EditorDocument(), 60, 12, true, [], 0, undefined, true);
     expect(colored.lines.join("\n")).toContain("\u001b[2mAsk chivgent to do anything\u001b[0m");
+    expect(colored.lines[0]).toContain("\u001b[2m╭");
+    expect(colored.lines.join("\n")).toContain("\u001b[1;36m›\u001b[0m");
+    expect(colored.cursorColumn).toBe(frame.cursorColumn);
+    expect(colored.inputRows).toEqual(frame.inputRows);
     expect(editorFrame(new EditorDocument(), 60, 12, true).lines.join("\n")).not.toContain("\u001b[");
   });
 
   const modeHint = "Ask for me · Shift+Tab Plan · /help";
 
-  it("shows the provider and model under the composer and keeps the mode hint", () => {
+  it("shows the provider and model under the composer and right-aligns the mode hint", () => {
     const doc = new EditorDocument();
     const frame = editorFrame(doc, 80, 12, true, [], 0, modeHint, false, "openai · gpt-test");
     const footer = frame.lines.at(-1) ?? "";
     expect(footer.startsWith("openai · gpt-test")).toBe(true);
     expect(footer.endsWith(modeHint)).toBe(true);
+    expect(displayWidth(footer)).toBe(79);
     expect(frame.lines.join("\n")).toContain("Ask chivgent to do anything");
     expect(doc.text).toBe("");
-    expect(displayWidth(footer)).toBeLessThanOrEqual(79);
     expect(footer).not.toContain("\u001b[");
+
+    const coloredFooter = editorFrame(doc, 80, 12, true, [], 0, modeHint, true, "openai · gpt-test").lines.at(-1) ?? "";
+    expect(coloredFooter).toContain(`\u001b[2m${modeHint}\u001b[0m`);
+    expect(displayWidth(coloredFooter)).toBe(79);
   });
 
   it("keeps the mode hint when the model name does not fit", () => {

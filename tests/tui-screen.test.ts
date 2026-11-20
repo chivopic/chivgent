@@ -212,18 +212,21 @@ describe("rendered live-region resize", () => {
     try {
       screen.output.write(Array.from({ length: 20 }, (_, i) => `HISTORY-${i}\n`).join(""));
       region.listener({ type: "agent_start", prompt: "test", maxTurns: 4 });
+      await screen.flush();
+      expect(screen.visible().filter((line) => line.includes("thinking"))).toHaveLength(1);
       region.listener({ type: "message_update", turn: 1, delta: ["a".repeat(70), "b".repeat(70), "c".repeat(70)].join("\n") });
       await screen.flush();
       screen.resize(cols, rows);
       await screen.flush();
-      expect(screen.visible().filter((line) => line.includes("thinking"))).toHaveLength(1);
+      expect(screen.visible().filter((line) => /(responding|writing)/.test(line))).toHaveLength(1);
       screen.resize(120, 40);
       await screen.flush();
-      expect(screen.visible().filter((line) => line.includes("thinking"))).toHaveLength(1);
+      expect(screen.visible().filter((line) => line.includes("responding"))).toHaveLength(1);
       region.listener({ type: "agent_end", status: "completed", turnCount: 1, messages: [] });
       await screen.flush();
       expect(screen.history().join("\n")).toContain("HISTORY-19");
       expect(screen.visible().join("\n")).not.toContain("thinking");
+      expect(screen.visible().join("\n")).not.toContain("responding");
     } finally { region.stop(); screen.dispose(); }
   });
 });

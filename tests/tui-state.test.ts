@@ -119,6 +119,32 @@ describe("reduce", () => {
     expect(state.run?.status).toBe("thinking");
   });
 
+  it("transitions to responding on non-empty message_update and resets to thinking on turn_end", () => {
+    const emptyDelta = run([
+      start,
+      { type: "turn_start", turn: 1 },
+      { type: "message_start", turn: 1 },
+      { type: "message_update", turn: 1, delta: "" },
+    ]);
+    expect(emptyDelta.run?.status).toBe("thinking");
+
+    const streaming = run([
+      start,
+      { type: "turn_start", turn: 1 },
+      { type: "message_start", turn: 1 },
+      { type: "message_update", turn: 1, delta: "Hello" },
+    ]);
+    expect(streaming.run?.status).toBe("responding");
+
+    const afterTurn = reduce(streaming, {
+      type: "turn_end",
+      turn: 1,
+      message: assistant("Hello"),
+      toolResults: [],
+    }, 2_000);
+    expect(afterTurn.run?.status).toBe("thinking");
+  });
+
   it("clears the turn when it ends, since scrollback now owns it", () => {
     const state = run([
       start,

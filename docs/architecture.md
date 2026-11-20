@@ -203,7 +203,8 @@ Local interactive sessions use the rich terminal interface when stdin, stdout,
 and stderr are terminals. `--simple` selects the append-only interface, while
 `--tui` explicitly requests the rich interface. It draws a status region above
 the prompt while a run is in progress: the
-turn, whether the model is thinking or running tools, which tools are running
+turn, whether the model is thinking, responding, or running tools, animated
+spinners derived from elapsed time, which tools are running
 with what they are aimed at and their newest output, elapsed time, and the
 running token count. Long single-line replies keep their newest text visible;
 long paths retain the filename and tool progress. On narrow terminals, the
@@ -211,21 +212,22 @@ status and stop shortcut take priority.
 
 ```text
 Let me look at how sessions are stored.
-  read_file src/session.ts (2s)
-  search_text (1s)  src/store.ts:41: export class SessionStore
-running tools  ·  turn 2/8  ·  11s  ·  4.2k tokens  ·  ctrl+c to stop
+  ⠋ read_file src/session.ts (2s)
+  ⠹ search_text (1s)  src/store.ts:41: export class SessionStore
+⠋ running tools  ·  turn 2/8  ·  11s  ·  4.2k tokens  ·  ctrl+c to stop
 ```
 
 It is the first consumer of the event stream that runs backwards. Every other
 one — streamed output, the session log, extensions, the remote client — is
 append-only: an event arrives, it is printed, it is forgotten. This one has to
 rebuild *what is happening now* from the same stream and keep it right as more
-arrives, which splits into three pieces:
+arrives, which splits into pure layout and terminal painting:
 
 ```text
-reduce(state, event, now)  ->  ViewState     pure
-view(state, {width, now})  ->  string[]      pure
-paint(previous, next)                        the only part that touches a terminal
+reduce(state, event, now)       ->  ViewState      pure
+layoutView(state, {width, now}) ->  LayoutLine[]   pure (view() maps .plain)
+styleLiveLine(line, ms, color)  ->  string         pure SGR styling after clipping
+paint(previous, next)                              the only part that touches a terminal
 ```
 
 Both pure pieces are tested without a terminal, which is where the real

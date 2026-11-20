@@ -1,4 +1,4 @@
-import { fitLine, fitLineTail } from "./text.js";
+import { displayWidth, fitLine, fitLineTail, terminalText } from "./text.js";
 
 export interface WelcomeOptions {
   readonly version: string;
@@ -12,35 +12,72 @@ export interface WelcomeOptions {
   readonly color?: boolean;
 }
 
-const COLOR = "\u001b[1;36m";
 const RESET = "\u001b[0m";
+const BOLD = "\u001b[1m";
+const DIM = "\u001b[2m";
+const YELLOW = "\u001b[33m";
+const CYAN = "\u001b[36m";
+const BOLD_CYAN = "\u001b[1;36m";
+
+const WORDMARK_LEFT = [
+  "╔═╗ ╦ ╦ ╦ ╦  ╦",
+  "║   ╠═╣ ║ ╚╗╔╝",
+  "╚═╝ ╩ ╩ ╩  ╚╝ ",
+] as const;
+
+const WORDMARK_RIGHT = [
+  " ╔═╗ ╔═╗ ╔╗╔ ╔╦╗",
+  " ║ ╦ ║╣  ║║║  ║ ",
+  " ╚═╝ ╚═╝ ╝╚╝  ╩ ",
+] as const;
+
+function setupHint(options: WelcomeOptions): string | undefined {
+  if (options.setupIssue === "model") return "Set a model with /model MODEL";
+  if (options.setupIssue === "base-url") return "Set the API URL with /endpoint URL";
+  if (options.signedOut) return "Set up a Provider with /provider";
+  return undefined;
+}
+
+function paint(value: string, code: string, color: boolean): string {
+  return color && value.length > 0 ? `${code}${value}${RESET}` : value;
+}
 
 /**
- * Compact first frame: brand, workspace path, and one setup hint when the
- * user must set a provider, model, or endpoint. The active provider and model
- * are drawn under the composer. This frame never takes the alternate screen
- * or steals scrollback.
+ * First-frame entry: wide terminals render the two-tone CHIVGENT geometric
+ * wordmark with workspace context; narrow terminals keep a compact 2-3 line
+ * header. Never includes active provider, model, or session ID, and never
+ * takes the alternate screen.
  */
 export function welcome(options: WelcomeOptions): string {
-  const width = Math.max(1, options.width - 1);
-  const setup = options.setupIssue === "model"
-    ? "Set a model with /model MODEL"
-    : options.setupIssue === "base-url"
-      ? "Set the API URL with /endpoint URL"
-      : options.signedOut
-        ? "Set up a Provider with /provider"
-        : undefined;
+  const usableWidth = Math.max(1, options.width - 1);
+  const color = options.color === true;
+  const cleanVersion = terminalText(options.version).replace(/\n/g, " ");
+  const setup = setupHint(options);
+  const meta = `   v${cleanVersion}${options.resumed ? " · resumed" : ""}`;
+  const row2Plain = `  ${WORDMARK_LEFT[2]}${WORDMARK_RIGHT[2]}${meta}`;
+
+  if (usableWidth >= 42 && displayWidth(row2Plain) <= usableWidth) {
+    const wordmarkRows = WORDMARK_LEFT.map((left, index) => {
+      const right = WORDMARK_RIGHT[index]!;
+      const tail = index === 2 ? meta : "";
+      if (!color) return `  ${left}${right}${tail}`;
+      return `  ${BOLD_CYAN}${left}${RESET}${BOLD}${right}${RESET}${paint(tail, DIM, true)}`;
+    });
+    const path = fitLineTail(options.cwd, Math.max(1, usableWidth - 4));
+    const pathLine = color ? `  ${CYAN}◆${RESET} ${DIM}${path}${RESET}` : `  ◆ ${path}`;
+    const hintLine = setup === undefined ? [] : [paint(fitLine(`  → ${setup}`, usableWidth), YELLOW, color)];
+    return `\n${[...wordmarkRows, "", pathLine, ...hintLine].join("\n")}\n`;
+  }
+
   // The path uses the whole line: the full path when it fits, the tail when
   // it does not. It is not shortened to ~.
+  const title = fitLine(`◆ chivgent v${cleanVersion}${options.resumed ? " · resumed" : ""}`, usableWidth);
+  const path = fitLineTail(options.cwd, usableWidth);
+  const hint = setup === undefined ? undefined : fitLine(setup, usableWidth);
   const lines = [
-    `◆ chivgent v${options.version}${options.resumed ? " · resumed" : ""}`,
-    fitLineTail(options.cwd, width),
-    ...(setup === undefined ? [] : [setup]),
+    paint(title, BOLD_CYAN, color),
+    paint(path, DIM, color),
+    ...(hint === undefined ? [] : [paint(hint, YELLOW, color)]),
   ];
-  return `\n${lines.map((line, index) => {
-    const fitted = fitLine(line, width);
-    if (!options.color || fitted.length === 0) return fitted;
-    if (index === 0) return `${COLOR}${fitted}${RESET}`;
-    return fitted;
-  }).join("\n")}\n`;
+  return `\n${lines.join("\n")}\n`;
 }
