@@ -36,29 +36,33 @@ it("fits terminal cells without splitting graphemes or executing controls", () =
 });
 
 it("keeps the welcome panel within very narrow and Unicode terminal widths", () => {
-  for (const width of [5, 12, 30, 80, 140]) {
+  for (const width of [5, 12, 30, 44, 80, 140]) {
     const banner = welcome({ version: "test", provider: "demo", model: "模型😀", cwd: "/项目/测试", resumed: true, signedOut: true, width });
     expect(banner.split("\n").every((line) => displayWidth(line) < width)).toBe(true);
+    const colored = welcome({ version: "test", provider: "demo", model: "模型😀", cwd: "/项目/测试", resumed: true, signedOut: true, width, color: true });
+    expect(colored.split("\n").every((line) => displayWidth(line) < width)).toBe(true);
   }
 });
 
-it("shows a compact wordmark without a session id, provider, or model", () => {
+it("shows the geometric CHIVGENT wordmark on wide terminals without session id, provider, or model", () => {
   const banner = welcome({ version: "test", provider: "openai", model: "gpt-test", cwd: "/project", resumed: false, signedOut: true, width: 80 });
   const lines = banner.split("\n").filter(Boolean);
-  expect(lines[0]).toContain("◆ chivgent vtest");
-  expect(lines[1]).toBe("/project");
-  expect(banner).toContain("Set up a Provider with /provider");
+  expect(lines[0]).toContain("╔═╗");
+  expect(lines[2]).toContain("vtest");
+  expect(lines[3]).toBe("  ◆ /project");
+  expect(lines[4]).toContain("Set up a Provider with /provider");
   expect(banner).not.toContain("╭");
   expect(banner).not.toContain("openai");
   expect(banner).not.toContain("gpt-test");
   expect(banner).not.toContain("unknown model");
   expect(banner).not.toContain("session-");
-  expect(lines).toHaveLength(3);
-  expect(welcome({ version: "test", provider: "openai", model: "gpt-test", cwd: "/project", resumed: false, signedOut: true, width: 80, color: true }))
-    .toContain("\u001b[1;36m");
+  expect(lines).toHaveLength(5);
+  const colored = welcome({ version: "test", provider: "openai", model: "gpt-test", cwd: "/project", resumed: false, signedOut: true, width: 80, color: true });
+  expect(colored).toContain("\u001b[1;36m");
+  expect(colored).toContain("\u001b[2m");
 });
 
-it("keeps one setup hint and leaves the provider and model off the welcome", () => {
+it("keeps one setup hint and falls back cleanly on narrow terminals", () => {
   const base = { version: "test", provider: "openai", model: "gpt-test", cwd: "/project", resumed: false, width: 80 };
   const banners = [
     welcome({ ...base, signedOut: true }),
@@ -69,25 +73,31 @@ it("keeps one setup hint and leaves the provider and model off the welcome", () 
   expect(banners[1]).toContain("Set a model with /model MODEL");
   expect(banners[2]).toContain("Set the API URL with /endpoint URL");
   for (const banner of banners) {
-    expect(banner.split("\n").filter(Boolean)).toHaveLength(3);
-    expect(banner.split("\n").filter(Boolean)[1]).toBe("/project");
+    expect(banner.split("\n").filter(Boolean)).toHaveLength(5);
+    expect(banner.split("\n").filter(Boolean)[3]).toBe("  ◆ /project");
     expect(banner).not.toContain("gpt-test");
     expect(banner).not.toContain("unknown model");
   }
   const ready = welcome({ ...base, signedOut: false });
-  expect(ready.split("\n").filter(Boolean)).toEqual(["◆ chivgent vtest", "/project"]);
+  expect(ready.split("\n").filter(Boolean)).toHaveLength(4);
+  expect(ready.split("\n").filter(Boolean)[3]).toBe("  ◆ /project");
+
+  const compact = welcome({ ...base, signedOut: false, width: 40 });
+  expect(compact.split("\n").filter(Boolean)).toEqual(["◆ chivgent vtest", "/project"]);
+  const tightResumed = welcome({ ...base, resumed: true, signedOut: false, width: 45 });
+  expect(tightResumed.split("\n").filter(Boolean)).toEqual(["◆ chivgent vtest · resumed", "/project"]);
 });
 
 it("keeps the workspace name visible when the welcome path is long", () => {
   const cwd = `/very/long/parent/directory/${"nested/".repeat(8)}chivgent`;
-  const banner = welcome({ version: "test", provider: "demo", model: "model", cwd, resumed: false, signedOut: false, width: 40 });
-  const pathLine = banner.split("\n").filter(Boolean)[1] ?? "";
+  const banner = welcome({ version: "test", provider: "demo", model: "model", cwd, resumed: false, signedOut: false, width: 44 });
+  const pathLine = banner.split("\n").filter(Boolean).at(-1) ?? "";
   expect(pathLine).toContain("chivgent");
   expect(pathLine).toContain("…");
   expect(pathLine).not.toContain("/very/long");
   expect(pathLine).not.toContain("demo");
   expect(pathLine).not.toContain("~");
-  expect(displayWidth(pathLine)).toBeLessThan(40);
+  expect(displayWidth(pathLine)).toBeLessThan(44);
   const narrow = welcome({ version: "test", provider: "a-very-long-provider", model: "a-very-long-model", cwd: "/parent/chivgent", resumed: false, signedOut: false, width: 24 });
   const narrowLines = narrow.split("\n").filter(Boolean);
   expect(narrowLines).toHaveLength(2);
@@ -98,7 +108,7 @@ it("keeps the workspace name visible when the welcome path is long", () => {
 it("leaves a home path absolute on the welcome line", () => {
   const cwd = "/home/chiv/developer/chivgent";
   const banner = welcome({ version: "test", provider: "openai", model: "gpt-test", cwd, resumed: false, signedOut: false, width: 80 });
-  expect(banner.split("\n").filter(Boolean)[1]).toBe(cwd);
+  expect(banner.split("\n").filter(Boolean).at(-1)).toBe(`  ◆ ${cwd}`);
   expect(banner).not.toContain("~");
   expect(banner).not.toContain("gpt-test");
 });
@@ -140,7 +150,7 @@ describe("idle composer footer", () => {
     roots.push(cwd);
     const screen = terminalHarness(80, 24);
     const repl = runRepl({
-      session: session(cwd), ...screen, stderr: screen.output, tui: true, inlineComposer: true,
+      session: session(cwd), ...screen, stderr: screen.output, tui: true,
       permissionPolicy: new PermissionPolicy("ask-first"),
       providerName: "startup-provider", modelName: "startup-model",
       providers: providers("gpt-test"),
@@ -171,7 +181,7 @@ describe("idle composer footer", () => {
     roots.push(cwd);
     const screen = terminalHarness(80, 24);
     const repl = runRepl({
-      session: session(cwd), ...screen, stderr: screen.output, tui: true, inlineComposer: true,
+      session: session(cwd), ...screen, stderr: screen.output, tui: true,
       permissionPolicy: new PermissionPolicy("ask-first"),
       providerName: "startup-provider", modelName: "startup-model",
       providers: providers(undefined),
@@ -232,18 +242,26 @@ it("latches submission across chunks and consumes a split CRLF only once", () =>
 });
 
 describe("TUI REPL", () => {
-  it("exits on Ctrl+C while idle", async () => {
+  it("clears draft on Ctrl+C and exits on Ctrl+D while idle", async () => {
     vi.stubEnv("TERM", "xterm-256color");
     const input = new Input();
     const output = new PassThrough();
+    let screen = "";
+    output.on("data", (chunk) => { screen += chunk.toString(); });
     const session = new AgentSession({ agent: {
       systemPrompt: "demo", maxTurns: 1, tools: [], workspace: new LocalWorkspace(process.cwd()),
       llm: { async complete() { throw new Error("No provider call expected"); } },
     } });
     const result = runRepl({ session, input, output, stderr: output, tui: true });
     try {
+      await vi.waitFor(() => expect(screen).toContain("Ask chivgent"));
+      input.write("draft");
+      await vi.waitFor(() => expect(screen).toContain("draft"));
+      const beforeCancel = screen.length;
       input.write("\x03");
-      expect(await result).toBe(130);
+      await vi.waitFor(() => expect(screen.slice(beforeCancel)).toContain("Ask chivgent"));
+      input.write("\x04");
+      expect(await result).toBe(0);
       expect(input.raw).toBe(false);
     } finally { input.end(); await result; }
   });
@@ -291,6 +309,7 @@ describe("TUI REPL", () => {
       input.write("\x1b[B".repeat(BUILT_IN_COMMANDS.length));
       await vi.waitFor(() => expect(screen).toContain("/inspect"));
       input.write("\x1b");
+      await new Promise(resolve => setTimeout(resolve, 60));
       expect(screen).toContain("/inspect");
       input.write("help\r");
       await vi.waitFor(() => expect(screen).toContain("Commands:"));

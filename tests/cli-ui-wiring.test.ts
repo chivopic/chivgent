@@ -86,7 +86,6 @@ describe("CLI terminal UI wiring", () => {
     expect(harness.runRepl).toHaveBeenCalledOnce();
     expect(harness.runRepl.mock.calls[0]?.[0]).toMatchObject({
       tui: true,
-      inlineComposer: true,
       output: harness.process.stderr,
       liveRegion: harness.liveRegion,
     });
@@ -107,7 +106,6 @@ describe("CLI terminal UI wiring", () => {
     expect(harness.createEventRenderer).toHaveBeenCalledOnce();
     expect(harness.runRepl.mock.calls[0]?.[0]).toMatchObject({
       tui: false,
-      inlineComposer: false,
       output: harness.process.stdout,
     });
     expect(harness.createLocalSession.mock.calls[0]?.[0].permissionPolicy).toBeUndefined();
@@ -168,7 +166,6 @@ describe("CLI terminal UI wiring", () => {
     expect(await main(["--tui", "--no-session", "--no-extensions"])).toBe(0);
     expect(harness.runRepl.mock.calls[0]?.[0]).toMatchObject({
       tui: true,
-      inlineComposer: true,
       output: harness.process.stderr,
     });
   });
@@ -224,7 +221,7 @@ describe("CLI terminal UI wiring", () => {
     harness.process.env.TERM = "dumb";
 
     expect(await main(["--no-session", "--no-extensions"])).toBe(0);
-    expect(harness.runRepl.mock.calls[0]?.[0]).toMatchObject({ tui: false, inlineComposer: false });
+    expect(harness.runRepl.mock.calls[0]?.[0]).toMatchObject({ tui: false });
 
     vi.clearAllMocks();
     expect(await main(["--tui", "--no-session", "--no-extensions"])).toBe(1);

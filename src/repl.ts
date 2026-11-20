@@ -5,8 +5,8 @@ import { displayWidth, terminalText } from "./tui/text.js";
 import { terminalColorEnabled } from "./tui/selection.js";
 import { PatchReviewController } from "./tui/review.js";
 import { ProviderPickerController, providerPickerLabel } from "./tui/provider-picker.js";
-import { InputMenu, type MenuItem } from "./tui/menu.js";
-import { createInterface, emitKeypressEvents, type Interface } from "node:readline";
+import type { SlashSuggestion } from "./tui/slash.js";
+import { createInterface, type Interface } from "node:readline";
 import type { AgentSession } from "./session.js";
 import type { OutputStream } from "./render.js";
 import type { RegisteredCommand } from "./extensions/api.js";
@@ -116,7 +116,7 @@ export interface SlashCommandContext {
   readonly webSearch?: { readonly provider: string };
   readonly permissions?: readonly string[];
   readonly permissionPolicy?: PermissionPolicy;
-  readonly inlineComposer?: boolean;
+  readonly tui?: boolean;
   readonly interactivePicker?: boolean;
   readonly sessionOptions?: {
     readonly list?: () => Promise<readonly { readonly id: string; readonly title?: string }[]>;
@@ -178,10 +178,6 @@ export const LEGACY_COMMAND_ALIASES = [
   "session",
   "plan",
   "tools",
-  "compose",
-  "editor",
-  "review",
-  "gitdiff",
   "quit",
   "logout",
 ] as const;
@@ -207,7 +203,6 @@ const HELP = `Commands:
   /help      Show this help
   /status    Show live session, model, permissions, plan state, and usage (alias: /session)
   /compact   Summarise older history for the model; keeps the full transcript
-  /plan [on|off]  Toggle restricted read-only Plan Mode
   /permissions [ask-first|workspace|unrestricted|plan]  Inspect or change this process's policy
   /new [title]    Save this session and start a fresh session
   /resume [id]    Switch to a saved session in this workspace
@@ -224,10 +219,10 @@ Anything else is sent to the model. Ctrl+C stops a running answer.
 `;
 
 function helpText(context: SlashCommandContext): string {
-  const controls = context.inlineComposer
-    ? `Rich TUI input: Enter sends; Ctrl+O inserts a newline; Ctrl+R searches prompt history; arrows move the cursor. Ctrl+C clears the current draft; Ctrl+D exits when it is empty.${context.permissionPolicy === undefined ? "" : " Shift+Tab cycles Plan → Auto mode → Ask for me at the idle prompt."}\n\n`
+  const controls = context.tui
+    ? `Rich TUI input: Enter sends; Ctrl+O inserts a newline; ↑/↓ cycles prompt history; arrows move the cursor. Ctrl+C clears the current draft; Ctrl+D exits when it is empty.${context.permissionPolicy === undefined ? "" : " Shift+Tab cycles Plan → Auto mode → Ask for me at the idle prompt."}\n\n`
     : "";
-  const exit = context.inlineComposer ? "" : "At the simple prompt Ctrl+C or Ctrl+D exits.\n";
+  const exit = context.tui ? "" : "At the simple prompt Ctrl+C or Ctrl+D exits.\n";
   const extras = context.extensionCommands ?? [];
   if (extras.length === 0) {
     return `${controls}${HELP}${exit}`;
@@ -360,26 +355,6 @@ export function handleSlashCommand(
       context.write(formatDiffPage(patch, page, context.width ?? 80, context.color === true).text);
       return "handled";
     }
-
-    case "/compose":
-      context.write(context.inlineComposer
-        ? "The multiline editor is already active in this prompt. Enter sends; Ctrl+O inserts a newline.\n"
-        : "Use /compose at the interactive prompt to enter multi-line mode.\n");
-      return "handled";
-
-    case "/editor":
-      context.write(context.inlineComposer
-        ? "The cursor-addressable multiline editor is already active in this prompt. Enter sends; Ctrl+O inserts a newline.\n"
-        : "Use /editor in the rich interactive TUI to open the multiline editor.\n");
-      return "handled";
-
-    case "/review":
-      context.write("Use /review in an interactive TUI to browse the most recent successful patch.\n");
-      return "handled";
-
-    case "/gitdiff":
-      context.write("Use /gitdiff [--staged] in an interactive TUI to approve read-only Git diff.\n");
-      return "handled";
 
     case "/clear":
       context.session.clear();
@@ -518,8 +493,6 @@ function describeStatus(context: SlashCommandContext): string {
 
 export interface ReplOptions {
   readonly tui?: boolean;
-  /** Opt in to cursor-editable composer as the primary interactive input. */
-  readonly inlineComposer?: boolean;
   readonly session: AgentSession;
   readonly shellApproval?: ShellApprovalGate;
   readonly liveRegion?: Pick<LiveRegion, "pause" | "resume">;
@@ -649,10 +622,6 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     options.stderr.write(text);
   };
   const tuiInput = options.tui ? new TuiInput(options.input) : undefined;
-  // Decode independently so readline uses normal editing for every key. Its
-  // chunked-paste fast path can lose wrapped cursor rows or overwrite text
-  // when inserting a paste in the middle of an existing draft.
-  if (tuiInput !== undefined) emitKeypressEvents(tuiInput);
   const readline = createInterface({
     input: tuiInput ?? options.input,
     output: options.output,
@@ -660,11 +629,8 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     prompt: REPL_PROMPT,
   });
 
-  const menu = tuiInput === undefined ? undefined : new InputMenu(readline, options.output);
-  let dismissedLine: string | undefined;
-  let refreshQueued = false;
   const menuPriority = ["status", "diff", "provider", "model", "new", "resume", "help"];
-  const commands: readonly MenuItem[] = [...BUILT_IN_COMMANDS, ...(options.extensionCommands ?? []).map((command) => command.name)]
+  const commands: readonly SlashSuggestion[] = [...BUILT_IN_COMMANDS, ...(options.extensionCommands ?? []).map((command) => command.name)]
     .filter((name, index, all) => all.indexOf(name) === index)
     .sort((a, b) => {
       const rank = (name: string): number => {
@@ -679,106 +645,21 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       const suffix = description === undefined ? "" : `  ·  ${description}`;
       return { value: name, label: `/${name}${suffix}` };
     });
-  const menuItems = (line: string): readonly MenuItem[] => {
-    if (line === "/provider" || line.startsWith("/provider ")) {
-      const query = line.slice("/provider".length).trim().toLowerCase();
-      return (options.providers?.providerIds() ?? []).filter((id) => id.includes(query))
-        .map((id) => ({ value: `provider ${id}`, label: `${id === options.providers?.provider ? "●" : "○"} ${id}` }));
-    }
-    if (line.startsWith("/") && !/\s/.test(line)) {
-      return commands.filter((item) => item.label.startsWith(line));
-    }
-    return [];
-  };
-  const refreshMenu = (): void => {
-    if (menu === undefined || inputClosed || signingIn || controller !== undefined) return;
-    const line = readline.line;
-    menu.show(line === dismissedLine ? [] : menuItems(line), true);
-  };
-  const queueRefresh = (): void => {
-    if (refreshQueued) return;
-    refreshQueued = true;
-    setImmediate(() => { refreshQueued = false; refreshMenu(); });
-  };
-  const replaceDraft = (value: string): void => {
-    menu?.reset();
-    readline.write(null, { ctrl: true, name: "a" });
-    readline.write(null, { ctrl: true, name: "k" });
-    readline.write(value);
-  };
 
   let controller: AbortController | undefined;
   let questionMode = false;
-  let questionCancel: (() => void) | undefined;
   let promptVisible = false;
   let inputClosed = false;
   let signingIn = false;
-  let composing = false;
-  let composeCancelled = false;
   let interrupted = false;
-  if (tuiInput !== undefined) {
-    tuiInput.setMenuControls(() => {
-      menu?.clear();
-      dismissedLine = undefined;
-    }, (key) => {
-      if (questionCancel !== undefined && key === "escape") {
-        questionCancel();
-        return true;
-      }
-      if (signingIn || controller !== undefined) return false;
-      if (key === "enter" && !menu?.active && readline.line === "/provider" && options.providers !== undefined) {
-        menu?.show(menuItems(readline.line));
-        return true;
-      }
-      if (key === "tab" && !menu?.active) {
-        const first = menuItems(readline.line)[0]?.value;
-        if (first !== undefined) {
-          replaceDraft(`/${first}${first === "model" || first === "endpoint" ? " " : ""}`);
-          queueRefresh();
-          return true;
-        }
-      }
-      if (!menu?.active) return false;
-      if (key === "up" || key === "down") {
-        menu.move(key === "up" ? -1 : 1);
-        return true;
-      }
-      if (key === "escape") {
-        dismissedLine = readline.line;
-        menu.clear();
-        return true;
-      }
-      const chosen = menu.selection;
-      if (chosen === undefined) return false;
-      const replacement = `/${chosen}`;
-      if (key === "tab") {
-        replaceDraft(replacement + (chosen === "model" || chosen === "endpoint" ? " " : ""));
-        queueRefresh();
-        return true;
-      }
-      if (key === "enter") {
-        replaceDraft(replacement);
-        if (chosen === "provider" || chosen === "model" || chosen === "endpoint") {
-          if (chosen !== "provider") readline.write(" ");
-          queueRefresh();
-        } else {
-          tuiInput.markSubmitted();
-          readline.write("\r");
-        }
-        return true;
-      }
-      return false;
-    });
-    tuiInput.on("keypress", queueRefresh);
-  }
+
   const showPrompt = (): void => {
-    if (inputClosed || options.inlineComposer) return;
+    if (inputClosed || tuiInput !== undefined) return;
     promptVisible = true;
     readline.prompt();
   };
-  readline.on("line", () => { menu?.reset(); promptVisible = false; });
+  readline.on("line", () => { promptVisible = false; });
   readline.on("close", () => {
-    menu?.reset();
     inputClosed = true;
     controller?.abort();
     if (options.tui && promptVisible) {
@@ -788,19 +669,8 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     }
   });
   readline.on("SIGINT", () => {
-    if (composing) {
-      composeCancelled = true;
-      readline.write("\r");
-      return;
-    }
     if (controller === undefined) {
-      if (options.tui) {
-        // Erase wrapped drafts before removing the prompt on close.
-        readline.write(null, { ctrl: true, name: "e" });
-        readline.write(null, { ctrl: true, name: "u" });
-      } else {
-        options.output.write("\n");
-      }
+      if (!options.tui) options.output.write("\n");
       interrupted = true;
       readline.close();
       return;
@@ -821,8 +691,6 @@ export async function runRepl(options: ReplOptions): Promise<number> {
 
   const questionPresenter: QuestionPresenter = async (request, signal) => {
     if (inputClosed || controller?.signal.aborted === true) return { status: "unavailable", reason: "the local input channel is closed" };
-    menu?.clear();
-    dismissedLine = undefined;
     options.liveRegion?.pause();
     tuiInput?.setBusy(false);
     questionMode = true;
@@ -851,7 +719,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
           readline.prompt();
           let escaped = false;
           const cancelOnEscape = (): void => { escaped = true; if (!inputClosed) readline.write("\n"); };
-          questionCancel = cancelOnEscape;
+          tuiInput?.setEscapeHandler(cancelOnEscape);
           const unblockOnAbort = (): void => { if (!inputClosed) readline.write("\n"); };
           signal?.addEventListener("abort", unblockOnAbort, { once: true });
           try {
@@ -864,7 +732,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
             if (answer !== undefined) break;
             line("That answer does not match this question. Choose a listed number or enter a non-empty answer.");
           } finally {
-            questionCancel = undefined;
+            tuiInput?.setEscapeHandler(undefined);
             signal?.removeEventListener("abort", unblockOnAbort);
           }
         }
@@ -873,7 +741,6 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       if (inputClosed) return { status: "unavailable", reason: "the local input channel closed before the answer could be submitted" };
       return { ...request, answers };
     } finally {
-      questionCancel = undefined;
       questionMode = false;
       readline.setPrompt(REPL_PROMPT);
       tuiInput?.setBusy(true);
@@ -886,7 +753,6 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     options.shellApproval.setHandler(async (command, signal, context): Promise<ApprovalDecision> => {
       if (signal?.aborted) return { approved: false, reason: "cancelled" };
       let resizeListener: (() => void) | undefined;
-      menu?.clear();
       options.liveRegion?.pause();
       tuiInput?.setApprovalMode(true);
       tuiInput?.setBusy(false);
@@ -940,63 +806,9 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     });
   }
 
-  /** Modal composer retains readline editing, Unicode and native history. */
-  const collectMultiline = async (): Promise<string | undefined> => {
-    const parts: string[] = [];
-    let bytes = 0;
-    composing = true;
-    composeCancelled = false;
-    tuiInput?.setComposeMode(true);
-    menu?.clear();
-    dismissedLine = undefined;
-    readline.setPrompt("  │ ");
-    write("\nCompose prompt · Enter adds a line · /send submits · /cancel discards\n");
-    try {
-      for (;;) {
-        readline.prompt();
-        const part = await readNextLine();
-        if (tuiInput?.composeLimitExceeded) {
-          write("Draft too large (64 KiB paste buffer). Nothing was sent.\n");
-          return undefined;
-        }
-        if (composeCancelled || part === undefined || part.trim() === "/cancel") {
-          write("Draft discarded.\n");
-          return undefined;
-        }
-        if (part.trim() === "/send") {
-          const message = parts.join("\n");
-          if (message.trim().length === 0) {
-            write("Empty draft discarded.\n");
-            return undefined;
-          }
-          write(`Submitted ${parts.length} lines.\n`);
-          return message;
-        }
-        bytes += Buffer.byteLength(part, "utf8") + 1;
-        if (parts.length >= 200 || bytes > 64 * 1024) {
-          write("Draft too large (200 lines / 64 KiB). Nothing was sent.\n");
-          return undefined;
-        }
-        // //send and //cancel are literal lines instead of commands.
-        parts.push(part.startsWith("//send") || part.startsWith("//cancel") ? part.slice(1) : part);
-      }
-    } finally {
-      composing = false;
-      composeCancelled = false;
-      tuiInput?.setComposeMode(false);
-      readline.setPrompt(REPL_PROMPT);
-    }
-  };
-
-  /** Cursor-editable modal, with exclusive keyboard and paint ownership. */
-  const collectEditor = async (isDefault = false): Promise<string | undefined> => {
-    if (tuiInput === undefined) {
-      write("The cursor editor requires the rich TUI in an interactive terminal. Use /compose here instead.\n");
-      return undefined;
-    }
-    menu?.clear();
-    dismissedLine = undefined;
-    composing = true;
+  /** Rounded inline composer with exclusive keyboard and paint ownership. */
+  const collectEditor = async (): Promise<string | undefined> => {
+    if (tuiInput === undefined) return undefined;
     let resolveDraft!: (draft: string | undefined) => void;
     const pending = new Promise<string | undefined>(resolve => { resolveDraft = resolve; });
     const output = options.output as typeof options.output & { columns?: number; rows?: number };
@@ -1014,13 +826,11 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       return `${provider} · ${model}`;
     };
     const editor = new EditorController(output, resolveDraft, {
-      submitOnEnter: isDefault,
       history: recent,
-      slashCommands: commands.map(item => ({ value: item.value, label: item.label })),
-      mouse: isDefault && options.tui === true && (output as typeof output & { isTTY?: boolean }).isTTY === true,
-      color: isDefault && terminalColorEnabled((output as { isTTY?: boolean }).isTTY === true, process.env),
-      ...(isDefault && options.tui ? { footerIdentity } : {}),
-      ...(isDefault && options.tui && options.permissionPolicy !== undefined ? {
+      slashCommands: commands,
+      color: terminalColorEnabled((output as { isTTY?: boolean }).isTTY === true, process.env),
+      footerIdentity,
+      ...(options.permissionPolicy !== undefined ? {
         footerStatus: () => {
           if (activeSession.planMode) return "Plan · Shift+Tab Auto mode · /help";
           if (options.permissionPolicy?.mode === "workspace") return "Auto mode · Shift+Tab Ask for me · /help";
@@ -1051,14 +861,12 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       editor.begin();
       const result = await pending;
       if (editor.exitRequested.value) readline.close();
-      if (!isDefault) write(result === undefined ? "Draft discarded.\n" : "Draft submitted.\n");
       return result;
     } finally {
       tuiInput.setRawHandler(undefined);
       output.off("resize", resized);
       readline.off("close", closed);
       options.input.off("end", closed);
-      composing = false;
     }
   };
 
@@ -1073,7 +881,6 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       write("Interactive patch review requires the rich TUI in an interactive terminal; use /diff instead.\n");
       return;
     }
-    menu?.clear();
     let resolveReview!: () => void;
     const pending = new Promise<void>(resolve => { resolveReview = resolve; });
     const output = options.output as typeof options.output & { columns?: number; rows?: number };
@@ -1094,16 +901,11 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     }
   };
 
-  const inspectLiveGitDiff = async (line: string): Promise<void> => {
+  const inspectLiveGitDiff = async (mode: GitDiffMode): Promise<void> => {
     if (tuiInput === undefined) {
       write("Live Git review requires the rich TUI in an interactive terminal.\n");
       return;
     }
-    if (line !== "/gitdiff" && line !== "/gitdiff --staged") {
-      write("Usage: /gitdiff [--staged]\n");
-      return;
-    }
-    const mode: GitDiffMode = line.endsWith("--staged") ? "staged" : "working";
     // Explicit user confirmation before starting any local Git process.
     const root = terminalText(activeSession.cwd);
     write(`\nRead-only local Git diff (${mode}) in:\n${root}\nNo network, hooks, external diff or file writes. Approve once? [y/N]\n`);
@@ -1146,8 +948,6 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       return readSetupChoice(readNextLine, write, ids, active, title, label);
     }
 
-    menu?.clear();
-    dismissedLine = undefined;
     let resolveChoice!: (provider: string | undefined) => void;
     const pending = new Promise<string | undefined>(resolve => { resolveChoice = resolve; });
     const output = options.output as typeof options.output & { columns?: number; rows?: number };
@@ -1264,8 +1064,8 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     }
     showPrompt();
     for (;;) {
-      let line = options.inlineComposer && tuiInput !== undefined
-        ? await collectEditor(true)
+      const line = tuiInput !== undefined
+        ? await collectEditor()
         : await readNextLine();
       if (line === undefined) {
         if (inputClosed) break;
@@ -1276,47 +1076,27 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         continue;
       }
 
-      const fromComposer = line.trim() === "/compose";
-      const fromEditor = line.trim() === "/editor";
-      if (line.trim() === "/review" || line.trim() === "/diff patch") {
+      const trimmed = line.trim();
+      if (tuiInput !== undefined && trimmed === "/diff patch") {
         await inspectPatch();
         if (inputClosed) break;
         showPrompt();
         continue;
       }
-      if (line.trim() === "/diff" || line.trim() === "/diff --staged" || line.trim().startsWith("/gitdiff")) {
-        const gitDiffLine = line.trim().startsWith("/gitdiff")
-          ? line.trim()
-          : `/gitdiff${line.trim().slice("/diff".length)}`;
-        await inspectLiveGitDiff(gitDiffLine);
+      if (tuiInput !== undefined && (trimmed === "/diff" || trimmed === "/diff --staged")) {
+        await inspectLiveGitDiff(trimmed.endsWith("--staged") ? "staged" : "working");
         if (inputClosed) break;
         showPrompt();
         continue;
       }
-      if (fromComposer || fromEditor) {
-        if (options.inlineComposer && tuiInput !== undefined) {
-          write("The cursor-addressable multiline editor is already active in this prompt. Enter sends; Ctrl+O inserts a newline.\n");
-          if (inputClosed) break;
-          showPrompt();
-          continue;
-        }
-        const draft = fromEditor ? await collectEditor() : await collectMultiline();
-        if (draft === undefined) {
-          if (inputClosed) break;
-          showPrompt();
-          continue;
-        }
-        line = draft;
-      }
-      if (options.inlineComposer && tuiInput !== undefined) {
+      if (tuiInput !== undefined) {
         const isOutputTTY = typeof options.output === "object" && options.output !== null && "isTTY" in options.output && options.output.isTTY === true;
-        const useColor = options.tui === true && terminalColorEnabled(isOutputTTY, process.env);
+        const useColor = terminalColorEnabled(isOutputTTY, process.env);
         const prefix = useColor ? "\u001b[1m\u001b[2m›\u001b[0m " : "› ";
-        const lines = line.split("\n");
-        const formattedPrompt = lines.map((l, i) => `${i === 0 ? prefix : "  "}${terminalText(l)}`).join("\n");
+        const formattedPrompt = line.split("\n").map((l, i) => `${i === 0 ? prefix : "  "}${terminalText(l)}`).join("\n");
         write(`\n${formattedPrompt}\n\n`);
       }
-      const outcome = fromComposer || fromEditor ? "not-a-command" : handleSlashCommand(line, {
+      const outcome = handleSlashCommand(line, {
         session: activeSession,
         write,
         width: terminalWidth({ columns: (options.output as typeof options.output & { columns?: number }).columns }),
@@ -1336,7 +1116,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         ...(options.webSearch === undefined ? {} : { webSearch: options.webSearch }),
         ...(options.permissions === undefined ? {} : { permissions: options.permissions }),
         ...(options.permissionPolicy === undefined ? {} : { permissionPolicy: options.permissionPolicy }),
-        ...(options.inlineComposer === true ? { inlineComposer: true } : {}),
+        ...(options.tui === true ? { tui: true } : {}),
         ...(tuiInput !== undefined ? { interactivePicker: true } : {}),
         ...(options.sessionOptions === undefined ? {} : { sessionOptions: options.sessionOptions }),
       });
@@ -1460,7 +1240,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       if (typeof outcome === "object" && outcome.kind === "plan") {
         try {
           await activeSession.setPlanMode(outcome.enabled);
-          write(`Plan Mode ${activeSession.planMode ? "on" : "off"}. ${activeSession.planMode ? "Only built-in read tools and update_plan may execute." : "Session capabilities restored."}\n`);
+          write(`Plan Mode ${activeSession.planMode ? "on" : "off"}. ${activeSession.planMode ? "Built-in read tools, configured web_search, update_plan, and question may execute." : "Session capabilities restored."}\n`);
         } catch (error: unknown) { write(`Could not change Plan Mode: ${error instanceof Error ? error.message : String(error)}\n`); }
         showPrompt();
         continue;

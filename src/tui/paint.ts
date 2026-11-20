@@ -4,9 +4,13 @@ import type { OutputStream } from "../render.js";
 const CURSOR_UP = "\u001B[A";
 const CLEAR_LINE = "\u001B[2K";
 const CARRIAGE_RETURN = "\r";
+const SYNC_START = "\u001B[?2026h";
+const SYNC_END = "\u001B[?2026l";
 
 export interface PainterOptions {
   readonly stream: OutputStream;
+  /** Wrap each frame in DEC Mode 2026 synchronized output markers when supported. */
+  readonly synchronizedOutput?: boolean;
 }
 
 /**
@@ -78,7 +82,7 @@ export class Painter {
       out += CURSOR_UP.repeat(height - lines.length);
     }
 
-    this.options.stream.write(out);
+    this.writeFrame(out);
     this.previous = [...lines];
     this.previousRows = lines.length;
     this.invalidated = false;
@@ -90,7 +94,7 @@ export class Painter {
     if (height === 0) {
       return;
     }
-    this.options.stream.write(
+    this.writeFrame(
       CURSOR_UP.repeat(height) +
         CARRIAGE_RETURN +
         `${CLEAR_LINE}\n`.repeat(height) +
@@ -99,6 +103,14 @@ export class Painter {
     this.previous = [];
     this.previousRows = 0;
     this.invalidated = false;
+  }
+
+  private writeFrame(payload: string): void {
+    this.options.stream.write(
+      this.options.synchronizedOutput === true
+        ? `${SYNC_START}${payload}${SYNC_END}`
+        : payload,
+    );
   }
 }
 

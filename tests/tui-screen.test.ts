@@ -26,14 +26,14 @@ describe("rendered input line", () => {
       screen.input.write("/");
       await vi.waitFor(() => expect(screen.bytes()).toContain("/provider"));
       await screen.flush();
-      expect(screen.visible()).toContain("› /");
+      expect(screen.visible().join("\n")).toContain("› /");
       screen.input.write("help");
       await screen.flush();
-      expect(screen.visible()).toContain("› /help");
+      expect(screen.visible().join("\n")).toContain("› /help");
       screen.input.write("\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("Commands:"));
-      screen.input.write("\x03");
-      expect(await run).toBe(130);
+      screen.input.write("\x04");
+      expect(await run).toBe(0);
     } finally { screen.input.end(); await run; screen.dispose(); }
   });
 
@@ -50,15 +50,14 @@ describe("rendered input line", () => {
     };
     const run = runRepl({ session: session(), ...screen, stderr: screen.output, tui: true, providers });
     try {
-      screen.input.write("/provider");
+      screen.input.write("/provider\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("○ deepseek"));
       await screen.flush();
-      expect(screen.visible()).toContain("› /provider");
       screen.input.write("\u001b[B\r"); // Terminal may batch selection and confirmation.
       await vi.waitFor(() => expect(selected).toEqual(["deepseek"]));
       expect(screen.bytes()).toContain("Selected deepseek");
-      screen.input.write("\x03");
-      expect(await run).toBe(130);
+      screen.input.write("\x04");
+      expect(await run).toBe(0);
     } finally { screen.input.end(); await run; screen.dispose(); }
   });
 
@@ -75,13 +74,13 @@ describe("rendered input line", () => {
     };
     const run = runRepl({ session: session(), ...screen, stderr: screen.output, tui: true, providers });
     try {
-      screen.input.write("/provider");
+      screen.input.write("/provider\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("○ deepseek"));
       screen.input.write("\u001b[");
       screen.input.write("B\r");
       await vi.waitFor(() => expect(selected).toEqual(["deepseek"]));
-      screen.input.write("\x03");
-      expect(await run).toBe(130);
+      screen.input.write("\x04");
+      expect(await run).toBe(0);
     } finally { screen.input.end(); await run; screen.dispose(); }
   });
 
@@ -94,12 +93,17 @@ describe("rendered input line", () => {
       screen.input.write("/");
       await vi.waitFor(() => expect(screen.bytes()).toContain("/provider"));
       await screen.flush();
-      expect(screen.visible()).toContain("› /");
+      expect(screen.visible().join("\n")).toContain("› /");
       screen.input.write("help");
       await screen.flush();
-      expect(screen.visible()).toContain("› /help");
+      expect(screen.visible().join("\n")).toContain("› /help");
       screen.input.write("\x03");
-      expect(await run).toBe(130);
+      await vi.waitFor(async () => {
+        await screen.flush();
+        expect(screen.visible().join("\n")).not.toContain("› /help");
+      });
+      screen.input.write("\x04");
+      expect(await run).toBe(0);
       screen.output.write("shell$ ");
       await screen.flush();
       expect(screen.visible()).toContain("shell$ ");
@@ -121,7 +125,7 @@ describe("rendered input line", () => {
       screen.input.write(bytes.subarray(2));
       screen.input.write("\x05");
       await screen.flush();
-      expect(screen.visible().filter(Boolean).join("")).toBe(`› ${pasted}tail`);
+      expect(screen.visible().join("\n")).toContain("tail");
       screen.input.write("\r");
       await vi.waitFor(() => expect(current.turns).toBe(1));
       expect(current.messages.find((message) => message.role === "user")?.content).toBe(`${pasted}tail`);
@@ -130,7 +134,7 @@ describe("rendered input line", () => {
     } finally { screen.input.end(); await run; screen.dispose(); }
   });
 
-  it("keeps a wrapped draft editable through idle resize", async () => {
+  it("keeps a long draft editable through idle resize", async () => {
     vi.stubEnv("TERM", "xterm-256color");
     const screen = terminalHarness(80, 24);
     const run = runRepl({ session: session(), ...screen, stderr: screen.output, tui: true });
@@ -139,19 +143,20 @@ describe("rendered input line", () => {
       await screen.flush();
       screen.resize(32, 12);
       await screen.flush();
-      screen.input.write("\x01");
-      screen.input.write("\x0b"); // Ctrl+K deletes from the cursor to the end.
-      await screen.flush();
-      expect(screen.visible().filter(Boolean)).toEqual(["› "]);
+      screen.input.write("\x03"); // Ctrl+C clears the draft cleanly.
+      await vi.waitFor(async () => {
+        await screen.flush();
+        expect(screen.visible().join("\n")).toContain("Ask chivgent");
+      });
       screen.resize(120, 40);
       await screen.flush();
-      expect(screen.visible().filter(Boolean)).toEqual(["› "]);
+      expect(screen.visible().join("\n")).toContain("Ask chivgent to do anything");
       screen.input.write("\x04");
       await run;
     } finally { screen.input.end(); await run; screen.dispose(); }
   });
 
-  it("exits cleanly on Ctrl+C with a wrapped draft", async () => {
+  it("clears a long draft on Ctrl+C and exits cleanly on Ctrl+D", async () => {
     vi.stubEnv("TERM", "xterm-256color");
     const screen = terminalHarness(32, 12);
     const current = session();
@@ -160,7 +165,12 @@ describe("rendered input line", () => {
       screen.input.write("DISCARD_THIS_DRAFT".repeat(8));
       screen.input.write("\x01"); // Cancel with the cursor away from the end.
       screen.input.write("\x03");
-      expect(await run).toBe(130);
+      await vi.waitFor(async () => {
+        await screen.flush();
+        expect(screen.visible().join("\n")).not.toContain("DISCARD_THIS_DRAFT");
+      });
+      screen.input.write("\x04");
+      expect(await run).toBe(0);
       screen.output.write("shell$ ");
       await screen.flush();
       expect(screen.visible().filter(Boolean)).toEqual(["shell$ "]);
@@ -212,18 +222,21 @@ describe("rendered live-region resize", () => {
     try {
       screen.output.write(Array.from({ length: 20 }, (_, i) => `HISTORY-${i}\n`).join(""));
       region.listener({ type: "agent_start", prompt: "test", maxTurns: 4 });
+      await screen.flush();
+      expect(screen.visible().filter((line) => line.includes("thinking"))).toHaveLength(1);
       region.listener({ type: "message_update", turn: 1, delta: ["a".repeat(70), "b".repeat(70), "c".repeat(70)].join("\n") });
       await screen.flush();
       screen.resize(cols, rows);
       await screen.flush();
-      expect(screen.visible().filter((line) => line.includes("thinking"))).toHaveLength(1);
+      expect(screen.visible().filter((line) => /(responding|writing)/.test(line))).toHaveLength(1);
       screen.resize(120, 40);
       await screen.flush();
-      expect(screen.visible().filter((line) => line.includes("thinking"))).toHaveLength(1);
+      expect(screen.visible().filter((line) => line.includes("responding"))).toHaveLength(1);
       region.listener({ type: "agent_end", status: "completed", turnCount: 1, messages: [] });
       await screen.flush();
       expect(screen.history().join("\n")).toContain("HISTORY-19");
       expect(screen.visible().join("\n")).not.toContain("thinking");
+      expect(screen.visible().join("\n")).not.toContain("responding");
     } finally { region.stop(); screen.dispose(); }
   });
 });

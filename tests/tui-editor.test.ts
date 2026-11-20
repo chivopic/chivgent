@@ -80,25 +80,35 @@ describe("raw terminal editor events", () => {
     return { controller, rendered, commits };
   }
 
-  it("supports arrows, home, newlines, Ctrl+S and exact pasted text", () => {
+  it("supports arrows, home, Ctrl+O newlines, Enter submit, and exact pasted text", () => {
     const { controller, commits } = harness();
-    controller.receive(Buffer.from("first\rsecond\rthird"));
+    controller.receive(Buffer.from("first\u000fsecond\u000fthird"));
     controller.receive(Buffer.from("\u001b[A\u001b[H"));
     controller.receive(Buffer.from("NEW "));
-    controller.receive(Buffer.from("\u0013"));
+    controller.receive(Buffer.from("\r"));
     expect(commits).toEqual(["first\nNEW second\nthird"]);
   });
 
   it("understands bracketed paste and escaped terminal controls", () => {
     const { controller, commits } = harness();
     controller.receive(Buffer.from("\u001b[200~hello\r\nline 2"));
-    controller.receive(Buffer.from("\u001b[201~\u0013"));
+    controller.receive(Buffer.from("\u001b[201~\r"));
     expect(commits).toEqual(["hello\nline 2"]);
   });
 
   it("Ctrl+C cancels the draft and stops processing queued keystrokes", () => {
     const { controller, commits } = harness();
-    controller.receive(Buffer.from("SECRET\u0003\u0013"));
+    controller.receive(Buffer.from("SECRET\u0003\r"));
     expect(commits).toEqual([undefined]);
+  });
+
+  it("never emits SGR mouse tracking or DSR cursor position queries", () => {
+    const { controller, rendered } = harness();
+    controller.receive(Buffer.from("draft"));
+    controller.cancel();
+    const output = rendered.join("");
+    expect(output).not.toContain("\u001b[?1000h");
+    expect(output).not.toContain("\u001b[?1006h");
+    expect(output).not.toContain("\u001b[6n");
   });
 });

@@ -2,14 +2,15 @@ import { formatTokens } from "../providers/usage.js";
 import { terminalText, fitLine } from "./text.js";
 import type { AgentEvent, AgentEventListener } from "../events.js";
 import type { OutputStream } from "../render.js";
+import { ANIMATION_TICK_MS, styleLiveLine } from "./animation.js";
 import { Painter } from "./paint.js";
 import { EMPTY_STATE, reduce, type ViewState } from "./state.js";
-import { transcriptLines, view } from "./view.js";
+import { layoutView, transcriptLines } from "./view.js";
 import { colorizeActivity } from "./activity.js";
 import { formatTerminalMarkdown, StreamingMarkdownFormatter } from "./markdown.js";
 
-/** How often the region redraws on its own, so elapsed time advances. */
-const TICK_MS = 1000;
+/** How often the region redraws on its own when animations are disabled. */
+const STATIC_TICK_MS = 1000;
 const DEFAULT_WIDTH = 80;
 
 export interface LiveRegionOptions {
@@ -23,6 +24,10 @@ export interface LiveRegionOptions {
   readonly tickMs?: number;
   /** Color applied only to already-sanitized tool records on a real terminal. */
   readonly color?: boolean;
+  /** Animate spinners and status shimmer while a run is active. Defaults to true. */
+  readonly animate?: boolean;
+  /** Wrap frame updates in DEC Mode 2026 synchronized output sequences. */
+  readonly synchronizedOutput?: boolean;
   /** Format interactive answers, never change piped or machine-readable output. */
   readonly markdown?: boolean;
 }
@@ -50,7 +55,11 @@ export interface LiveRegion {
  */
 export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
   const clock = options.now ?? (() => Date.now());
-  const painter = new Painter({ stream: options.stream });
+  const animate = options.animate ?? true;
+  const painter = new Painter({
+    stream: options.stream,
+    ...(options.synchronizedOutput === undefined ? {} : { synchronizedOutput: options.synchronizedOutput }),
+  });
   let state: ViewState = EMPTY_STATE;
   let timer: NodeJS.Timeout | undefined;
   let paused = false;
@@ -60,24 +69,29 @@ export function createLiveRegion(options: LiveRegionOptions): LiveRegion {
 
   const paint = (): void => {
     if (paused) return;
+    const now = clock();
     const viewState = (options.answerStream !== undefined && streamedInThisTurn)
       ? {
           ...state,
           run: state.run ? { ...state.run, text: pendingStreamBuffer } : undefined,
         }
       : state;
-    painter.render(view(viewState, {
+    const elapsedMs = viewState.run === undefined ? 0 : now - viewState.run.startedAt;
+    const lines = layoutView(viewState, {
       // Leave one cell spare to avoid a terminal's pending autowrap state.
       width: Math.max(1, options.width() - 1),
       height: Math.max(1, (options.height?.() ?? 24) - 2),
-      now: clock(),
-    }));
+      now,
+      animate,
+    }).map(line => styleLiveLine(line, elapsedMs, options.color === true, animate));
+    painter.render(lines);
   };
   const startClock = (): void => {
     if (timer !== undefined) {
       return;
     }
-    timer = setInterval(paint, options.tickMs ?? TICK_MS);
+    const intervalMs = options.tickMs ?? (animate ? ANIMATION_TICK_MS : STATIC_TICK_MS);
+    timer = setInterval(paint, intervalMs);
     // Never a reason to keep the process alive: the region describes work that
     // is happening elsewhere.
     timer.unref?.();

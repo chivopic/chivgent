@@ -339,6 +339,7 @@ export async function main(argv: readonly string[]): Promise<number> {
         answerStream: process.stdout,
         markdown: process.stdout.isTTY === true && process.env.TERM !== "dumb",
         color: terminalColorEnabled(process.stderr.isTTY === true, process.env),
+        synchronizedOutput: process.stderr.isTTY === true && process.env.TERM !== "dumb",
       })
     : undefined;
   const renderer = options.json
@@ -431,7 +432,6 @@ export async function main(argv: readonly string[]): Promise<number> {
         // which would otherwise prefix the first event with escape codes.
         output: options.json || richTui ? process.stderr : process.stdout,
         tui: richTui,
-        inlineComposer: richTui,
         stderr: process.stderr,
         banner: richTui ? welcome({
           version: VERSION,

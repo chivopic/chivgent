@@ -21,11 +21,11 @@ describe("consent and real-terminal git diff review", () => {
     vi.stubEnv("TERM", "xterm-256color");
     const screen = terminalHarness(84, 24);
     const read = vi.fn(async () => "+changed");
-    const repl = runRepl({session:session(), ...screen, tui:true, inlineComposer:true,
+    const repl = runRepl({session:session(), ...screen, tui:true,
       stderr:screen.output, gitDiffReader:read});
     try {
       await vi.waitFor(() => expect(screen.bytes()).toContain("/help for shortcuts"));
-      screen.input.write("/gitdiff\r");
+      screen.input.write("/diff\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("Approve once?"));
       screen.input.write("n"); // single-key denial
       await vi.waitFor(() => expect(screen.bytes()).toContain("review denied"));
@@ -40,11 +40,11 @@ describe("consent and real-terminal git diff review", () => {
     const screen = terminalHarness(84, 24);
     const read = vi.fn(async (_cwd:string, _mode:string) =>
       "diff --git a/src/a.ts b/src/a.ts\n@@ -1 +1 @@\n-old\n+new");
-    const repl = runRepl({session:session(), ...screen, tui:true, inlineComposer:true,
+    const repl = runRepl({session:session(), ...screen, tui:true,
       stderr:screen.output, gitDiffReader:read});
     try {
       await vi.waitFor(() => expect(screen.bytes()).toContain("/help for shortcuts"));
-      screen.input.write("/gitdiff --staged\r");
+      screen.input.write("/diff --staged\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("Approve once?"));
       expect(read).not.toHaveBeenCalled();
       screen.input.write("y");
