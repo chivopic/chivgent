@@ -122,6 +122,38 @@ describe("local CLI session setup", () => {
     });
   });
 
+  it("refreshes the UTC date between web search prompts and preserves continuation within a prompt", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-20T23:59:00Z"));
+      const continuation = { provider: "test", reasoning: "first response" };
+      const llm = new FakeLLMClient([
+        assistant("", [{ id: "s1", name: "web_search", arguments: { query: "today" } }], continuation),
+        assistant("Could not search."),
+        assistant("Done"),
+      ]);
+      const session = createLocalSession({
+        options: parseCliArgs(["--web-search", "https://search.example"], {}),
+        cwd: "/workspace",
+        llm,
+        permissionPolicy: new PermissionPolicy("ask-first", async () => false),
+        restored: { resumed: false },
+      });
+      session.subscribe((event) => {
+        if (event.type === "tool_execution_end") vi.setSystemTime(new Date("2026-11-21T00:01:00Z"));
+      });
+      await session.prompt("What changed today?");
+      await session.prompt("What about today?");
+
+      expect(llm.requests[0]?.systemPrompt).toContain("Current date (UTC): 2026-11-20");
+      expect(llm.requests[1]?.systemPrompt).toContain("Current date (UTC): 2026-11-20");
+      expect(llm.requests[1]?.continuation).toEqual(continuation);
+      expect(llm.requests[2]?.systemPrompt).toContain("Current date (UTC): 2026-11-21");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("passes the correct capability instructions to the model", async () => {
     const llm = new FakeLLMClient([assistant("Done")]);
     const session = createLocalSession({
