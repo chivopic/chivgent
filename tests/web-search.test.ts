@@ -6,6 +6,7 @@ import { WebSearchTool } from "../src/tools/web-search.js";
 import { LocalWorkspace } from "../src/workspace.js";
 import {
   boundWebSearchResults,
+  DeepSeekSearchBackend,
   SearxngBackend,
   WebSearchBackendError,
   type WebSearchBackend,
@@ -201,6 +202,48 @@ describe("SearxngBackend", () => {
     }
     expect(() => new SearxngBackend({ baseURL: "file:///etc/passwd" })).toThrow(/http or https/);
     expect(() => new SearxngBackend({ baseURL: "https://user:pass@search.example" })).toThrow(/credentials/);
+  });
+});
+
+describe("DeepSeek Search", () => {
+  it("sends only the bounded query and count to the official endpoint and exposes returned evidence", async () => {
+    const request = vi.fn<typeof fetch>(async () => Response.json({
+      results: [{
+        title: "Python Release Python 3.15.2",
+        url: "https://www.python.org/downloads/release/python-3152/",
+        snippet: "Release date: Oct. 25, 2026.",
+        summary: "Second maintenance release of Python 3.15.",
+        content: "Full article is ignored.",
+        date: "2026-10-25T00:00:00Z",
+      }],
+    }));
+    const backend = new DeepSeekSearchBackend({ apiKey: "test-key", fetch: request });
+    const query = "Python 3.15.2 site:python.org";
+    const result = await backend.search({ query, maxResults: 3 });
+    const [url, options] = request.mock.calls[0]!;
+    expect(String(url)).toBe("https://api.deepseek.com/v1/tools/search");
+    expect(options).toMatchObject({ method: "POST", redirect: "error", credentials: "omit" });
+    expect(new Headers(options?.headers).get("authorization")).toBe("Bearer test-key");
+    expect(JSON.parse(String(options?.body))).toEqual({ query, count: 3 });
+    expect(result.results).toEqual([{
+      title: "Python Release Python 3.15.2",
+      url: "https://www.python.org/downloads/release/python-3152/",
+      snippet: "Release date: Oct. 25, 2026. Second maintenance release of Python 3.15.",
+      publishedDate: "2026-10-25T00:00:00Z",
+    }]);
+  });
+
+  it("rejects an over-limit Unicode query before approval or transport", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const authorize = vi.fn(async () => true);
+    const backend = new DeepSeekSearchBackend({ apiKey: "test-key", fetch: fetcher });
+    const tool = new WebSearchTool({ backend, authorize });
+    const query = "字".repeat(129);
+    const result = await tool.execute({ query }, { workspace: new LocalWorkspace(process.cwd()) });
+    expect(tool.inputSchema.properties.query.maxLength).toBe(128);
+    expect(result).toMatchObject({ isError: true, content: expect.stringContaining("1-128") });
+    expect(authorize).not.toHaveBeenCalled();
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });
 

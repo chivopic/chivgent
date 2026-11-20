@@ -27,6 +27,7 @@ export interface WebSearchResponse {
 
 export interface WebSearchBackend {
   readonly name: string;
+  readonly queryCharacters?: number;
   search(request: WebSearchRequest): Promise<WebSearchResponse>;
 }
 
@@ -48,6 +49,7 @@ export type WebSearchFailure =
   | "timeout"
   | "rate_limited"
   | "http"
+  | "invalid_query"
   | "invalid_response"
   | "network";
 
@@ -109,80 +111,128 @@ export class SearxngBackend implements WebSearchBackend {
   }
 
   async search(request: WebSearchRequest): Promise<WebSearchResponse> {
-    const timeout = AbortSignal.timeout(this.timeoutMs);
-    const signal = request.signal === undefined
-      ? timeout
-      : AbortSignal.any([request.signal, timeout]);
-    const throwIfInterrupted = (): void => {
-      if (request.signal?.aborted) {
-        throw new WebSearchBackendError("aborted", "the search was cancelled");
-      }
-      if (timeout.aborted) {
-        throw new WebSearchBackendError(
-          "timeout",
-          `the search provider did not respond within ${Math.ceil(this.timeoutMs / 1_000)} seconds`,
-        );
-      }
-    };
     const url = new URL(this.searchURL);
     url.searchParams.set("q", request.query);
     url.searchParams.set("format", "json");
-
-    let response: Response;
-    try {
-      response = await this.fetcher(url, {
-        method: "GET",
-        headers: {
-          accept: "application/json",
-          ...(this.token === undefined ? {} : { authorization: `Bearer ${this.token}` }),
-        },
-        redirect: "error",
-        signal,
-      });
-    } catch {
-      throwIfInterrupted();
-      throw new WebSearchBackendError("network", "could not reach the search provider");
-    }
-
-    if (!response.ok) {
-      if (response.status === 429) {
-        throw new WebSearchBackendError(
-          "rate_limited",
-          "the search provider rate-limited the request (HTTP 429)",
-        );
-      }
-      throw new WebSearchBackendError(
-        "http",
-        `the search provider returned HTTP ${response.status}`,
-      );
-    }
-
-    let payload: unknown;
-    try {
-      payload = JSON.parse(await readBoundedBody(response));
-    } catch (error: unknown) {
-      if (error instanceof WebSearchBackendError) throw error;
-      throwIfInterrupted();
-      throw new WebSearchBackendError(
-        "invalid_response",
-        "the search provider returned an invalid response",
-      );
-    }
-    const rawResults = typeof payload === "object" && payload !== null && !Array.isArray(payload)
-      ? (payload as Record<string, unknown>).results
-      : undefined;
-    if (!Array.isArray(rawResults)) {
-      throw new WebSearchBackendError(
-        "invalid_response",
-        "the search provider returned an invalid response",
-      );
-    }
-
-    return {
-      provider: this.name,
-      results: normalizeSearxngResults(rawResults, request.maxResults),
-    };
+    const results = await fetchSearchResults(this.fetcher, url, {
+      method: "GET",
+      headers: {
+        accept: "application/json",
+        ...(this.token === undefined ? {} : { authorization: `Bearer ${this.token}` }),
+      },
+    }, this.timeoutMs, request.signal);
+    return { provider: this.name, results: normalizeSearxngResults(results, request.maxResults) };
   }
+}
+
+export class DeepSeekSearchBackend implements WebSearchBackend {
+  readonly name = "DeepSeek Search (api.deepseek.com)";
+  readonly queryCharacters = 128;
+  private readonly fetcher: typeof fetch;
+
+  constructor(private readonly options: { readonly apiKey: string; readonly fetch?: typeof fetch }) {
+    this.fetcher = options.fetch ?? fetch;
+  }
+
+  async search(request: WebSearchRequest): Promise<WebSearchResponse> {
+    if ([...request.query].length > this.queryCharacters) {
+      throw new WebSearchBackendError("invalid_query", `DeepSeek Search queries are limited to ${this.queryCharacters} characters`);
+    }
+
+    // The model credential can only reach the official DeepSeek origin.
+    const results = await fetchSearchResults(this.fetcher, new URL("https://api.deepseek.com/v1/tools/search"), {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${this.options.apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ query: request.query, count: request.maxResults }),
+    }, DEFAULT_TIMEOUT_MS, request.signal);
+
+    const normalized = results.map((result) => {
+      if (typeof result !== "object" || result === null || Array.isArray(result)) return undefined;
+      const record = result as Record<string, unknown>;
+      const snippet = boundText(record.snippet, WEB_SEARCH_LIMITS.snippetCharacters);
+      const summary = boundText(record.summary, WEB_SEARCH_LIMITS.snippetCharacters);
+      return {
+        title: record.title,
+        url: record.url,
+        snippet: [snippet, summary === snippet ? "" : summary].filter(Boolean).join(" "),
+        publishedDate: record.date,
+      };
+    });
+    return { provider: this.name, results: boundWebSearchResults(normalized, request.maxResults) };
+  }
+}
+
+async function fetchSearchResults(
+  fetcher: typeof fetch,
+  url: URL,
+  init: RequestInit,
+  timeoutMs: number,
+  requestSignal?: AbortSignal,
+): Promise<readonly unknown[]> {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const signal = requestSignal === undefined
+    ? timeout
+    : AbortSignal.any([requestSignal, timeout]);
+  const throwIfInterrupted = (): void => {
+    if (requestSignal?.aborted) {
+      throw new WebSearchBackendError("aborted", "the search was cancelled");
+    }
+    if (timeout.aborted) {
+      throw new WebSearchBackendError(
+        "timeout",
+        `the search provider did not respond within ${Math.ceil(timeoutMs / 1_000)} seconds`,
+      );
+    }
+  };
+  throwIfInterrupted();
+
+  let response: Response;
+  try {
+    response = await fetcher(url, { ...init, redirect: "error", credentials: "omit", signal });
+  } catch {
+    throwIfInterrupted();
+    throw new WebSearchBackendError("network", "could not reach the search provider");
+  }
+
+  if (!response.ok) {
+    if (response.status === 429) {
+      throw new WebSearchBackendError(
+        "rate_limited",
+        "the search provider rate-limited the request (HTTP 429)",
+      );
+    }
+    throw new WebSearchBackendError(
+      "http",
+      `the search provider returned HTTP ${response.status}`,
+    );
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(await readBoundedBody(response));
+  } catch (error: unknown) {
+    if (error instanceof WebSearchBackendError) throw error;
+    throwIfInterrupted();
+    throw new WebSearchBackendError(
+      "invalid_response",
+      "the search provider returned an invalid response",
+    );
+  }
+  const rawResults = typeof payload === "object" && payload !== null && !Array.isArray(payload)
+    ? (payload as Record<string, unknown>).results
+    : undefined;
+  if (!Array.isArray(rawResults)) {
+    throw new WebSearchBackendError(
+      "invalid_response",
+      "the search provider returned an invalid response",
+    );
+  }
+
+  return rawResults;
 }
 
 /** Human-readable adapter identity without credentials or URL path. */

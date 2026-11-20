@@ -122,6 +122,35 @@ describe("local CLI session setup", () => {
     });
   });
 
+  it.each(["ask-first", "workspace"] as const)("grants only the configured search without prompting in %s", async (mode) => {
+    const approve = vi.fn(async () => false);
+    const fetcher = vi.fn(async () => Response.json({ results: [{ url: "https://example.test/source", title: "Evidence" }] }));
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      const policy = new PermissionPolicy(mode, approve);
+      const session = createLocalSession({
+        options: parseCliArgs(["--web-search", "https://search.example", "--approve-web-search", "--permission-mode", mode], {}),
+        cwd: "/workspace",
+        llm: new FakeLLMClient([
+          assistant("", [{ id: "search", name: "web_search", arguments: { query: "public facts" } }]),
+          assistant("Done"),
+          assistant("", [{ id: "next-search", name: "web_search", arguments: { query: "more public facts" } }]),
+          assistant("Done again"),
+        ]),
+        permissionPolicy: policy,
+        restored: { resumed: false },
+      });
+      await session.prompt("Search for public facts");
+      await session.prompt("Search for more public facts");
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(approve).not.toHaveBeenCalled();
+      await expect(policy.authorizeShell("curl https://example.test", "network")).resolves.toBe(false);
+      expect(approve).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("refreshes the UTC date between web search prompts and preserves continuation within a prompt", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {

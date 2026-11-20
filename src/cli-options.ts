@@ -62,12 +62,11 @@ export interface CliOptions {
   readonly approveAllShell: boolean;
   readonly shellBackend: ShellBackend;
   readonly shellNetwork: boolean;
-  /** Explicitly configured SearXNG endpoint; absent means no web search tool. */
-  readonly webSearch?: {
-    readonly url: string;
-    /** Bearer token from CHIVGENT_WEB_SEARCH_TOKEN, never argv. */
-    readonly token?: string;
-  };
+  /** Explicit backend and optional process-local approval for its queries. */
+  readonly webSearch?: (
+    | { readonly url: string; readonly token?: string }
+    | { readonly provider: "deepseek" }
+  ) & { readonly approved?: true };
   /** Explicit policy for tool approval boundaries; absent preserves legacy flags. */
   readonly permissionMode?: PermissionMode;
   /** Explicitly request the rich terminal interface. */
@@ -121,6 +120,7 @@ export function parseCliArgs(
   let shellBackend: ShellBackend = "auto";
   let shellNetwork = false;
   let webSearchURL: string | undefined;
+  let approveWebSearch = false;
   let permissionMode: PermissionMode | undefined;
   let tui = false;
   let simple = false;
@@ -197,8 +197,10 @@ export function parseCliArgs(
       shellNetwork = true;
     } else if (argument === "--web-search") {
       webSearchURL = readOptionValue(argv, index, "--web-search");
-      parseBackendURL(webSearchURL);
+      if (webSearchURL !== "deepseek") parseBackendURL(webSearchURL);
       index += 1;
+    } else if (argument === "--approve-web-search") {
+      approveWebSearch = true;
     } else if (argument === "--permission-mode") {
       permissionMode = parsePermissionMode(readOptionValue(argv, index, "--permission-mode"));
       index += 1;
@@ -247,6 +249,9 @@ export function parseCliArgs(
   if (webSearchURL !== undefined && connect !== undefined) {
     throw new TypeError("--web-search applies to local sessions and cannot be used with --connect.");
   }
+  if (approveWebSearch && webSearchURL === undefined) {
+    throw new TypeError("--approve-web-search requires --web-search.");
+  }
   if (permissionMode !== undefined && serve) {
     throw new TypeError("--permission-mode cannot be used with --serve because served sessions do not have an interactive approval channel.");
   }
@@ -284,11 +289,11 @@ export function parseCliArgs(
     shellNetwork,
     ...(webSearchURL === undefined ? {} : {
       webSearch: {
-        url: webSearchURL,
-        ...(environment.CHIVGENT_WEB_SEARCH_TOKEN === undefined ||
-            environment.CHIVGENT_WEB_SEARCH_TOKEN.length === 0
-          ? {}
-          : { token: environment.CHIVGENT_WEB_SEARCH_TOKEN }),
+        ...(webSearchURL === "deepseek" ? { provider: "deepseek" as const } : {
+          url: webSearchURL,
+          ...(environment.CHIVGENT_WEB_SEARCH_TOKEN ? { token: environment.CHIVGENT_WEB_SEARCH_TOKEN } : {}),
+        }),
+        ...(approveWebSearch ? { approved: true as const } : {}),
       },
     }),
     ...(permissionMode === undefined ? {} : { permissionMode }),
@@ -336,8 +341,8 @@ Options:
                    Interactive commands require individual confirmation.
   --shell-backend MODE  auto, native, or docker (default: auto; macOS uses native).
   --shell-network  Allow shell network access (explicit opt-in for either backend).
-  --web-search URL  Enable web_search through a SearXNG JSON endpoint. Ask-first
-                   and workspace modes prompt for each query.
+  --web-search URL|deepseek  Enable web_search through SearXNG or DeepSeek Search.
+  --approve-web-search  Approve queries to the configured backend for this process.
   --permission-mode MODE  ask-first, workspace, or unrestricted (network enabled).
   --approve-all-shell  Explicitly approve all shell commands this session;
                    use only with --allow-shell when individual prompts are unavailable.
