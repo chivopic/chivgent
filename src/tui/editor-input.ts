@@ -1,5 +1,5 @@
 import { StringDecoder } from "node:string_decoder";
-import { EditorDocument, EditorPainter, editorFrame, type EditorOutput, type EditorFrame } from "./editor.js";
+import { EditorDocument, EditorPainter, editorFrame, MAX_INLINE_WIDTH, type EditorOutput, type EditorFrame } from "./editor.js";
 import { slashSuggestions, type SlashSuggestion } from "./slash.js";
 
 const MOUSE_ENABLE = "\u001b[?1000h\u001b[?1002h\u001b[?1006h";
@@ -126,6 +126,9 @@ export class EditorController {
     const button = Number(answer[1]);
     const column = Number(answer[2]);
     const row = Number(answer[3]);
+    const frameWidth = this.options.submitOnEnter === true
+      ? Math.min(this.maxWidth() - 1, MAX_INLINE_WIDTH)
+      : this.maxWidth();
     if ((button & 64) !== 0) {
       // Wheel over a visible completion changes the selection; over a draft row
       // it moves the caret. Anywhere else belongs to the terminal's scrollback.
@@ -135,13 +138,13 @@ export class EditorController {
       const frameRow = this.frameRowAt(row);
       if (frameRow !== undefined) {
         const suggestion = this.lastFrame?.suggestionRows?.find(item => item.row === frameRow);
-        if (suggestion !== undefined && column >= 1 && column <= this.maxWidth()) {
+        if (suggestion !== undefined && column >= 1 && column <= frameWidth) {
           const max = this.suggestions().length - 1;
           this.completionIndex = Math.max(0, Math.min(max, this.completionIndex + direction * 3));
           return true;
         }
         const inputRow = this.lastFrame?.inputRows?.[frameRow - 1];
-        if (inputRow !== undefined) {
+        if (inputRow !== undefined && column >= 1 && column <= frameWidth) {
           for (let i = 0; i < 3; i += 1) this.document.moveVertical(direction);
           return true;
         }
@@ -161,7 +164,7 @@ export class EditorController {
     if (button !== 0 && button !== 32) return false;
     if (button === 32 && !this.mouseDragging) return false;
     if (this.originRow === undefined || this.lastFrame === undefined) return false;
-    if (column < 1 || column > this.maxWidth()) return false;
+    if (column < 1 || column > frameWidth) return false;
     const relative = row - 1 - this.originRow;
     const commandRow = this.lastFrame.suggestionRows?.find(item => item.row === relative);
     if (button === 0 && answer[4] === "M" && commandRow !== undefined) {
