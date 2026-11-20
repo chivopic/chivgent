@@ -92,7 +92,7 @@ chivgent --continue                                  # 这个目录里的上一�
 
 `--permission-mode` 在这个进程里代替那些开关。不能和 `--allow-writes`、`--allow-shell`、`--approve-all-shell`、`--shell-network` 一起用，也不能和 `--serve`、`--connect` 一起用。`/permissions` 查看或更改模式，但只有启动时选了模式的会话才行。这个选择不写进会话记录。恢复会话时用的是启动时选的模式，不是上次更宽的那个。
 
-`/plan` 是另一件事。它让 agent 停在只读工具和一份计划上。即使模型要求，写入、shell 和扩展工具也会被挡住。
+`/plan` 是另一件事。它允许只读工具和已配置的 `web_search`；搜索仍遵循当前权限模式的授权规则。即使模型要求，写入、shell 和扩展工具也会被挡住。
 
 ## 网页搜索
 

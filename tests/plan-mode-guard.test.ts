@@ -5,6 +5,7 @@ import { ReadFileTool } from "../src/tools/read-file.js";
 import { UpdatePlanTool } from "../src/tools/update-plan.js";
 import { QuestionTool } from "../src/tools/question.js";
 import { QuestionBroker } from "../src/questions.js";
+import { WebSearchTool } from "../src/tools/web-search.js";
 import { isParallelReadTool, isPlanModeTool } from "../src/tools/parallel.js";
 import type { Workspace } from "../src/workspace.js";
 import type { Tool } from "../src/tools/tool.js";
@@ -18,6 +19,49 @@ const workspace: Workspace = {
 };
 
 describe("Plan Mode execution guard", () => {
+  it("exposes configured web search and runs only an approved query", async () => {
+    const search = vi.fn(async () => ({ provider: "fake", results: [{ title: "QQQ", url: "https://example.com/qqq", snippet: "Quote" }] }));
+    const authorize = vi.fn(async (query: string) => query === "QQQ price");
+    const tool = new WebSearchTool({ backend: { name: "fake", search }, authorize });
+    const llm = new FakeLLMClient([
+      assistant("", [{ id: "approved", name: "web_search", arguments: { query: "QQQ price" } }]),
+      assistant("", [{ id: "denied", name: "web_search", arguments: { query: "private query" } }]),
+      assistant("Here is the result."),
+    ]);
+    const agent = new Agent({ systemPrompt: "system", maxTurns: 3, llm, tools: [tool], workspace, streaming: false });
+
+    const result = await agent.run("Find QQQ price", { planMode: true });
+
+    expect(llm.requests[0]?.tools.map(entry => entry.name)).toEqual(["web_search"]);
+    expect(llm.requests[0]?.systemPrompt).toContain("answer informational requests");
+    expect(authorize.mock.calls.map(call => call[0])).toEqual(["QQQ price", "private query"]);
+    expect(search).toHaveBeenCalledOnce();
+    expect(search).toHaveBeenCalledWith(expect.objectContaining({ query: "QQQ price" }));
+    expect(result.messages.find(message => message.role === "tool" && message.toolCallId === "approved"))
+      .toMatchObject({ isError: false, content: expect.stringContaining("https://example.com/qqq") });
+    expect(result.messages.find(message => message.role === "tool" && message.toolCallId === "denied"))
+      .toMatchObject({ isError: true, content: expect.stringContaining("No request was sent") });
+    expect(isParallelReadTool(tool)).toBe(false);
+  });
+
+  it("blocks a subclass impersonating web search", async () => {
+    const execute = vi.fn(async () => ({ content: "unsafe", isError: false }));
+    class ImpersonatedSearch extends WebSearchTool { override async execute() { return execute(); } }
+    const tool = new ImpersonatedSearch({ backend: { name: "fake", search: async () => ({ provider: "fake", results: [] }) } });
+    const llm = new FakeLLMClient([
+      assistant("", [{ id: "spoofed", name: "web_search", arguments: { query: "QQQ" } }]),
+      assistant("Blocked."),
+    ]);
+    const agent = new Agent({ systemPrompt: "system", maxTurns: 2, llm, tools: [tool], workspace, streaming: false });
+
+    const result = await agent.run("Find QQQ", { planMode: true });
+
+    expect(llm.requests[0]?.tools).toEqual([]);
+    expect(execute).not.toHaveBeenCalled();
+    expect(result.messages.find(message => message.role === "tool" && message.toolCallId === "spoofed"))
+      .toMatchObject({ isError: true, content: expect.stringContaining("Plan Mode blocked") });
+  });
+
   it("filters schemas and blocks a malicious write call even with a provider continuation", async () => {
     const execute = vi.fn(async () => ({ content: "changed", isError: false }));
     const writeLike: Tool = { name: "write_file", description: "write", inputSchema: { type: "object" }, execute };

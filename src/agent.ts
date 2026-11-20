@@ -508,7 +508,7 @@ export class Agent {
     let output: ToolOutput;
 
     if (state.planMode && !isPlanModeTool(tool)) {
-      output = { content: `Plan Mode blocked tool: ${toolCall.name}. Only built-in read tools, update_plan, and question can run.`, isError: true };
+      output = { content: `Plan Mode blocked tool: ${toolCall.name}. Only built-in read tools, configured web_search, update_plan, and question can run.`, isError: true };
     } else if (tool === undefined) {
       output = {
         content: `Unknown tool: ${toolCall.name}`,
@@ -635,7 +635,7 @@ export class Agent {
 }
 
 const INTERRUPTED_TOOL_RESULT = "Tool execution interrupted before completion.";
-const PLAN_MODE_PROMPT = `Plan Mode is active. Investigate using available built-in read tools, ask structured requirement questions with question when an answer is needed, then propose a concise plan. Do not modify files or run commands. Use update_plan for a checklist when useful, then wait for the user to turn Plan Mode off with /plan off before carrying out changes.`;
+const PLAN_MODE_PROMPT = `Plan Mode is active. Investigate using available built-in read tools and web_search when configured; answer informational requests using the available evidence. If current information is needed but web_search is unavailable, explain that a search backend must be configured with --web-search; do not claim the network is broken or that turning Plan Mode off enables search. For work requiring changes, ask structured requirement questions with question when an answer is needed and propose a concise plan. Do not modify files or run commands. Use update_plan for a checklist when useful, then wait for the user to turn Plan Mode off with /plan off before carrying out changes.`;
 
 /**
  * Ensure every function call has a corresponding output before history is
