@@ -37,6 +37,8 @@ export type CliEnvironment = NodeJS.ProcessEnv;
 export interface CliOptions {
   readonly prompt?: string;
   readonly provider: Provider;
+  /** The user supplied --provider or --model, so keep that startup selection. */
+  readonly explicitProviderSelection?: boolean;
   readonly model?: string;
   readonly baseURL?: string;
   readonly maxTurns: number;
@@ -100,6 +102,7 @@ export function parseCliArgs(
   registry: ProviderRegistry = defaultProviderRegistry,
 ): CliOptions {
   let provider: Provider = "openai";
+  let explicitProviderSelection = false;
   let requestedModel: string | undefined;
   let apiKey: string | undefined;
   let contextWindow = DEFAULT_CONTEXT_WINDOW;
@@ -141,9 +144,11 @@ export function parseCliArgs(
     } else if (argument === "--provider") {
       const value = readOptionValue(argv, index, "--provider");
       provider = parseProvider(value, registry);
+      explicitProviderSelection = true;
       index += 1;
     } else if (argument === "--model") {
       requestedModel = readOptionValue(argv, index, "--model");
+      explicitProviderSelection = true;
       index += 1;
     } else if (argument === "--api-key") {
       apiKey = readOptionValue(argv, index, "--api-key");
@@ -258,6 +263,7 @@ export function parseCliArgs(
   return {
     ...(promptParts.length === 0 ? {} : { prompt: promptParts.join(" ") }),
     provider,
+    ...(explicitProviderSelection ? { explicitProviderSelection } : {}),
     ...(model === undefined ? {} : { model }),
     ...(baseURL === undefined ? {} : { baseURL }),
     maxTurns:

@@ -1,4 +1,6 @@
 import type { CliOptions } from "../cli-options.js";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CredentialResolver } from "../auth/credentials.js";
 import { EnvCredentialSource } from "../auth/env-credentials.js";
@@ -50,6 +52,78 @@ export class InteractiveProvider implements SignIn, ProviderControl {
   get model(): string | undefined { return this.active.model; }
   ready(): boolean { return this.llm.ready; }
   providerIds(): readonly string[] { return this.registry.ids(); }
+
+  get missingSetup(): readonly ("model" | "endpoint")[] {
+    const fields: ("model" | "endpoint")[] = [];
+    if (this.active.model === undefined) fields.push("model");
+    if (this.registry.get(this.provider).requiresBaseURL && this.active.baseURL === undefined) fields.push("endpoint");
+    return fields;
+  }
+
+  private get setupFile(): string { return path.join(path.dirname(this.authFile), "model-setup.json"); }
+
+  async rememberSetup(): Promise<void> {
+    const { provider, model, baseURL } = this.active;
+    if (!this.ready() || model === undefined) return;
+    const file = this.setupFile;
+    const temp = `${file}.${randomUUID()}.tmp`;
+    await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+    try {
+      const endpoint = this.registry.get(provider).requiresBaseURL ? baseURL : undefined;
+      await writeFile(temp, `${JSON.stringify({ provider, model, baseURL: endpoint }, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+      await rename(temp, file);
+    } finally {
+      await rm(temp, { force: true });
+    }
+  }
+
+  async restoreStartupSetup(allowSwitch: boolean): Promise<void> {
+    const file = this.setupFile;
+    let contents: string;
+    try {
+      contents = await readFile(file, "utf8");
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw new Error(`Could not read ${file}.`, { cause: error });
+    }
+
+    let saved: Partial<Choice> | undefined;
+    try { saved = JSON.parse(contents) as Partial<Choice> | undefined; }
+    catch (error: unknown) { throw new Error(`Invalid model setup in ${file}.`, { cause: error }); }
+    if (typeof saved?.provider !== "string" || typeof saved.model !== "string" || !saved.model || /\s/.test(saved.model)
+      || (saved.baseURL !== undefined && (typeof saved.baseURL !== "string" || !isHttpEndpoint(saved.baseURL)))) {
+      throw new Error(`Invalid model setup in ${file}.`);
+    }
+    const id = saved.provider;
+    if (!this.registry.has(id) || (!allowSwitch && this.provider !== id)) return;
+
+    const definition = this.registry.get(id);
+    const model = firstValue(this.environment, definition.modelEnvKeys) ?? saved.model;
+    const baseURL = firstValue(this.environment, definition.baseUrlEnvKeys) ?? saved.baseURL ?? definition.defaultBaseURL;
+    if (this.ready() && model === this.active.model && baseURL === this.active.baseURL) return;
+    if (definition.requiresBaseURL && baseURL === undefined) return;
+    const selected = await this.configure(id, model, baseURL);
+    if (!selected.ok) throw new Error(selected.message.trim());
+  }
+
+  /** Reuse an existing credential when the implicit startup Provider has none. */
+  async useConfiguredFallback(startupProvider: string): Promise<void> {
+    const candidates = this.registry.ids().filter((id) => id !== startupProvider);
+    const savedOAuth = await readOAuthCredentials(this.oauthFile);
+    for (const id of candidates) {
+      const definition = this.registry.get(id);
+      const model = firstValue(this.environment, definition.modelEnvKeys) ?? definition.defaultModel;
+      const baseURL = firstValue(this.environment, definition.baseUrlEnvKeys) ?? definition.defaultBaseURL;
+      if (model === undefined || (definition.requiresBaseURL && baseURL === undefined)) continue;
+
+      const key = await this.credentialResolver(id).resolve(definition);
+      if (key === undefined && !savedOAuth.some((item) => item.provider === id)) continue;
+      const selected = await this.configure(id, model, baseURL);
+      if (!selected.ok) throw new Error(selected.message.trim());
+      if (this.ready()) return;
+    }
+  }
+
   async needsApiKey(): Promise<boolean> {
     if ((await this.credentialResolver(this.active.provider).resolve(this.registry.get(this.active.provider))) !== undefined) return false;
     if ((this.active.provider === "openai" || this.active.provider === "xai") && this.active.model !== undefined) {
@@ -68,11 +142,17 @@ export class InteractiveProvider implements SignIn, ProviderControl {
     try {
       if (provider === "openai") await signInOpenAI({ appName: "Chivgent", file: this.oauthFile, signal });
       else await signInXAI({ file: this.oauthFile, write: (text) => process.stderr.write(text), signal });
+      signal?.throwIfAborted();
       let model = this.active.model;
       if (provider === "openai") {
         const credential = (await readOAuthCredentials(this.oauthFile)).find((item) => item.provider === provider);
         if (!credential) return "OAuth credential was not saved. Sign in again.\n";
-        const response = await fetch("https://api.openai.com/v1/models", { headers: { authorization: `Bearer ${credential.accessToken}` }, redirect: "error", signal: AbortSignal.timeout(15_000) });
+        const timeout = AbortSignal.timeout(15_000);
+        const response = await fetch("https://api.openai.com/v1/models", {
+          headers: { authorization: `Bearer ${credential.accessToken}` },
+          redirect: "error",
+          signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
+        });
         if (!response.ok) throw new Error(`Could not load ChatGPT plan models (${response.status}).`);
         const body = await response.json() as { models?: Array<{ slug?: string; visibility?: string }> };
         const available = body.models?.filter((item) => item.visibility === "list" && typeof item.slug === "string").map((item) => item.slug as string) ?? [];
@@ -85,7 +165,7 @@ export class InteractiveProvider implements SignIn, ProviderControl {
       this.llm.set(new OAuthRefreshingLLMClient(provider, model ?? "", this.oauthFile));
       return undefined;
     } catch (error: unknown) {
-      return `${error instanceof Error ? error.message : "OAuth sign-in failed."}\n`;
+      return signal?.aborted ? "Subscription sign-in cancelled.\n" : `${error instanceof Error ? error.message : "OAuth sign-in failed."}\n`;
     }
   }
 
@@ -130,34 +210,31 @@ export class InteractiveProvider implements SignIn, ProviderControl {
     return `Current: ${current}${this.llm.ready ? " · ready" : " · setup needed"}\n${entries.join("\n")}\nUse /provider NAME to switch, /model MODEL to set its model, /endpoint URL for a custom endpoint, and /login for its key.\n`;
   }
 
-  async select(argument: string): Promise<ProviderSelection> {
+  async select(argument: string, mode?: "switch" | "setup"): Promise<ProviderSelection> {
     const id = argument.trim();
     if (!this.registry.has(id)) {
       return { ok: false, message: "Unknown Provider. Use /provider to see the available choices.\n" };
     }
-    return this.configure(id);
+    return this.configure(id, undefined, undefined, mode);
   }
 
-  async changeModel(model: string): Promise<ProviderSelection> {
+  async changeModel(model: string, mode?: "switch" | "setup"): Promise<ProviderSelection> {
     const value = model.trim();
     if (value.length === 0 || /\s/.test(value)) {
       return { ok: false, message: "Use /model MODEL (one model id).\n" };
     }
-    return this.configure(this.active.provider, value, this.active.baseURL);
+    return this.configure(this.active.provider, value, this.active.baseURL, mode);
   }
 
-  async changeEndpoint(baseURL: string): Promise<ProviderSelection> {
+  async changeEndpoint(baseURL: string, mode?: "switch" | "setup"): Promise<ProviderSelection> {
     const value = baseURL.trim();
     if (!this.registry.get(this.active.provider).requiresBaseURL) {
       return { ok: false, message: "The current Provider has a built-in endpoint. Switch to openai-compatible first.\n" };
     }
-    try {
-      const url = new URL(value);
-      if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error();
-    } catch {
+    if (!isHttpEndpoint(value)) {
       return { ok: false, message: "Use /endpoint with an http:// or https:// URL.\n" };
     }
-    return this.configure(this.active.provider, this.active.model, value);
+    return this.configure(this.active.provider, this.active.model, value, mode);
   }
 
   async submit(apiKey: string): Promise<string | undefined> {
@@ -194,7 +271,12 @@ export class InteractiveProvider implements SignIn, ProviderControl {
     return undefined;
   }
 
-  private async configure(id: string, requestedModel?: string, requestedBaseURL?: string): Promise<ProviderSelection> {
+  private async configure(
+    id: string,
+    requestedModel?: string,
+    requestedBaseURL?: string,
+    mode: "switch" | "setup" = "switch",
+  ): Promise<ProviderSelection> {
     const definition = this.registry.get(id);
     const previous = this.choices.get(id);
     const model = requestedModel ?? previous?.model ?? firstValue(this.environment, definition.modelEnvKeys)
@@ -208,7 +290,7 @@ export class InteractiveProvider implements SignIn, ProviderControl {
       const missing = [model === undefined ? "/model MODEL" : undefined,
         definition.requiresBaseURL && baseURL === undefined ? "/endpoint URL" : undefined].filter(Boolean).join(" and ");
       this.llm.clear(`Configure ${id} with ${missing}.`);
-      return { ok: true, message: `Selected ${id}. Set ${missing} to continue.\n` };
+      return { ok: true, message: mode === "setup" ? "" : `Selected ${id}. Set ${missing} to continue.\n` };
     }
     if ((id === "openai" || id === "xai") && this.oauthModes.has(id)) {
       if (id === "xai" && baseURL !== undefined && baseURL !== "https://api.x.ai/v1") {
@@ -226,14 +308,17 @@ export class InteractiveProvider implements SignIn, ProviderControl {
       const message = error instanceof Error ? error.message : String(error);
       return { ok: false, message: `Could not select ${id}: ${message}\n` };
     }
-    if (typeof client === "string" && !client.startsWith(`No API key for ${id}.`)) {
-      return { ok: false, message: `Could not select ${id}: ${client}\n` };
+    const credentialError = typeof client === "string" && !client.startsWith(`No API key for ${id}.`)
+      ? client.trim() : undefined;
+    if (credentialError !== undefined && mode === "switch") {
+      return { ok: false, message: `Could not select ${id}: ${credentialError}\n` };
     }
     this.active = choice;
     this.choices.set(id, choice);
     if (typeof client === "string") {
-      const guidance = `API key needed for ${id}.`;
+      const guidance = credentialError ?? `API key needed for ${id}.`;
       this.llm.clear(guidance);
+      if (mode === "setup") return { ok: true, message: credentialError === undefined ? "" : `${credentialError}\n` };
       return { ok: true, message: `Selected ${id} / ${model}. ${guidance}\n` };
     }
     this.llm.set(client);
@@ -257,5 +342,14 @@ export class InteractiveProvider implements SignIn, ProviderControl {
     return { ...rest, provider: choice.provider, ...(choice.model === undefined ? {} : { model: choice.model }),
       ...(choice.baseURL === undefined ? {} : { baseURL: choice.baseURL }),
       ...(apiKey === undefined ? {} : { apiKey }) };
+  }
+}
+
+function isHttpEndpoint(value: string): boolean {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
   }
 }

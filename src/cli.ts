@@ -256,10 +256,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
 
   const configured = await createConfiguredClient(options);
-  // A missing key used to end the run here, which left no way to fix it from
-  // inside chivgent. An interactive session starts anyway and /login fills it
-  // in; anything non-interactive still has nobody to ask, so it still stops.
-  const signedOutMessage =
+  let signedOutMessage =
     typeof configured === "string" ? configured : undefined;
   if (signedOutMessage !== undefined && (!interactive || options.serve)) {
     process.stderr.write(`${signedOutMessage}\n`);
@@ -296,7 +293,25 @@ export async function main(argv: readonly string[]): Promise<number> {
     : undefined;
   permissionPolicy?.setApproval((action, signal, context) => shellApproval?.approveDecision(action, signal, context) ?? Promise.resolve({ approved: false, reason: "unavailable" }));
 
-  const providerControl = interactive ? new InteractiveProvider(options, llm) : undefined;
+  const providerControl = interactive ? new InteractiveProvider(options, llm, undefined, process.env) : undefined;
+  const implicitTerminalSetup = providerControl !== undefined && !options.serve && !options.json
+    && !options.explicitProviderSelection && options.apiKey === undefined;
+  const maySwitchProvider = signedOutMessage?.startsWith(`No API key for ${options.provider}.`) === true;
+  if (implicitTerminalSetup && (providerControl.ready() || maySwitchProvider)) {
+    try {
+      await providerControl.restoreStartupSetup(maySwitchProvider);
+    } catch (error: unknown) {
+      process.stderr.write(`Could not reuse Provider configuration: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+    if (maySwitchProvider && !providerControl.ready()) {
+      try {
+        await providerControl.useConfiguredFallback(options.provider);
+      } catch (error: unknown) {
+        process.stderr.write(`Could not find a configured Provider: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
+    }
+    signedOutMessage = providerControl.ready() ? undefined : llm.guidance;
+  }
   const modelSelection = () => ({
     provider: providerControl?.provider ?? options.provider,
     model: providerControl === undefined ? options.model : providerControl.model,
@@ -366,6 +381,8 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
 
   if (interactive) {
+    const offerProviderSetup = !options.json && signedOutMessage !== undefined;
+    const selection = modelSelection();
     try {
       return await runRepl({
         session,
@@ -374,6 +391,8 @@ export async function main(argv: readonly string[]): Promise<number> {
         ...(liveRegion === undefined ? {} : { liveRegion }),
         signIn: providerControl,
         providers: providerControl,
+        offerProviderSetup,
+        ...(!options.json && providerControl !== undefined ? { rememberProviderSetup: () => providerControl.rememberSetup() } : {}),
         compactionEnabled: options.compaction,
         providerName: options.provider,
         modelName: options.model,
@@ -416,17 +435,17 @@ export async function main(argv: readonly string[]): Promise<number> {
         stderr: process.stderr,
         banner: richTui ? welcome({
           version: VERSION,
-          provider: options.provider,
-          ...(options.model === undefined ? {} : { model: options.model }),
+          provider: selection.provider,
+          ...(selection.model === undefined ? {} : { model: selection.model }),
           cwd,
           resumed: restored.resumed,
-          signedOut: signedOutMessage !== undefined,
-          ...(options.model === undefined ? { setupIssue: "model" as const }
-            : options.provider === "openai-compatible" && options.baseURL === undefined
+          signedOut: signedOutMessage !== undefined && !offerProviderSetup,
+          ...(!offerProviderSetup && selection.model === undefined ? { setupIssue: "model" as const }
+            : !offerProviderSetup && providerControl?.missingSetup.includes("endpoint")
               ? { setupIssue: "base-url" as const } : {}),
           width: terminalWidth(process.stderr),
           color: terminalColorEnabled(process.stderr.isTTY === true, process.env),
-        }) : banner(options, cwd, restored.resumed, signedOutMessage),
+        }) : banner(selection, cwd, restored.resumed, offerProviderSetup ? undefined : signedOutMessage),
         ...(store === undefined ? {} : { sessionFile: store.location(session.id) }),
         ...(registry === undefined
           ? {}
@@ -724,7 +743,7 @@ async function listSessions(
 }
 
 function banner(
-  options: CliOptions,
+  options: { readonly provider: string; readonly model?: string },
   cwd: string,
   resumed: boolean,
   signedOutMessage?: string,

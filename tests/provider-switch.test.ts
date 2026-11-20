@@ -51,10 +51,29 @@ async function setup() {
     options, cwd: directory, llm, modelSelection: () => control,
     restored: { resumed: false },
   });
-  return { control, session, authFile, requests };
+  return { control, session, authFile, requests, registry };
 }
 
 describe("interactive Provider selection", () => {
+  it("restores a configured model and endpoint with its saved key after restart", async () => {
+    const { control, authFile, registry } = await setup();
+    await control.select("custom");
+    await control.changeModel("vendor-model");
+    await control.changeEndpoint("https://example.test/v1");
+    expect(await control.submit("fake-custom-key")).toBeUndefined();
+    await control.rememberSetup();
+
+    const options = parseCliArgs(["--provider", "first"], {}, registry);
+    const llm = new DeferredLLMClient("No key");
+    const restarted = new InteractiveProvider(options, llm, registry, {}, authFile);
+    await restarted.restoreStartupSetup(true);
+    expect(restarted).toMatchObject({ provider: "custom", model: "vendor-model" });
+    expect(restarted.ready()).toBe(true);
+    expect(await llm.complete({ systemPrompt: "", messages: [], tools: [] })).toMatchObject({
+      message: { content: "custom/vendor-model @ https://example.test/v1" },
+    });
+  });
+
   it("switches clients without losing conversation history, then restores a previous Provider", async () => {
     const { control, session, authFile, requests } = await setup();
     expect((await control.select("first")).ok).toBe(true);

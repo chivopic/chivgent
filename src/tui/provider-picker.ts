@@ -1,16 +1,24 @@
 import { fitLine, terminalText } from "./text.js";
 import { EditorPainter, type EditorFrame, type EditorOutput } from "./editor.js";
 
-/**
- * Provider chooser for `/login`. It lists the same ids as `/provider` and is
- * painted inline, so it works in the readline TUI and in the inline composer.
- */
+export function providerPickerLabel(id: string): string {
+  return id === "deepseek" ? "deepseek (Recommended)" : id;
+}
+
+interface PickerLabels {
+  readonly title: string;
+  readonly item: (id: string) => string;
+}
+
+const LOGIN_LABELS: PickerLabels = { title: "Select a Provider for /login", item: providerPickerLabel };
+
 export function providerPickerFrame(
   providerIds: readonly string[],
   selected: number,
   active: string,
   width: number,
   height: number,
+  labels = LOGIN_LABELS,
 ): EditorFrame {
   const cellWidth = Math.max(1, width - 1);
   const limit = Math.max(1, Math.min(providerIds.length, height - 3));
@@ -20,7 +28,7 @@ export function providerPickerFrame(
     Math.max(0, providerIds.length - limit),
   ));
   const visible = providerIds.slice(start, start + limit);
-  const lines = [fitLine("┌─ Select a Provider for /login", cellWidth)];
+  const lines = [fitLine(`┌─ ${terminalText(labels.title)}`, cellWidth)];
   if (visible.length === 0) {
     lines.push(fitLine("│ No Providers are available.", cellWidth));
   }
@@ -28,7 +36,7 @@ export function providerPickerFrame(
     const itemIndex = start + index;
     const marker = itemIndex === safeSelected ? "❯" : " ";
     const current = id === active ? "●" : "○";
-    lines.push(fitLine(`│ ${marker} ${current} ${terminalText(id)}`, cellWidth));
+    lines.push(fitLine(`│ ${marker} ${current} ${terminalText(labels.item(id))}`, cellWidth));
   });
   lines.push(fitLine("└─ ↑/↓ choose · Enter select · Esc cancel", cellWidth));
   return {
@@ -51,6 +59,7 @@ export class ProviderPickerController {
     private readonly providerIds: readonly string[],
     private readonly active: string,
     private readonly done: (provider: string | undefined) => void,
+    private readonly labels = LOGIN_LABELS,
   ) {
     this.painter = new EditorPainter(output);
     const current = providerIds.indexOf(active);
@@ -127,6 +136,7 @@ export class ProviderPickerController {
       this.active,
       Math.max(8, this.output.columns ?? 80),
       Math.max(6, this.output.rows ?? 24),
+      this.labels,
     ));
   }
 

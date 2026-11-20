@@ -12,7 +12,16 @@ stdin、stdout 和 stderr 都是终端；管道、JSON、单次提问、`--serve
 `TERM=dumb` 自动使用简单界面。设置 `NO_COLOR` 不会关闭 rich TUI，只会禁用颜色。显式
 `--tui` 要求 stdin 和 stderr 是终端，仍可将最终回答重定向到 stdout；`TERM=dumb` 下会明确报错。
 
-没有 API Key 时输入 `/provider` 选供应商，然后直接输入 Key。也可运行离线演示：
+在本地终端运行 `chivgent` 时，已有完整配置可直接对话。需要设置时，输入框出现前会先显示
+**Connect a model**，在供应商列表里将 DeepSeek 标记为 **Recommended**。用 ↑↓ 和 Enter 选择，或在
+`--simple` 下键入编号或名称。按提示补齐模型和端点，再输入隐藏的 API Key；OpenAI 和 xAI 也可选
+订阅登录。按 Esc（`--simple` 下留空）可关闭选择器，再用 `/login` 打开。配置齐全前无法发送模型请求。
+
+成功完成设置后，供应商、模型和兼容端点保存在 `~/.chivgent/model-setup.json`，供后续交互启动复用。当默认供应商缺少凭证时，启动会优先尝试这份配置，
+再查找其他已有凭证和模型的供应商。`--provider`、`--model`、`--api-key` 优先于自动选择，
+供应商环境变量中的模型和端点优先于保存值。API Key 在第一次模型请求时由供应商验证。
+
+也可运行离线演示：
 
 ```sh
 npm run demo:tui
@@ -46,7 +55,7 @@ npm run demo:tui
 | `/provider deepseek` | 在当前会话切换到 DeepSeek，保留对话历史 |
 | `/model MODEL` | 切换当前供应商的模型 |
 | `/endpoint URL` | 为 OpenAI 兼容供应商设置 API 地址 |
-| `/login`、`/login deepseek` | 先选择供应商再保存其 API Key（不回显）；`/login deepseek` 跳过选择；`/login logout` 登出订阅 |
+| `/login`、`/login deepseek` | `/login` 打开连接设置；`/login deepseek` 直接输入该供应商的 API Key；`/login logout` 登出订阅 |
 | `/permissions` | 查看或更改权限模式（`ask-first` / `workspace` / `unrestricted` / `plan`） |
 | `/help` | 命令与快捷键帮助 |
 | `/clear` | 清空模型会话内容，保留终端滚动历史 |
@@ -64,7 +73,7 @@ npm run demo:tui
 
 切换供应商不会清空当前对话。新供应商没有默认模型时，用 `/model MODEL` 设置；
 自定义 OpenAI 兼容端点还需 `/endpoint URL`。TUI 在选择缺 Key 的供应商后会立即询问 Key，
-可先保存 Key，再补模型和地址；已有 Key 则跳过。`/login` 用于之后更换 Key：先列出供应商供选择，Esc 取消且不改动当前供应商。
+可先保存 Key，再补模型和地址；已有 Key 则跳过。
 `--api-key` 只用于启动时选择的供应商，不会误用到之后切换的供应商。
 Key 写入用户的 `auth.json`，不同供应商各用自己的条目。
 从 OpenAI 在会话内切换到自定义兼容端点时，也不会把 `OPENAI_API_KEY` 当作新端点的 Key；

@@ -59,13 +59,13 @@ cd /path/to/project
 chivgent
 ```
 
-No key is required to open the session. Type `/provider` and enter one when asked, or export one first. Keys are saved for your user only, in `~/.chivgent/auth.json`.
+If chivgent needs a model connection, it opens Provider setup before the first prompt. Choose a Provider and enter an API key, or use subscription sign-in with OpenAI or xAI. DeepSeek is marked **Recommended**. You can also export a key before starting. [Terminal setup](docs/tui.md).
 
 ```bash
 export OPENAI_API_KEY="your-api-key"
 ```
 
-In a session, `/login oauth openai` or `/login oauth xai` signs in with a subscription. On a normal start, a key still takes precedence. [Subscription sign-in](docs/subscription-oauth.md).
+Run `/login` to open setup again. [Subscription sign-in](docs/subscription-oauth.md).
 
 ```bash
 chivgent "Where is the entry point?"                     # reads, then answers
@@ -152,7 +152,7 @@ Run `chivgent` with no question for an interactive session. It is saved under `~
 Local interactive terminals use the rich TUI by default. `--simple` selects the append-only interface; `--tui` remains available to request the rich TUI explicitly, including when stdout is redirected. Piped input or output, JSON, one-shot runs, `--serve`, and `--connect` keep their existing simple output. `TERM=dumb` selects the simple interface; `NO_COLOR` keeps the rich TUI and disables color. Without legacy capability flags or an explicit permission mode, rich TUI sessions start in Ask for me. Shift+Tab at the idle inline prompt cycles Plan → Auto mode → Ask for me; the footer shows the active provider and model on the left, then the current mode. The compact welcome shows the workspace path and omits the session ID, the provider, and the model; use `/session` or `/status` for full session details. `/help` lists commands and keyboard controls. Explicit `--permission-mode` choices and legacy capability flags retain their behavior. [TUI](docs/tui.md). A long session stays within the context window by summarizing older turns and keeping the list of files read and changed. [Context](docs/architecture.md#context-management).
 The built-in `question` tool lets the local simple REPL and rich TUI collect structured choices or free text, then continue the same run. Cancelling a question is separate from cancelling the run; answers collect requirements and do not authorize writes or shell commands. Headless, remote, and Desktop runs report the question channel as unavailable immediately; Desktop has no question UI. [Question flow](docs/architecture.md#structured-questions).
 
-In its inline editor, type `/` to browse registered commands or keep typing to filter them. Use ↑/↓ to choose a command, then Tab or Enter to fill it into the draft; submit it with Enter afterward. A mouse click fills a visible command, and the wheel browses the menu. Wheel up over the transcript scrolls the terminal's own scrollback; the composer takes the mouse back on the next key. Esc closes the menu and keeps the draft. Fully typed commands still run with one Enter. `/login` lists the Providers before asking for a key, so the key is stored for the one you chose; `/login NAME` skips the list.
+In its inline editor, type `/` to browse registered commands or keep typing to filter them. Use ↑/↓ to choose a command, then Tab or Enter to fill it into the draft; submit it with Enter afterward. A mouse click fills a visible command, and the wheel browses the menu. Wheel up over the transcript scrolls the terminal's own scrollback; the composer takes the mouse back on the next key. Esc closes the menu and keeps the draft. Fully typed commands still run with one Enter. `/login NAME` goes straight to API key entry for that Provider.
 
 ## Boundaries
 

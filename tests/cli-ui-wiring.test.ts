@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PermissionPolicy } from "../src/permissions.js";
 import { ShellApprovalGate } from "../src/shell/approval.js";
 import type { ProviderControl } from "../src/repl.js";
@@ -33,7 +36,7 @@ const harness = vi.hoisted(() => {
       exitCode: 0,
     },
     runRepl: vi.fn(async (_options: Record<string, unknown>) => 0),
-    createConfiguredClient: vi.fn(async () => ({})),
+    createConfiguredClient: vi.fn(async (): Promise<object | string> => ({})),
     createLocalSession: vi.fn((_config: Record<string, unknown>) => ({
       id: "session-test",
       subscribe: vi.fn(() => () => undefined),
@@ -109,6 +112,44 @@ describe("CLI terminal UI wiring", () => {
     });
     expect(harness.createLocalSession.mock.calls[0]?.[0].permissionPolicy).toBeUndefined();
     expect(harness.runRepl.mock.calls[0]?.[0].banner).not.toContain("session-test");
+  });
+
+  it("offers model setup when an interactive launch has no configured client", async () => {
+    harness.createConfiguredClient.mockResolvedValueOnce("No API key for openai.");
+    const status = await main(["--provider", "openai", "--no-session", "--no-extensions"]);
+
+    expect(status).toBe(0);
+    expect(harness.runRepl.mock.calls[0]?.[0].offerProviderSetup).toBe(true);
+  });
+
+  it("reuses a saved DeepSeek key on bare launch and honors an explicit Provider", async () => {
+    const home = await mkdtemp(join(tmpdir(), "chivgent-startup-"));
+    harness.process.env.CHIVGENT_HOME = home;
+    try {
+      await writeFile(join(home, "auth.json"), JSON.stringify({ deepseek: "fake-deepseek-key" }), { mode: 0o600 });
+      harness.createConfiguredClient.mockResolvedValueOnce("No API key for openai.");
+      const flags = ["--no-session", "--no-extensions"];
+
+      expect(await main(flags)).toBe(0);
+      const fallback = harness.runRepl.mock.calls.at(-1)?.[0];
+      expect(fallback?.offerProviderSetup).toBe(false);
+      expect((fallback?.providers as ProviderControl).provider).toBe("deepseek");
+
+      harness.createConfiguredClient.mockResolvedValueOnce("No API key for openai.");
+      expect(await main([...flags, "--provider", "openai"])).toBe(0);
+      const explicit = harness.runRepl.mock.calls.at(-1)?.[0];
+      expect(explicit?.offerProviderSetup).toBe(true);
+      expect((explicit?.providers as ProviderControl).provider).toBe("openai");
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("exits a one-shot run without opening setup when credentials are missing", async () => {
+    harness.createConfiguredClient.mockResolvedValueOnce("No API key for openai.");
+
+    expect(await main(["--no-session", "--no-extensions", "Hello"])).toBe(1);
+    expect(harness.runRepl).not.toHaveBeenCalled();
   });
 
   it.each([{ flags: [] }, { flags: ["--simple"] }])("reads the live provider control for model identity with flags $flags", async ({ flags }) => {
