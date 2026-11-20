@@ -53,7 +53,7 @@ const region = createLiveRegion({ stream: process.stderr, answerStream: process.
 session.subscribe(region.listener);
 process.stderr.on('resize', region.resized);
 try {
-  await runRepl({ session, input: process.stdin, output: process.stderr, stderr: process.stderr, tui: true, inlineComposer: true,
+  await runRepl({ session, input: process.stdin, output: process.stderr, stderr: process.stderr, tui: true,
     liveRegion: region, providerName: 'offline', modelName: 'stub',
     banner: welcome({ version: 'demo', provider: 'offline', model: 'stub', cwd: session.cwd,
       resumed: false, signedOut: false, width: terminalWidth(process.stderr), color: useColor }),

@@ -150,7 +150,7 @@ describe("idle composer footer", () => {
     roots.push(cwd);
     const screen = terminalHarness(80, 24);
     const repl = runRepl({
-      session: session(cwd), ...screen, stderr: screen.output, tui: true, inlineComposer: true,
+      session: session(cwd), ...screen, stderr: screen.output, tui: true,
       permissionPolicy: new PermissionPolicy("ask-first"),
       providerName: "startup-provider", modelName: "startup-model",
       providers: providers("gpt-test"),
@@ -181,7 +181,7 @@ describe("idle composer footer", () => {
     roots.push(cwd);
     const screen = terminalHarness(80, 24);
     const repl = runRepl({
-      session: session(cwd), ...screen, stderr: screen.output, tui: true, inlineComposer: true,
+      session: session(cwd), ...screen, stderr: screen.output, tui: true,
       permissionPolicy: new PermissionPolicy("ask-first"),
       providerName: "startup-provider", modelName: "startup-model",
       providers: providers(undefined),
@@ -242,18 +242,26 @@ it("latches submission across chunks and consumes a split CRLF only once", () =>
 });
 
 describe("TUI REPL", () => {
-  it("exits on Ctrl+C while idle", async () => {
+  it("clears draft on Ctrl+C and exits on Ctrl+D while idle", async () => {
     vi.stubEnv("TERM", "xterm-256color");
     const input = new Input();
     const output = new PassThrough();
+    let screen = "";
+    output.on("data", (chunk) => { screen += chunk.toString(); });
     const session = new AgentSession({ agent: {
       systemPrompt: "demo", maxTurns: 1, tools: [], workspace: new LocalWorkspace(process.cwd()),
       llm: { async complete() { throw new Error("No provider call expected"); } },
     } });
     const result = runRepl({ session, input, output, stderr: output, tui: true });
     try {
+      await vi.waitFor(() => expect(screen).toContain("Ask chivgent"));
+      input.write("draft");
+      await vi.waitFor(() => expect(screen).toContain("draft"));
+      const beforeCancel = screen.length;
       input.write("\x03");
-      expect(await result).toBe(130);
+      await vi.waitFor(() => expect(screen.slice(beforeCancel)).toContain("Ask chivgent"));
+      input.write("\x04");
+      expect(await result).toBe(0);
       expect(input.raw).toBe(false);
     } finally { input.end(); await result; }
   });
@@ -301,6 +309,7 @@ describe("TUI REPL", () => {
       input.write("\x1b[B".repeat(BUILT_IN_COMMANDS.length));
       await vi.waitFor(() => expect(screen).toContain("/inspect"));
       input.write("\x1b");
+      await new Promise(resolve => setTimeout(resolve, 60));
       expect(screen).toContain("/inspect");
       input.write("help\r");
       await vi.waitFor(() => expect(screen).toContain("Commands:"));

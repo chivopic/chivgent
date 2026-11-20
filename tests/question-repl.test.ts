@@ -66,7 +66,7 @@ it("renders a narrow TUI question and cancels it with Escape without accepting a
     assistant("I will wait for another prompt."),
     assistant("Composer was restored."),
   ]);
-  const done = runRepl({ session, ...screen, stderr: screen.output, tui: true, inlineComposer: true });
+  const done = runRepl({ session, ...screen, stderr: screen.output, tui: true });
   try {
     screen.input.write("choose\r");
     await vi.waitFor(async () => {
@@ -94,7 +94,7 @@ it("routes a keyboard option answer through the rich TUI and restores its compos
     assistant("TUI answer recorded."),
     assistant("TUI composer restored."),
   ]);
-  const done = runRepl({ session, ...screen, stderr: screen.output, tui: true, inlineComposer: true });
+  const done = runRepl({ session, ...screen, stderr: screen.output, tui: true });
   try {
     screen.input.write("choose\r");
     await vi.waitFor(async () => {
@@ -124,7 +124,7 @@ it("keeps multiline question and option text visible above the answer prompt in 
       ] }] } }]),
     assistant("Multiline choice recorded."),
   ]);
-  const done = runRepl({ session, ...screen, stderr: screen.output, tui: true, inlineComposer: true });
+  const done = runRepl({ session, ...screen, stderr: screen.output, tui: true });
   try {
     screen.input.write("choose\r");
     await vi.waitFor(async () => {
@@ -159,7 +159,7 @@ it("Ctrl+C aborts a pending question without leaking a partial answer into the n
   } });
   const endings: string[] = [];
   session.subscribe(event => { if (event.type === "agent_end") endings.push(event.status); });
-  const done = runRepl({ session, ...screen, stderr: screen.output, tui: true, inlineComposer: true });
+  const done = runRepl({ session, ...screen, stderr: screen.output, tui: true });
   try {
     screen.input.write("choose\r");
     await vi.waitFor(() => expect(screen.bytes()).toContain("answer>"));

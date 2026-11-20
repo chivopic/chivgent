@@ -162,19 +162,11 @@ function statusLine(
   const tokens = usage !== undefined && usage.usage.totalTokens > 0
     ? `${formatTokens(usage.usage.totalTokens)} tokens${usage.complete ? "" : "+"}`
     : undefined;
-  const completed = run.completedTools ?? 0;
   const failed = run.failedTools ?? 0;
-  // Failed calls are already included in completedTools. Display separate
-  // success/failure counts so "1 done, 1 failed" cannot imply two outcomes.
-  const activityParts = [
-    ...(completed > 0 ? [`${Math.max(0, completed - failed)} ok`] : []),
-    ...(failed > 0 ? [`${failed} failed`] : []),
-    ...(run.running.length > 0 ? [`${run.running.length} running`] : []),
-  ];
-  const activity = activityParts.length > 0 ? activityParts.join(", ") : undefined;
+  const failureNote = failed > 0 ? `${failed} failed` : undefined;
 
   const fullTailCandidates: readonly (readonly string[])[] = [
-    [`turn ${run.turn}/${run.maxTurns}`, ...(activity === undefined ? [] : [activity]), duration, ...(tokens === undefined ? [] : [tokens]), "ctrl+c to stop"],
+    [`turn ${run.turn}/${run.maxTurns}`, ...(failureNote === undefined ? [] : [failureNote]), duration, ...(tokens === undefined ? [] : [tokens]), "ctrl+c to stop"],
     [`turn ${run.turn}/${run.maxTurns}`, duration, ...(tokens === undefined ? [] : [tokens]), "ctrl+c to stop"],
     [`turn ${run.turn}/${run.maxTurns}`, duration, "ctrl+c to stop"],
     [`${run.turn}/${run.maxTurns}`, duration, "^C stop"],

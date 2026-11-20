@@ -35,7 +35,7 @@ describe("default inline editor key contract", () => {
     const results: (string | undefined)[] = [];
     const controller = new EditorController({
       columns: 80, rows: 24, write() {},
-    }, text => results.push(text), { submitOnEnter: true, history });
+    }, text => results.push(text), { history });
     controller.begin();
     return { controller, results };
   }
@@ -52,9 +52,24 @@ describe("default inline editor key contract", () => {
     expect(results).toEqual(["abc"]);
   });
 
-  it("reverse-searches previous prompts and restores the matching draft", () => {
-    const { controller, results } = create(["older", "Refactor API\nwith tests", "another"]);
-    controller.receive(Buffer.from("\u0012API\r\r"));
+  it("navigates prompt history with Up/Down arrows and restores the unsent draft", () => {
+    const { controller, results } = create(["older", "Refactor API\nwith tests"]);
+    controller.receive(Buffer.from("wip"));
+    // First Up loads the most recent history entry ("Refactor API\nwith tests") with cursor at the end (row 1).
+    controller.receive(Buffer.from("\u001b[A"));
+    expect(controller.document.text).toBe("Refactor API\nwith tests");
+    // Next Up moves from row 1 to row 0 within the multiline history entry.
+    controller.receive(Buffer.from("\u001b[A"));
+    expect(controller.document.position.row).toBe(0);
+    // Next Up from row 0 loads the older history entry.
+    controller.receive(Buffer.from("\u001b[A"));
+    expect(controller.document.text).toBe("older");
+    // Down moves forward in history, then back to the unsent draft.
+    controller.receive(Buffer.from("\u001b[B"));
+    expect(controller.document.text).toBe("Refactor API\nwith tests");
+    controller.receive(Buffer.from("\u001b[B"));
+    expect(controller.document.text).toBe("wip");
+    controller.receive(Buffer.from("\u001b[A\r"));
     expect(results).toEqual(["Refactor API\nwith tests"]);
   });
 
@@ -71,7 +86,7 @@ describe("default inline editor key contract", () => {
 
   it("ignores untrusted ANSI output when loading history", () => {
     const { controller, results } = create(["unsafe\u001b[2J secret"]);
-    controller.receive(Buffer.from("\u0012unsafe\r\r"));
+    controller.receive(Buffer.from("\u001b[A\r"));
     expect(results).toEqual(["unsafe secret"]);
   });
 });

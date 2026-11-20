@@ -32,42 +32,6 @@ export class EditorDocument {
   readonly maxLines = MAX_LINES;
   warning = "";
   private preferredCell?: number;
-  selectionAnchor?: number;
-
-  selectionRange(): { start: number; end: number } | undefined {
-    if (this.selectionAnchor === undefined || this.selectionAnchor === this.cursor) return undefined;
-    return { start: Math.min(this.selectionAnchor, this.cursor), end: Math.max(this.selectionAnchor, this.cursor) };
-  }
-
-  /** Hit test is grapheme-safe and uses display cell positions, not JS string indices. */
-  placeAt(row: number, column: number, extend = false): void {
-    const rows = this.text.split("\n");
-    const safeRow = Math.max(0, Math.min(Math.floor(row), rows.length - 1));
-    const target = rows[safeRow] ?? "";
-    const start = rows.slice(0, safeRow).reduce((total, value) => total + value.length + 1, 0);
-    let offset = 0;
-    for (const grapheme of segmenter.segment(target)) {
-      const end = grapheme.index + grapheme.segment.length;
-      if (displayWidth(target.slice(0, end)) > column) break;
-      offset = end;
-    }
-    if (extend) {
-      this.selectionAnchor ??= this.cursor;
-    } else this.selectionAnchor = undefined;
-    this.cursor = start + offset;
-    this.preferredCell = undefined;
-    this.lastTyping = false;
-  }
-
-  private deleteSelection(): boolean {
-    const range = this.selectionRange();
-    if (range === undefined) return false;
-    this.checkpoint();
-    this.text = this.text.slice(0, range.start) + this.text.slice(range.end);
-    this.cursor = range.start;
-    this.selectionAnchor = undefined;
-    return true;
-  }
   private undoStack: { text: string; cursor: number }[] = [];
   private redoStack: { text: string; cursor: number }[] = [];
   private static readonly MAX_HISTORY = 100;
@@ -82,12 +46,11 @@ export class EditorDocument {
   }
 
   undo(): void {
-    const previous = this.undoStack.pop();
-    if (previous === undefined) return;
+    const prev = this.undoStack.pop();
+    if (prev === undefined) return;
     this.redoStack.push({ text: this.text, cursor: this.cursor });
-    this.text = previous.text;
-    this.cursor = previous.cursor;
-    this.selectionAnchor = undefined;
+    this.text = prev.text;
+    this.cursor = prev.cursor;
     this.lastTyping = false;
     this.preferredCell = undefined;
     this.warning = "";
@@ -99,7 +62,6 @@ export class EditorDocument {
     this.undoStack.push({ text: this.text, cursor: this.cursor });
     this.text = nextState.text;
     this.cursor = nextState.cursor;
-    this.selectionAnchor = undefined;
     this.lastTyping = false;
     this.preferredCell = undefined;
     this.warning = "";
@@ -112,17 +74,14 @@ export class EditorDocument {
     this.checkpoint();
     this.text = normalized;
     this.cursor = normalized.length;
-    this.selectionAnchor = undefined;
     this.preferredCell = undefined;
+    this.warning = "";
     return true;
   }
 
   insert(value: string, typing = false): boolean {
     const normalized = terminalText(value).replace(/\r\n?/g, "\n");
-    const rangeBefore = this.selectionRange();
-    const nextText = rangeBefore === undefined
-      ? this.text.slice(0, this.cursor) + normalized + this.text.slice(this.cursor)
-      : this.text.slice(0, rangeBefore.start) + normalized + this.text.slice(rangeBefore.end);
+    const nextText = this.text.slice(0, this.cursor) + normalized + this.text.slice(this.cursor);
     if (Buffer.byteLength(nextText, "utf8") > MAX_BYTES ||
         nextText.split("\n").length > MAX_LINES) {
       this.warning = "Draft limit: 64 KiB / 200 lines";
@@ -130,27 +89,19 @@ export class EditorDocument {
     }
     if (normalized.length === 0) return true;
     this.checkpoint(typing);
-    const range = this.selectionRange();
-    if (range !== undefined) {
-      this.text = this.text.slice(0, range.start) + normalized + this.text.slice(range.end);
-      this.cursor = range.start + normalized.length;
-      this.selectionAnchor = undefined;
-    } else {
-      this.text = this.text.slice(0, this.cursor) + normalized + this.text.slice(this.cursor);
-    }
-    if (range === undefined) this.cursor += normalized.length;
+    this.text = nextText;
+    this.cursor += normalized.length;
     this.preferredCell = undefined;
     this.warning = "";
     return true;
   }
 
-  left(): void { this.cursor = previous(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; this.selectionAnchor = undefined; }
-  right(): void { this.cursor = next(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; this.selectionAnchor = undefined; }
-  home(): void { this.cursor = lineStart(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; this.selectionAnchor = undefined; }
-  end(): void { this.cursor = lineEnd(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; this.selectionAnchor = undefined; }
+  left(): void { this.cursor = previous(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; }
+  right(): void { this.cursor = next(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; }
+  home(): void { this.cursor = lineStart(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; }
+  end(): void { this.cursor = lineEnd(this.text, this.cursor); this.preferredCell = undefined; this.lastTyping = false; }
 
   backspace(): void {
-    if (this.deleteSelection()) return;
     if (this.cursor === 0) return;
     const at = previous(this.text, this.cursor);
     this.checkpoint();
@@ -158,16 +109,16 @@ export class EditorDocument {
     this.cursor = at;
     this.preferredCell = undefined;
   }
+
   delete(): void {
-    if (this.deleteSelection()) return;
     if (this.cursor === this.text.length) return;
     this.checkpoint();
     this.text = this.text.slice(0, this.cursor) + this.text.slice(next(this.text, this.cursor));
     this.preferredCell = undefined;
   }
+
   moveVertical(direction: -1 | 1): void {
     this.lastTyping = false;
-    this.selectionAnchor = undefined;
     const begin = lineStart(this.text, this.cursor);
     const column = this.preferredCell ?? displayWidth(this.text.slice(begin, this.cursor));
     this.preferredCell = column;
@@ -198,15 +149,14 @@ export interface EditorFrame {
   readonly lines: readonly string[];
   readonly cursorRow: number;
   readonly cursorColumn: number;
-  /** Document row and horizontal viewport mapping for each visible input row. */
-  readonly inputRows?: readonly {
-    readonly documentRow: number;
-    readonly scrollCells: number;
-    /** Display cells before the editable text, so a click can skip the box gutter. */
-    readonly gutterCells: number;
-  }[];
-  /** Command index and frame row for each actually visible completion row. */
-  readonly suggestionRows?: readonly { readonly commandIndex: number; readonly row: number }[];
+}
+
+export interface EditorFrameOptions {
+  readonly suggestions?: readonly { readonly value: string; readonly label: string }[];
+  readonly selectedSuggestion?: number;
+  readonly footerStatus?: string;
+  readonly color?: boolean;
+  readonly footerIdentity?: string;
 }
 
 const PLACEHOLDER = "Ask chivgent to do anything";
@@ -247,13 +197,17 @@ function composeFooter(identity: string | undefined, status: string, columns: nu
   return `${fitLine(cleanIdentity, room)}${" ".repeat(minGap)}${paintStatus(cleanStatus)}`;
 }
 
-/** Fixed-height viewport; keep caret in frame even on small terminals. */
-export function editorFrame(document: EditorDocument, width: number, height: number, submitOnEnter = false, suggestions: readonly { readonly value: string; readonly label: string }[] = [], selectedSuggestion = 0, footerStatus?: string, color = false, footerIdentity?: string): EditorFrame {
-  const spare = Math.max(1, width - 1);
-  const cellWidth = Math.max(8, spare);
-  const boxed = submitOnEnter;
-  const boxWidth = Math.min(cellWidth, spare);
-  const extra = boxed ? 1 : 0;
+/** Fixed-height rounded composer viewport; keeps caret in frame on small terminals. */
+export function editorFrame(
+  document: EditorDocument,
+  width: number,
+  height: number,
+  options: EditorFrameOptions = {},
+): EditorFrame {
+  const suggestions = options.suggestions ?? [];
+  const selectedSuggestion = options.selectedSuggestion ?? 0;
+  const color = options.color === true;
+  const lineWidth = Math.max(1, width - 1);
   const maxSuggestions = 5;
   const suggestionLimit = Math.max(0, Math.min(maxSuggestions, height - 7));
   const visibleSuggestionCount = Math.min(suggestions.length, suggestionLimit);
@@ -262,19 +216,19 @@ export function editorFrame(document: EditorDocument, width: number, height: num
     suggestions.length - visibleSuggestionCount,
   ));
   const displayedSuggestions = suggestions.slice(suggestionStart, suggestionStart + visibleSuggestionCount);
-  const rowLimit = Math.max(1, Math.min(8, height - 5 - extra - displayedSuggestions.length));
+  const rowLimit = Math.max(1, Math.min(8, height - 6 - displayedSuggestions.length));
   const rows = document.text.split("\n");
   const position = document.position;
   const first = Math.max(0, Math.min(position.row - rowLimit + 1, rows.length - rowLimit));
   const visible = rows.slice(first, first + rowLimit);
-  const left = boxed ? "│ " : "";
-  const right = boxed ? " │" : "";
-  const styledLeft = boxed && color ? `${DIM}${left}${RESET}` : left;
-  const styledRight = boxed && color ? `${DIM}${right}${RESET}` : right;
-  const lineWidth = boxed ? boxWidth : cellWidth;
+  const left = "│ ";
+  const right = " │";
+  const styledLeft = color ? `${DIM}${left}${RESET}` : left;
+  const styledRight = color ? `${DIM}${right}${RESET}` : right;
   const innerWidth = Math.max(1, lineWidth - displayWidth(left) - displayWidth(right));
-  const inputWidth = boxed ? Math.max(1, innerWidth - 2) : Math.max(1, cellWidth - 3);
-  const showingPlaceholder = boxed && document.text.length === 0;
+  const inputWidth = Math.max(1, innerWidth - 2);
+  const showingPlaceholder = document.text.length === 0;
+
   const body = visible.map((line, index) => {
     const original = terminalText(line);
     const caret = index + first === position.row ? position.column : 0;
@@ -297,50 +251,23 @@ export function editorFrame(document: EditorDocument, width: number, height: num
       display = fitLine(display, inputWidth);
     }
     const isCurrentRow = index + first === position.row;
-    const marker = submitOnEnter
-      ? (isCurrentRow ? "› " : "  ")
-      : "│ ";
-    const styledMarker = submitOnEnter && color && isCurrentRow
-      ? `${BOLD_CYAN}›${RESET} `
-      : marker;
+    const marker = isCurrentRow ? "› " : "  ";
+    const styledMarker = color && isCurrentRow ? `${BOLD_CYAN}›${RESET} ` : marker;
     const gutterCells = displayWidth(left) + displayWidth(marker);
-    const row = (() => {
-      if (placeholder) {
-        const ghost = fitLine(PLACEHOLDER, inputWidth);
-        const painted = color ? `${DIM}${ghost}${RESET}` : ghost;
-        return closeBox(styledLeft, `${styledMarker}${painted}`, innerWidth, styledRight);
-      }
-      const baseline = `${styledMarker}${display}`;
-      const selection = document.selectionRange();
-      let inner = baseline;
-      if (selection !== undefined && display === original) {
-        const rowIndex = first + index;
-        const start = rows.slice(0, rowIndex).reduce((sum, row) => sum + row.length + 1, 0);
-        const lo = Math.max(0, selection.start - start);
-        const hi = Math.min(original.length, selection.end - start);
-        if (hi > lo) {
-          // ANSI reverse video applies only after width clipping, so it does
-          // not affect terminal columns or permit untrusted escape injection.
-          inner = `${styledMarker}${original.slice(0, lo)}\u001b[7m${original.slice(lo, hi)}\u001b[0m${original.slice(hi)}`;
-        }
-      }
-      return boxed ? closeBox(styledLeft, inner, innerWidth, styledRight) : inner.includes("\u001b") ? inner : fitLine(inner, cellWidth);
-    })();
+    const row = placeholder
+      ? closeBox(styledLeft, `${styledMarker}${color ? `${DIM}${fitLine(PLACEHOLDER, inputWidth)}${RESET}` : fitLine(PLACEHOLDER, inputWidth)}`, innerWidth, styledRight)
+      : closeBox(styledLeft, `${styledMarker}${display}`, innerWidth, styledRight);
     return {
       row,
       caret: Math.min(lineWidth - 1, gutterCells + Math.max(0, caret - scrollCells) + (scrollCells > 0 ? 1 : 0)),
-      scrollCells,
-      gutterCells,
     };
   });
-  const plainHeader = boxed
-    ? boxRule("╭", "╮", lineWidth)
-    : fitLine("┌─ Ctrl+S send · Esc cancel · Enter newline", cellWidth);
-  const header = boxed && color ? `${DIM}${plainHeader}${RESET}` : plainHeader;
-  const plainBottom = boxed ? boxRule("╰", "╯", lineWidth) : undefined;
-  const bottom = plainBottom === undefined
-    ? undefined
-    : (color ? `${DIM}${plainBottom}${RESET}` : plainBottom);
+
+  const plainHeader = boxRule("╭", "╮", lineWidth);
+  const header = color ? `${DIM}${plainHeader}${RESET}` : plainHeader;
+  const plainBottom = boxRule("╰", "╯", lineWidth);
+  const bottom = color ? `${DIM}${plainBottom}${RESET}` : plainBottom;
+
   const popup = displayedSuggestions.map((item, index) => {
     const isSelected = suggestionStart + index === selectedSuggestion;
     const text = fitLine(`  ${isSelected ? "›" : " "} ${item.label || `/${item.value}`}`, lineWidth);
@@ -350,10 +277,8 @@ export function editorFrame(document: EditorDocument, width: number, height: num
     }
     return `${DIM}${text}${RESET}`;
   });
-  const selection = document.selectionRange();
-  const idleStatus = footerStatus ?? (submitOnEnter
-    ? "/help for shortcuts"
-    : `└─ ${rows.length} lines · ${Buffer.byteLength(document.text, "utf8")} bytes · ↑↓←→ move`);
+
+  const idleStatus = options.footerStatus ?? "/help for shortcuts";
   const footer = (() => {
     if (document.warning) {
       const fitted = fitLine(document.warning, lineWidth);
@@ -363,25 +288,14 @@ export function editorFrame(document: EditorDocument, width: number, height: num
       const fitted = fitLine("↑↓ choose · Tab/Enter complete · Esc close", lineWidth);
       return color && fitted.length > 0 ? `${DIM}${fitted}${RESET}` : fitted;
     }
-    if (selection !== undefined) {
-      const fitted = fitLine(`${submitOnEnter ? "" : "└─ "}Selected ${selection.end - selection.start} code units · type to replace`, lineWidth);
-      return color && fitted.length > 0 ? `${DIM}${fitted}${RESET}` : fitted;
-    }
-    return composeFooter(footerIdentity, idleStatus, lineWidth, color);
+    return composeFooter(options.footerIdentity, idleStatus, lineWidth, color);
   })();
+
+  const cursorOffset = position.row - first;
   return {
-    lines: [header, ...body.map(item => item.row), ...(bottom === undefined ? [] : [bottom]), ...popup, footer],
-    cursorRow: 1 + (position.row - first),
-    cursorColumn: body[position.row - first]?.caret ?? 2,
-    inputRows: body.map((item, index) => ({
-      documentRow: first + index,
-      scrollCells: item.scrollCells,
-      gutterCells: item.gutterCells,
-    })),
-    suggestionRows: displayedSuggestions.map((_, index) => ({
-      commandIndex: suggestionStart + index,
-      row: 1 + body.length + (bottom === undefined ? 0 : 1) + index,
-    })),
+    lines: [header, ...body.map(item => item.row), bottom, ...popup, footer],
+    cursorRow: 1 + cursorOffset,
+    cursorColumn: body[cursorOffset]?.caret ?? 4,
   };
 }
 

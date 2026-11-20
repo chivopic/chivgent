@@ -28,7 +28,7 @@ describe("default TUI inline slash completion", () => {
     const submitted: (string | undefined)[] = [];
     const ctl = new EditorController({
       write: part => written.push(part), columns: 72, rows: 18,
-    }, value => submitted.push(value), { submitOnEnter: true, slashCommands: cmds });
+    }, value => submitted.push(value), { slashCommands: cmds });
     ctl.begin();
     return { ctl, written, submitted };
   }
@@ -73,7 +73,7 @@ describe("default TUI inline slash completion", () => {
       value: `go${index}`, label: `/go${index} · command ${index}`,
     }));
     const ctl = new EditorController({ columns: 40, rows: 24, write: () => {} }, () => {}, {
-      submitOnEnter: true, slashCommands: many,
+      slashCommands: many,
     });
     ctl.begin();
     ctl.receive(Buffer.from("/go" + "\u001b[B".repeat(17) + "\t"));
@@ -85,7 +85,6 @@ describe("default TUI inline slash completion", () => {
     const written: string[] = [];
     let switches = 0;
     const ctl = new EditorController({ write: part => written.push(part), columns: 72, rows: 18 }, () => {}, {
-      submitOnEnter: true,
       footerStatus: () => "└─ Ask for me · Shift+Tab Plan",
       onShiftTab: () => { switches += 1; },
     });
@@ -101,10 +100,9 @@ describe("default TUI inline slash completion", () => {
     expect(written.join("")).toContain("Ask for me · Shift+Tab Plan");
   });
 
-  it("does not cycle inside bracketed paste, history search, or the explicit modal editor", async () => {
+  it("does not cycle inside bracketed paste", async () => {
     let switches = 0;
     const inline = new EditorController({ write: () => {}, columns: 72, rows: 18 }, () => {}, {
-      submitOnEnter: true,
       onShiftTab: () => { switches += 1; },
     });
     inline.begin();
@@ -112,19 +110,7 @@ describe("default TUI inline slash completion", () => {
     await new Promise(resolve => setImmediate(resolve));
     expect(switches).toBe(0);
     expect(inline.document.text).toContain("paste");
-    inline.receive(Buffer.from("\u0012\u001b[Z"));
-    await new Promise(resolve => setImmediate(resolve));
-    expect(switches).toBe(0);
     inline.cancel();
-
-    const modal = new EditorController({ write: () => {}, columns: 72, rows: 18 }, () => {}, {
-      onShiftTab: () => { switches += 1; },
-    });
-    modal.begin();
-    modal.receive(Buffer.from("\u001b[Z"));
-    await new Promise(resolve => setImmediate(resolve));
-    expect(switches).toBe(0);
-    modal.cancel();
   });
 
   it("buffers typing and Enter until an asynchronous mode change finishes", async () => {
@@ -137,7 +123,6 @@ describe("default TUI inline slash completion", () => {
       submitted.push(value);
       writtenAtSubmit = written.join("").length;
     }, {
-      submitOnEnter: true,
       onShiftTab: () => switching,
     });
     ctl.begin();
@@ -155,7 +140,6 @@ describe("default TUI inline slash completion", () => {
     const switching = new Promise<void>(resolve => { release = resolve; });
     const submitted: (string | undefined)[] = [];
     const ctl = new EditorController({ write: () => {}, columns: 72, rows: 18 }, value => submitted.push(value), {
-      submitOnEnter: true,
       onShiftTab: () => switching,
     });
     ctl.begin();
@@ -168,189 +152,17 @@ describe("default TUI inline slash completion", () => {
   });
 });
 
-describe("mouse caret and selected text", () => {
-  it("places the caret on grapheme boundaries and replaces a drag selection", () => {
-    const doc = new EditorDocument();
-    doc.insert("a👩‍💻b\nsecond");
-    doc.placeAt(0, 1);
-    expect(doc.cursor).toBe(1);
-    doc.placeAt(0, 3, true);
-    expect(doc.selectionRange()).toEqual({ start: 1, end: 6 });
-    const selection = editorFrame(doc, 50, 16);
-    expect(selection.lines.join("\n")).toContain("\u001b[7m👩‍💻\u001b[0m");
-    const inlineSelection = editorFrame(doc, 50, 16, true);
-    expect(inlineSelection.lines.join("\n")).toContain("\u001b[7m👩‍💻\u001b[0m");
-    expect(inlineSelection.lines.join("\n")).toContain("╭");
-    doc.insert("X");
-    expect(doc.text).toBe("aXb\nsecond");
-  });
-
-  it("hit tests reported SGR mouse coordinates only after terminal DSR resolves", () => {
-    const out: string[] = [];
-    const c = new EditorController({
-      columns: 80, rows: 24, write: part => out.push(part),
-    }, () => {}, { submitOnEnter: true, mouse: true });
-    c.begin();
-    c.receive(Buffer.from("one\u000ftwo")); // Ctrl+O inserts a line; plain LF submits
-    // Simulated DSR cursor is at screen row 12. Caret is on the second input row.
-    c.receive(Buffer.from("\u001b[12;6R"));
-    // First editable line is at screen row 11. The box gutter is four cells, so column 5 starts text.
-    c.receive(Buffer.from("\u001b[<0;5;11M"));
-    expect(c.document.position).toEqual({row:0,column:0});
-    c.receive(Buffer.from("\u001b[<32;7;11M"));
-    expect(c.document.selectionRange()).toEqual({start:0,end:2});
-    c.receive(Buffer.from("\u001b[<0;7;11m"));
-    c.receive(Buffer.from("X"));
-    expect(c.document.text).toBe("Xe\ntwo");
-    c.cancel();
-    expect(out.join("")).toContain("\u001b[?1000h");
-    expect(out.join("")).toContain("\u001b[?1000l");
-  });
-
-  it("maps clicks through a horizontally scrolled viewport and its ellipsis", () => {
-    const c = new EditorController({ columns: 20, rows: 12, write: () => {} }, () => {}, {
-      submitOnEnter: true, mouse: true,
-    });
-    c.begin();
-    c.receive(Buffer.from("abcdefghijklmnopqrstuvwxyz"));
-    c.receive(Buffer.from("\u001b[12;4R"));
-    // At width 20 the box leaves 13 text cells. The visible text starts with “…” then “q”; click the q.
-    c.receive(Buffer.from("\u001b[<0;6;12M"));
-    expect(c.document.position).toEqual({ row: 0, column: 16 });
-    c.cancel();
-  });
-
-  it("uses each visible row's scroll mapping and treats Unicode by display cells", () => {
-    const c = new EditorController({ columns: 20, rows: 12, write: () => {} }, () => {}, {
-      submitOnEnter: true, mouse: true,
-    });
-    c.begin();
-    c.receive(Buffer.from("abcdefghijkl👩‍💻xyz\u000fshort\u001b[A\u001b[F"));
-    c.receive(Buffer.from("\u001b[12;4R"));
-    // The first line is scrolled; the second line is not. Clicking column 7
-    // on the second line must therefore map to its own column 2.
-    c.receive(Buffer.from("\u001b[<0;7;13M"));
-    expect(c.document.position).toEqual({ row: 1, column: 2 });
-    c.cancel();
-  });
-
-  it("maps a Unicode grapheme through a scrolled viewport by display cells", () => {
-    const c = new EditorController({ columns: 20, rows: 12, write: () => {} }, () => {}, {
-      submitOnEnter: true, mouse: true,
-    });
-    c.begin();
-    c.receive(Buffer.from("abcdefghijkl👩‍💻xyz"));
-    c.receive(Buffer.from("\u001b[12;4R"));
-    // The emoji starts at document display cell 12. After the box gutter and scroll, that is screen column 11.
-    c.receive(Buffer.from("\u001b[<0;11;12M"));
-    expect(c.document.position).toEqual({ row: 0, column: 12 });
-    c.cancel();
-  });
-
-  it("clicking a visible slash suggestion completes it without submitting", () => {
-    const submitted: (string | undefined)[] = [];
-    const c = new EditorController({ columns: 30, rows: 10, write: () => {} }, value => submitted.push(value), {
-      submitOnEnter: true, mouse: true, slashCommands: cmds,
-    });
-    c.begin();
-    c.receive(Buffer.from("/gi"));
-    c.receive(Buffer.from("\u001b[12;4R"));
-    c.receive(Buffer.from("\u001b[<0;8;15M"));
-    expect(c.document.text).toBe("/gitstatus");
-    expect(submitted).toEqual([]);
-    c.cancel();
-  });
-
-  it("uses wheel browsing only over visible menu rows and ignores off-screen clicks", () => {
-    const c = new EditorController({ columns: 30, rows: 10, write: () => {} }, () => {}, {
-      submitOnEnter: true, mouse: true, slashCommands: cmds,
-    });
-    c.begin();
-    c.receive(Buffer.from("/gi"));
-    c.receive(Buffer.from("\u001b[12;4R"));
-    c.receive(Buffer.from("\u001b[<0;8;16M")); // footer is outside the menu
-    expect(c.document.text).toBe("/gi");
-    c.receive(Buffer.from("\u001b[<65;8;14M")); // wheel down over first visible candidate
-    c.receive(Buffer.from("\u001b[<0;50;14M")); // outside terminal width
-    expect(c.document.text).toBe("/gi");
-    c.receive(Buffer.from("\t"));
-    expect(c.document.text).toBe("/gitstatus");
-    c.cancel();
-  });
-
-  it("hands the wheel above the draft to the terminal and re-arms on the next key", () => {
-    const out: string[] = [];
-    const c = new EditorController({ columns: 80, rows: 24, write: part => out.push(part) }, () => {}, {
-      submitOnEnter: true, mouse: true,
-    });
-    c.begin();
-    c.receive(Buffer.from("draft"));
-    // The caret is on the draft's only row, reported at screen row 12.
-    c.receive(Buffer.from("\u001b[12;4R"));
-    out.length = 0;
-    // A wheel-up over an earlier transcript row is not the editor's to consume.
-    c.receive(Buffer.from("\u001b[<64;10;5M"));
-    const handoff = out.join("");
-    expect(handoff).toContain("\u001b[?1006l");
-    expect(handoff).not.toContain("\u001b[6n");
-    expect(c.document.text).toBe("draft");
-    // Queued wheel reports (including a release) must not take the mouse back.
-    c.receive(Buffer.from("\u001b[<64;10;5m"));
-    c.receive(Buffer.from("\u001b[<65;10;5M"));
-    expect(out.join("")).toBe(handoff);
-    // The next real keystroke re-enables reporting and edits the draft.
-    c.receive(Buffer.from("X"));
-    expect(out.join("")).toContain("\u001b[?1000h");
-    expect(c.document.text).toBe("draftX");
-    c.cancel();
-  });
-
-  it("keeps wheel movement inside a multi-line draft", () => {
-    const out: string[] = [];
-    const c = new EditorController({ columns: 40, rows: 24, write: part => out.push(part) }, () => {}, {
-      submitOnEnter: true, mouse: true,
-    });
-    c.begin();
-    c.receive(Buffer.from("one\u000ftwo\u000fthree"));
-    expect(c.document.position.row).toBe(2);
-    c.receive(Buffer.from("\u001b[12;4R"));
-    out.length = 0;
-    // The wheel is over the third input row, so it still moves the caret.
-    c.receive(Buffer.from("\u001b[<64;5;12M"));
-    expect(c.document.position.row).toBe(0);
-    expect(c.document.text).toBe("one\ntwo\nthree");
-    expect(out.join("")).not.toContain("\u001b[?1006l");
-    c.cancel();
-  });
-
-  it("restores mouse reporting from the process exit hook and removes it on cancel", () => {
-    const out: string[] = [];
-    const before = process.listenerCount("exit");
-    const c = new EditorController({ columns: 40, rows: 12, write: part => out.push(part) }, () => {}, {
-      submitOnEnter: true, mouse: true,
-    });
-    c.begin();
-    try {
-      expect(process.listenerCount("exit")).toBe(before + 1);
-      const restore = process.listeners("exit").at(-1) as () => void;
-      out.length = 0;
-      restore();
-      expect(out.join("")).toContain("\u001b[?1006l");
-    } finally {
-      out.length = 0;
-      c.cancel();
-    }
-    expect(process.listenerCount("exit")).toBe(before);
-    expect(out.join("")).toContain("\u001b[?1006l");
-  });
-
+describe("composer frame and footer layout", () => {
   it("renders suggestions without exceeding terminal height", () => {
     const doc = new EditorDocument();
     doc.insert("/gi");
-    const frame = editorFrame(doc, 30, 9, true, [
-      { value: "gitdiff", label: "/gitdiff · compare changes" },
-      { value: "gitstatus", label: "/gitstatus · show status" },
-    ], 1);
+    const frame = editorFrame(doc, 30, 9, {
+      suggestions: [
+        { value: "gitdiff", label: "/gitdiff · compare changes" },
+        { value: "gitstatus", label: "/gitstatus · show status" },
+      ],
+      selectedSuggestion: 1,
+    });
     expect(frame.lines.length).toBeLessThanOrEqual(9);
     expect(frame.lines.join("\n")).toContain("› /gitstatus · show status");
   });
@@ -361,41 +173,9 @@ describe("mouse caret and selected text", () => {
     const suggestions = Array.from({ length: 18 }, (_, index) => ({
       value: `go${index}`, label: `/go${index} · command ${index}`,
     }));
-    const frame = editorFrame(doc, 32, 10, true, suggestions, 15);
+    const frame = editorFrame(doc, 32, 10, { suggestions, selectedSuggestion: 15 });
     expect(frame.lines.length).toBeLessThanOrEqual(10);
     expect(frame.lines.join("\n")).toContain("› /go15 · command 15");
-    expect(frame.suggestionRows?.map(item => item.commandIndex)).toEqual([13, 14, 15]);
-  });
-
-  it("does not redraw or invalidate DSR coordinates when the terminal reports position", () => {
-    const out: string[] = [];
-    const c = new EditorController({ columns: 30, rows: 10, write: part => out.push(part) }, () => {}, {
-      submitOnEnter: true, mouse: true, slashCommands: cmds,
-    });
-    c.begin();
-    c.receive(Buffer.from("/gi"));
-    const afterPaint = out.join("");
-    c.receive(Buffer.from("\u001b[12;"));
-    c.receive(Buffer.from("4R"));
-    expect(out.join("")).toBe(afterPaint);
-    c.receive(Buffer.from("\u001b[<0;8;15M"));
-    expect(c.document.text).toBe("/gitstatus");
-    c.cancel();
-  });
-
-  it("requires a fresh position report after resize before menu clicks", () => {
-    const c = new EditorController({ columns: 30, rows: 14, write: () => {} }, () => {}, {
-      submitOnEnter: true, mouse: true, slashCommands: cmds,
-    });
-    c.begin();
-    c.receive(Buffer.from("/gi\u001b[12;4R"));
-    c.resized();
-    c.receive(Buffer.from("\u001b[<0;8;15M")); // old DSR was invalidated
-    expect(c.document.text).toBe("/gi");
-    c.receive(Buffer.from("\u001b[12;4R"));
-    c.receive(Buffer.from("\u001b[<0;8;15M"));
-    expect(c.document.text).toBe("/gitstatus");
-    c.cancel();
   });
 
   it("redraws a long menu within the new screen height after resize", async () => {
@@ -403,7 +183,7 @@ describe("mouse caret and selected text", () => {
     const many = Array.from({ length: 20 }, (_, index) => ({
       value: `go${index}`, label: `/go${index} · command ${index}`,
     }));
-    const c = new EditorController(screen.output, () => {}, { submitOnEnter: true, slashCommands: many });
+    const c = new EditorController(screen.output, () => {}, { slashCommands: many });
     try {
       c.begin();
       c.receive(Buffer.from("/go" + "\u001b[B".repeat(17)));
@@ -421,20 +201,18 @@ describe("mouse caret and selected text", () => {
     }
   });
 
-  it("keeps the inline prompt quiet while the explicit editor keeps its instructions", () => {
+  it("keeps the inline prompt quiet and shows the footer status", () => {
     const doc = new EditorDocument();
     doc.insert("draft");
-    const inline = editorFrame(doc, 40, 12, true, [], 0, "Ask for me · Shift+Tab Plan · /help");
+    const inline = editorFrame(doc, 40, 12, { footerStatus: "Ask for me · Shift+Tab Plan · /help" });
     expect(inline.lines.join("\n")).toContain("› draft");
     expect(inline.lines.join("\n")).toContain("Ask for me · Shift+Tab Plan · /help");
     expect(inline.lines.join("\n")).not.toContain("Enter send");
-    const modal = editorFrame(doc, 40, 12, false);
-    expect(modal.lines.join("\n")).toContain("Ctrl+S send · Esc cancel · Enter ne…");
   });
 
   it("draws an empty inline draft inside a rounded box and does not treat the placeholder as text", () => {
     const doc = new EditorDocument();
-    const frame = editorFrame(doc, 60, 12, true, [], 0, "Ask for me · Shift+Tab Plan · /help");
+    const frame = editorFrame(doc, 60, 12, { footerStatus: "Ask for me · Shift+Tab Plan · /help" });
     const lines = frame.lines.join("\n");
     expect(lines).toContain("╭");
     expect(lines).toContain("╯");
@@ -444,25 +222,23 @@ describe("mouse caret and selected text", () => {
     expect(frame.lines.every(line => displayWidth(line) <= 59)).toBe(true);
     const drafted = new EditorDocument();
     drafted.insert("draft");
-    expect(editorFrame(drafted, 60, 12, true).lines.join("\n")).not.toContain("Ask chivgent to do anything");
-    expect(editorFrame(new EditorDocument(), 40, 12, false).lines.join("\n")).not.toContain("Ask chivgent");
-    const narrow = editorFrame(new EditorDocument(), 8, 6, true);
+    expect(editorFrame(drafted, 60, 12).lines.join("\n")).not.toContain("Ask chivgent to do anything");
+    const narrow = editorFrame(new EditorDocument(), 8, 6);
     expect(narrow.lines[0]).toMatch(/^╭.*╮$/);
     expect(narrow.lines.every(line => displayWidth(line) <= 7)).toBe(true);
-    const colored = editorFrame(new EditorDocument(), 60, 12, true, [], 0, undefined, true);
+    const colored = editorFrame(new EditorDocument(), 60, 12, { color: true });
     expect(colored.lines.join("\n")).toContain("\u001b[2mAsk chivgent to do anything\u001b[0m");
     expect(colored.lines[0]).toContain("\u001b[2m╭");
     expect(colored.lines.join("\n")).toContain("\u001b[1;36m›\u001b[0m");
     expect(colored.cursorColumn).toBe(frame.cursorColumn);
-    expect(colored.inputRows).toEqual(frame.inputRows);
-    expect(editorFrame(new EditorDocument(), 60, 12, true).lines.join("\n")).not.toContain("\u001b[");
+    expect(editorFrame(new EditorDocument(), 60, 12).lines.join("\n")).not.toContain("\u001b[");
   });
 
   const modeHint = "Ask for me · Shift+Tab Plan · /help";
 
   it("shows the provider and model under the composer and right-aligns the mode hint", () => {
     const doc = new EditorDocument();
-    const frame = editorFrame(doc, 80, 12, true, [], 0, modeHint, false, "openai · gpt-test");
+    const frame = editorFrame(doc, 80, 12, { footerStatus: modeHint, footerIdentity: "openai · gpt-test" });
     const footer = frame.lines.at(-1) ?? "";
     expect(footer.startsWith("openai · gpt-test")).toBe(true);
     expect(footer.endsWith(modeHint)).toBe(true);
@@ -471,34 +247,41 @@ describe("mouse caret and selected text", () => {
     expect(doc.text).toBe("");
     expect(footer).not.toContain("\u001b[");
 
-    const coloredFooter = editorFrame(doc, 80, 12, true, [], 0, modeHint, true, "openai · gpt-test").lines.at(-1) ?? "";
+    const coloredFooter = editorFrame(doc, 80, 12, {
+      footerStatus: modeHint,
+      color: true,
+      footerIdentity: "openai · gpt-test",
+    }).lines.at(-1) ?? "";
     expect(coloredFooter).toContain(`\u001b[2m${modeHint}\u001b[0m`);
     expect(displayWidth(coloredFooter)).toBe(79);
   });
 
   it("keeps the mode hint when the model name does not fit", () => {
     const identity = `openai · ${"m".repeat(180)}`;
-    const normal = editorFrame(new EditorDocument(), 80, 12, true, [], 0, modeHint, false, identity).lines.at(-1) ?? "";
+    const normal = editorFrame(new EditorDocument(), 80, 12, { footerStatus: modeHint, footerIdentity: identity }).lines.at(-1) ?? "";
     expect(normal.startsWith("openai")).toBe(true);
     expect(normal.endsWith(modeHint)).toBe(true);
     expect(normal).toContain("…");
     expect(normal).not.toContain("m".repeat(180));
     expect(displayWidth(normal)).toBeLessThanOrEqual(79);
-    const narrow = editorFrame(new EditorDocument(), 40, 12, true, [], 0, modeHint, false, identity).lines.at(-1) ?? "";
+    const narrow = editorFrame(new EditorDocument(), 40, 12, { footerStatus: modeHint, footerIdentity: identity }).lines.at(-1) ?? "";
     expect(narrow.endsWith(modeHint)).toBe(true);
     expect(narrow).not.toContain("m".repeat(40));
     expect(displayWidth(narrow)).toBeLessThanOrEqual(39);
   });
 
   it("strips control characters from the footer provider and model", () => {
-    const footer = editorFrame(new EditorDocument(), 80, 12, true, [], 0, modeHint, false, "openai · \u001b[2Jgpt-test").lines.at(-1) ?? "";
+    const footer = editorFrame(new EditorDocument(), 80, 12, {
+      footerStatus: modeHint,
+      footerIdentity: "openai · \u001b[2Jgpt-test",
+    }).lines.at(-1) ?? "";
     expect(footer).toContain("openai · gpt-test");
     expect(footer.endsWith(modeHint)).toBe(true);
     expect(footer).not.toContain("\u001b[");
   });
 
   it("does not invent a model on the footer when none is active", () => {
-    const footer = editorFrame(new EditorDocument(), 80, 12, true, [], 0, modeHint).lines.at(-1) ?? "";
+    const footer = editorFrame(new EditorDocument(), 80, 12, { footerStatus: modeHint }).lines.at(-1) ?? "";
     expect(footer).toBe(modeHint);
     expect(footer).not.toContain("unknown model");
   });
@@ -506,7 +289,12 @@ describe("mouse caret and selected text", () => {
   it("keeps the command hint in place of the model while the menu is open", () => {
     const doc = new EditorDocument();
     doc.insert("/he");
-    const footer = editorFrame(doc, 60, 12, true, [{ value: "help", label: "/help" }], 0, modeHint, false, "openai · gpt-test").lines.at(-1) ?? "";
+    const footer = editorFrame(doc, 60, 12, {
+      suggestions: [{ value: "help", label: "/help" }],
+      selectedSuggestion: 0,
+      footerStatus: modeHint,
+      footerIdentity: "openai · gpt-test",
+    }).lines.at(-1) ?? "";
     expect(footer).toContain("↑↓ choose");
     expect(footer).not.toContain("gpt-test");
   });

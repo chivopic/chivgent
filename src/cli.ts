@@ -432,7 +432,6 @@ export async function main(argv: readonly string[]): Promise<number> {
         // which would otherwise prefix the first event with escape codes.
         output: options.json || richTui ? process.stderr : process.stdout,
         tui: richTui,
-        inlineComposer: richTui,
         stderr: process.stderr,
         banner: richTui ? welcome({
           version: VERSION,

@@ -120,29 +120,24 @@ describe("pruned TUI slash commands", () => {
     }));
 
     // On a 24-row terminal, suggestions must be capped at 5
-    const frame = editorFrame(doc, 80, 24, true, suggestions, 0);
-    expect(frame.suggestionRows?.length).toBeLessThanOrEqual(5);
+    const frame = editorFrame(doc, 80, 24, { suggestions, selectedSuggestion: 0 });
+    const suggestionLines = frame.lines.filter((l) => /^\s*(?:› )?\//.test(l));
+    expect(suggestionLines.length).toBeLessThanOrEqual(5);
     // Editor body must have plenty of room
     const inputRows = frame.lines.filter((l) => l.startsWith("│ "));
     expect(inputRows.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("informs user that multiline editor is already active when /compose or /editor is called with inlineComposer", () => {
+  it("rejects removed legacy commands /compose, /editor, /review, and /gitdiff", () => {
     const session = dummySession();
-    let composeOut = "";
-    let editorOut = "";
-    handleSlashCommand("/compose", {
-      session,
-      write: (t) => { composeOut += t; },
-      inlineComposer: true,
-    });
-    handleSlashCommand("/editor", {
-      session,
-      write: (t) => { editorOut += t; },
-      inlineComposer: true,
-    });
-    expect(composeOut).toContain("multiline editor is already active");
-    expect(editorOut).toContain("cursor-addressable multiline editor is already active");
+    for (const cmd of ["/compose", "/editor", "/review", "/gitdiff"]) {
+      let out = "";
+      handleSlashCommand(cmd, {
+        session,
+        write: (t) => { out += t; },
+      });
+      expect(out).toContain("Unknown command");
+    }
   });
 
   it("routes /diff to live Git review with consent prompt in rich TUI", async () => {
@@ -155,7 +150,6 @@ describe("pruned TUI slash commands", () => {
       ...screen,
       stderr: screen.output,
       tui: true,
-      inlineComposer: true,
       gitDiffReader,
     });
     try {

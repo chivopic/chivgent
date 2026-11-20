@@ -62,7 +62,7 @@ describe("TUI permission mode shortcut", () => {
     const region = createLiveRegion({ stream: screen.output, width: () => screen.output.columns, height: () => screen.output.rows });
     session.subscribe(region.listener);
     const repl = runRepl({
-      session, ...screen, stderr: screen.output, tui: true, inlineComposer: true,
+      session, ...screen, stderr: screen.output, tui: true,
       permissionPolicy: policy, shellApproval: gate, liveRegion: region,
     });
     const completedAnswers = async (count: number): Promise<void> => {

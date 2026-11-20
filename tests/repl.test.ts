@@ -101,7 +101,7 @@ describe("REPL commands", () => {
     expect(output).toContain("/provider");
     expect(output).toContain("/model");
     expect(output).toContain("/compact");
-    expect(output).toContain("/plan");
+    expect(output).toContain("/permissions");
     expect(output).toContain("/new");
     expect(output).toContain("/resume");
     expect(output).toContain("/rename");
@@ -112,7 +112,7 @@ describe("REPL commands", () => {
     let inlineHelp = "";
     handleSlashCommand("/help", {
       session: createSession(), write: text => { inlineHelp += text; },
-      inlineComposer: true, permissionPolicy: new PermissionPolicy("ask-first"),
+      tui: true, permissionPolicy: new PermissionPolicy("ask-first"),
     });
     let simpleHelp = "";
     handleSlashCommand("/help", { session: createSession(), write: text => { simpleHelp += text; } });

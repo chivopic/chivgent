@@ -33,7 +33,7 @@ describe("default inline TUI composer in a real terminal", () => {
     const screen = terminalHarness(75, 22);
     const prompts: string[] = [];
     const session = setup(prompts);
-    const result = runRepl({ session, ...screen, tui: true, inlineComposer: true, stderr: screen.output });
+    const result = runRepl({ session, ...screen, tui: true, stderr: screen.output });
     try {
       await vi.waitFor(() => expect(screen.bytes()).toContain("/help for shortcuts"));
       screen.input.write("first line\u000fsecond line\r");
@@ -48,23 +48,20 @@ describe("default inline TUI composer in a real terminal", () => {
     } finally { screen.input.end(); await result; screen.dispose(); }
   });
 
-  it("recalls a previous submitted prompt via Ctrl+R, without sending twice on selection", async () => {
+  it("recalls a previous submitted prompt via Up arrow without submitting immediately", async () => {
     vi.stubEnv("TERM", "xterm-256color");
     const screen = terminalHarness(80, 20);
     const prompts: string[] = [];
     const session = setup(prompts);
-    const result = runRepl({ session, ...screen, tui: true, inlineComposer: true, stderr: screen.output });
+    const result = runRepl({ session, ...screen, tui: true, stderr: screen.output });
     try {
       await vi.waitFor(() => expect(screen.bytes()).toContain("/help for shortcuts"));
       screen.input.write("Refactor API\r");
       await vi.waitFor(() => expect(prompts).toEqual(["Refactor API"]));
       await vi.waitFor(() => expect(session.messages.some(message => message.role === "assistant")).toBe(true));
       await new Promise<void>(resolve => setImmediate(resolve));
-      screen.input.write("\u0012API");
-      await vi.waitFor(() => expect(screen.bytes()).toContain("History"));
-      expect(prompts).toHaveLength(1);
-      screen.input.write("\r"); // load the matched history; do not submit
-      await new Promise<void>(resolve => setImmediate(resolve));
+      screen.input.write("\u001b[A");
+      await vi.waitFor(() => expect(screen.visible().join("\n")).toContain("Refactor API"));
       expect(prompts).toHaveLength(1);
       screen.input.write("\r"); // a separate submit action
       await vi.waitFor(() => expect(prompts).toEqual(["Refactor API", "Refactor API"]));
@@ -78,7 +75,7 @@ describe("default inline TUI composer in a real terminal", () => {
     const screen = terminalHarness(55, 18);
     const prompts: string[] = [];
     const result = runRepl({ session: setup(prompts), ...screen,
-      tui: true, inlineComposer: true, stderr: screen.output });
+      tui: true, stderr: screen.output });
     try {
       await vi.waitFor(() => expect(screen.bytes()).toContain("/help for shortcuts"));
       screen.input.write("do not send");
@@ -105,7 +102,7 @@ describe("default inline TUI composer in a real terminal", () => {
     const prompts: string[] = [];
     const closedSessions: string[] = [];
     const result = runRepl({ session: setup(prompts, "initial", undefined, () => closedSessions.push("initial")), ...screen,
-      tui: true, inlineComposer: true, stderr: screen.output,
+      tui: true, stderr: screen.output,
       sessionOptions: {
         create: async () => setup(prompts, "created-id-hidden-from-normal-output", "new topic", () => closedSessions.push("new")),
         resume: async () => setup(prompts, "resumed-id-hidden-from-normal-output", "older topic", () => closedSessions.push("resumed")),
