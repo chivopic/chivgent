@@ -204,6 +204,64 @@ describe("rendered input line", () => {
 });
 
 describe("rendered live-region resize", () => {
+  it("shows a provider failure once while keeping the prompt usable", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const screen = terminalHarness(80, 24);
+    const current = new AgentSession({ agent: {
+      systemPrompt: "test", tools: [], maxTurns: 1,
+      workspace: new LocalWorkspace(process.cwd()),
+      llm: { async complete() { throw new Error("fixture-provider-failure"); } },
+    } });
+    const region = createLiveRegion({ stream: screen.output, width: () => screen.output.columns });
+    const detach = current.subscribe(region.listener);
+    const run = runRepl({ session: current, ...screen, stderr: screen.output, tui: true, inlineComposer: true, liveRegion: region });
+    try {
+      await vi.waitFor(() => expect(screen.bytes()).toContain("Ask chivgent"));
+      screen.input.write("hello\r");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("fixture-provider-failure"));
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(screen.bytes().split("fixture-provider-failure")).toHaveLength(2);
+      screen.input.write("\u0004");
+      expect(await run).toBe(0);
+    } finally { detach(); region.stop(); screen.input.end(); await run; screen.dispose(); }
+  });
+
+  it("still reports a failure that happens before an agent-end event", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const screen = terminalHarness(80, 24);
+    const current = session();
+    vi.spyOn(current, "prompt").mockRejectedValueOnce(new Error("fixture-preflight-failure"));
+    const region = createLiveRegion({ stream: screen.output, width: () => screen.output.columns });
+    const detach = current.subscribe(region.listener);
+    const run = runRepl({ session: current, ...screen, stderr: screen.output, tui: true, inlineComposer: true, liveRegion: region });
+    try {
+      await vi.waitFor(() => expect(screen.bytes()).toContain("Ask chivgent"));
+      screen.input.write("hello\r");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("Agent failed: fixture-preflight-failure"));
+      screen.input.write("\u0004");
+      expect(await run).toBe(0);
+    } finally { detach(); region.stop(); screen.input.end(); await run; screen.dispose(); }
+  });
+
+  it("reports the failure when the live region was not attached to the session", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const screen = terminalHarness(80, 24);
+    const current = new AgentSession({ agent: {
+      systemPrompt: "test", tools: [], maxTurns: 1,
+      workspace: new LocalWorkspace(process.cwd()),
+      llm: { async complete() { throw new Error("fixture-unrendered-failure"); } },
+    } });
+    const region = createLiveRegion({ stream: screen.output, width: () => screen.output.columns });
+    const run = runRepl({ session: current, ...screen, stderr: screen.output, tui: true, inlineComposer: true, liveRegion: region });
+    try {
+      await vi.waitFor(() => expect(screen.bytes()).toContain("Ask chivgent"));
+      screen.input.write("hello\r");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("Agent failed: fixture-unrendered-failure"));
+      screen.input.write("\u0004");
+      expect(await run).toBe(0);
+    } finally { region.stop(); screen.input.end(); await run; screen.dispose(); }
+  });
+
   it.each([[32, 12], [16, 5]])("retains history and one status through 80×24 → %i×%i → 120×40", async (cols, rows) => {
     const screen = terminalHarness();
     const region = createLiveRegion({ stream: screen.output, width: () => screen.output.columns,

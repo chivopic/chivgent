@@ -25,7 +25,15 @@ function elapsed(from: number, now: number): string {
 }
 
 function toolHead(tool: RunningTool, now: number, width: number): string {
-  const prefix = `  ↳ ${terminalText(tool.name)}`;
+  const labels: Readonly<Record<string, string>> = {
+    read_file: "Reading", list_files: "Listing", search_text: "Searching",
+    web_search: "Web search", bash: "Shell", edit_file: "Edit",
+    write_file: "Write", apply_patch: "Patch",
+  };
+  // Mutating tools may still be awaiting approval; their label must not
+  // claim that the write or command has started.
+  const label = Object.hasOwn(labels, tool.name) ? labels[tool.name]! : tool.name;
+  const prefix = `  ◇ ${terminalText(label)}`;
   const duration = ` (${elapsed(tool.startedAt, now)})`;
   if (displayWidth(prefix) + displayWidth(duration) > width) return fitLine(prefix, width);
   if (tool.target === undefined) return fitLine(`${prefix}${duration}`, width);
@@ -65,7 +73,9 @@ function statusLine(run: NonNullable<ViewState["run"]>, now: number, width: numb
     ...(run.running.length > 0 ? [`${run.running.length} running`] : []),
   ];
   const activity = activityParts.length > 0 ? activityParts.join(", ") : undefined;
+  const indicator = ["◐", "◓", "◑", "◒"][Math.floor(now / 1000) % 4];
   const candidates = [
+    [`${indicator} ${status}`, `turn ${run.turn}/${run.maxTurns}`, ...(activity === undefined ? [] : [activity]), duration, ...(tokens === undefined ? [] : [tokens]), "ctrl+c to stop"],
     [status, `turn ${run.turn}/${run.maxTurns}`, ...(activity === undefined ? [] : [activity]), duration, ...(tokens === undefined ? [] : [tokens]), "ctrl+c to stop"],
     [status, `turn ${run.turn}/${run.maxTurns}`, duration, ...(tokens === undefined ? [] : [tokens]), "ctrl+c to stop"],
     [status, `turn ${run.turn}/${run.maxTurns}`, duration, "ctrl+c to stop"],
@@ -104,7 +114,8 @@ export function view(
 
   const tail = run.text.split("\n").filter((line) => line.length > 0).slice(-MAX_TEXT_LINES);
   for (const line of tail) {
-    lines.push(fitLineTail(line, options.width));
+    const gutter = options.width > 1 ? " " : "";
+    lines.push(`${gutter}${fitLineTail(line, Math.max(1, options.width - gutter.length))}`);
   }
 
   if (run.plan !== undefined) {
