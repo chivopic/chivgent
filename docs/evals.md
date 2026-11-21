@@ -160,11 +160,12 @@ npm run eval:web -- --backend deepseek --attempts 2 --json deepseek.json
 npm run eval:web -- --backend fixture --json fixture.json
 ```
 
-Pass a SearXNG URL as the backend to compare another live index. Search-enabled
-runs use `ask-first` with explicit startup search approval and have no approval
-input, so an accidental per-query prompt makes the attempt fail. Fixture scoring
+All runs use `ask-first` without an approval channel. The `deepseek` run
+exercises automatic search and the `off` run passes `--no-web-search`. A
+SearXNG URL or `fixture` uses explicit startup search approval. Fixture scoring
 also checks that the backend saw the expected request and returned the expected
-tool outcome.
+tool outcome. The report counts shell calls so a public lookup that detours
+through the shell is visible.
 
 The report distinguishes correct facts, useful evidence returned by the search,
 and citations that match returned URLs with supporting evidence. These checks

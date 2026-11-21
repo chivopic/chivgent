@@ -113,7 +113,7 @@ export interface SlashCommandContext {
   readonly providerName?: string;
   readonly modelName?: string;
   /** Configured search provider, absent when web_search is not registered. */
-  readonly webSearch?: { readonly provider: string; readonly approved?: boolean };
+  readonly webSearch?: { readonly provider: string; readonly approved?: boolean; readonly automatic?: boolean };
   readonly permissions?: readonly string[];
   readonly permissionPolicy?: PermissionPolicy;
   readonly tui?: boolean;
@@ -477,7 +477,7 @@ function describeStatus(context: SlashCommandContext): string {
     `plan:      ${context.session.planMode ? "on (writes and Shell blocked for this session)" : "off"}`,
     ...(context.permissionPolicy === undefined ? [] : [`permissions: ${context.permissionPolicy.mode} (${describePermissionMode(context.permissionPolicy.mode)})`]),
     ...(context.webSearch === undefined ? [] : [
-      `web search: ${context.webSearch.provider}${context.webSearch.approved ? " (approved for this process)" : context.permissionPolicy === undefined || context.permissionPolicy.mode === "unrestricted" ? "" : " (each query asks for approval)"}`,
+      `web search: ${context.webSearch.provider}${context.webSearch.automatic ? " (automatic)" : context.webSearch.approved ? " (approved for this process)" : context.permissionPolicy === undefined || context.permissionPolicy.mode === "unrestricted" ? "" : " (each query asks for approval)"}`,
     ]),
     ...(context.permissionPolicy === undefined ? [
       `file write grant: ${context.permissions === undefined ? "unavailable" : context.permissions.includes("file-write") ? "enabled" : "disabled"}`,
@@ -514,6 +514,7 @@ export interface ReplOptions {
   readonly modelName?: string;
   /** Configured search provider, absent when web_search is not registered. */
   readonly webSearch?: { readonly provider: string; readonly approved?: boolean };
+  readonly automaticWebSearch?: () => string | undefined;
   readonly permissions?: readonly string[];
   readonly permissionPolicy?: PermissionPolicy;
   readonly sessionFileForSession?: SlashCommandContext["sessionFileForSession"];
@@ -754,8 +755,6 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       if (signal?.aborted) return { approved: false, reason: "cancelled" };
       let resizeListener: (() => void) | undefined;
       options.liveRegion?.pause();
-      tuiInput?.setApprovalMode(true);
-      tuiInput?.setBusy(false);
       try {
         const width = terminalWidth({ columns: (options.output as typeof options.output & { columns?: number }).columns });
         const wraps = context?.startsWith(WEB_SEARCH_APPROVAL_PREFIX) === true;
@@ -769,12 +768,19 @@ export async function runRepl(options: ReplOptions): Promise<number> {
           resizeListener = invalidateOnResize;
           options.output.on("resize", invalidateOnResize);
         }
-        write(approvalPreview(command, width, context ?? "Shell command", wraps ? { wrap: true } : {}));
+        write(approvalPreview(command, width, context ?? "Shell command", {
+          wrap: wraps,
+          compact: tuiInput !== undefined,
+        }));
         if (!reviewable) {
           return { approved: false, reason: "unreviewable" };
         }
-        readline.setPrompt("approve> ");
-        readline.prompt();
+        tuiInput?.setApprovalMode("allow");
+        tuiInput?.setBusy(false);
+        if (tuiInput === undefined) {
+          readline.setPrompt("approve> ");
+          readline.prompt();
+        }
         // Ctrl+C must unblock the pending line read, not leave the agent
         // stuck waiting for a reply to an approval that was cancelled.
         const unblockOnAbort = (): void => {
@@ -799,7 +805,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       } finally {
         if (resizeListener !== undefined) options.output.off("resize", resizeListener);
         readline.setPrompt(REPL_PROMPT);
-        tuiInput?.setApprovalMode(false);
+        tuiInput?.setApprovalMode();
         tuiInput?.setBusy(true);
         options.liveRegion?.resume();
       }
@@ -910,7 +916,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
     const root = terminalText(activeSession.cwd);
     write(`\nRead-only local Git diff (${mode}) in:\n${root}\nNo network, hooks, external diff or file writes. Approve once? [y/N]\n`);
     tuiInput.acceptLine();
-    tuiInput.setApprovalMode(true);
+    tuiInput.setApprovalMode("skip");
     readline.setPrompt("gitdiff> ");
     let allowed = false;
     try {
@@ -918,7 +924,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
       const answer = await readNextLine();
       allowed = answer?.trim().toLowerCase() === "y";
     } finally {
-      tuiInput.setApprovalMode(false);
+      tuiInput.setApprovalMode();
       readline.setPrompt(REPL_PROMPT);
     }
     if (!allowed) {
@@ -1096,6 +1102,10 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         const formattedPrompt = line.split("\n").map((l, i) => `${i === 0 ? prefix : "  "}${terminalText(l)}`).join("\n");
         write(`\n${formattedPrompt}\n\n`);
       }
+      const automaticSearchName = options.automaticWebSearch?.();
+      const webSearch = options.webSearch ?? (automaticSearchName === undefined
+        ? undefined
+        : { provider: automaticSearchName, automatic: true });
       const outcome = handleSlashCommand(line, {
         session: activeSession,
         write,
@@ -1113,7 +1123,7 @@ export async function runRepl(options: ReplOptions): Promise<number> {
         ...(options.compactionEnabled === undefined ? {} : { compactionEnabled: options.compactionEnabled }),
         ...(options.providerName === undefined ? {} : { providerName: options.providerName }),
         ...(options.modelName === undefined ? {} : { modelName: options.modelName }),
-        ...(options.webSearch === undefined ? {} : { webSearch: options.webSearch }),
+        ...(webSearch === undefined ? {} : { webSearch }),
         ...(options.permissions === undefined ? {} : { permissions: options.permissions }),
         ...(options.permissionPolicy === undefined ? {} : { permissionPolicy: options.permissionPolicy }),
         ...(options.tui === true ? { tui: true } : {}),

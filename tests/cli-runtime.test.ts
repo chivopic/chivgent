@@ -122,6 +122,36 @@ describe("local CLI session setup", () => {
     });
   });
 
+  it("follows active search availability and executes automatic searches without approval", async () => {
+    const search = vi.fn(async () => ({ provider: "DeepSeek Search", results: [] }));
+    const backend = { name: "DeepSeek Search", search };
+    let active = false;
+    const approve = vi.fn(async () => false);
+    const lookup = (id: string) => assistant("", [{ id, name: "web_search", arguments: { query: "public facts" } }]);
+    const llm = new FakeLLMClient([assistant("Offline."), lookup("active"), assistant("Done."), lookup("inactive"), assistant("Offline again.")]);
+    const session = createLocalSession({
+      options: parseCliArgs([], {}),
+      cwd: "/workspace",
+      llm,
+      automaticWebSearch: () => active ? backend : undefined,
+      permissionPolicy: new PermissionPolicy("ask-first", approve),
+      restored: { resumed: false },
+    });
+    await session.prompt("Hello");
+    active = true;
+    await session.prompt("Find a public fact");
+    active = false;
+    await session.prompt("Hello again");
+
+    expect(llm.requests.map((request) => request.tools.some((tool) => tool.name === "web_search")))
+      .toEqual([false, true, true, false, false]);
+    expect(llm.requests[0]?.systemPrompt).not.toContain(WEB_SEARCH_SYSTEM_PROMPT);
+    expect(llm.requests[1]?.systemPrompt).toContain(WEB_SEARCH_SYSTEM_PROMPT);
+    expect(llm.requests[1]?.systemPrompt).toContain("Current date (UTC)");
+    expect(search).toHaveBeenCalledOnce();
+    expect(approve).not.toHaveBeenCalled();
+  });
+
   it.each(["ask-first", "workspace"] as const)("grants only the configured search without prompting in %s", async (mode) => {
     const approve = vi.fn(async () => false);
     const fetcher = vi.fn(async () => Response.json({ results: [{ url: "https://example.test/source", title: "Evidence" }] }));

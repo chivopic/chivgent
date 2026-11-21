@@ -96,14 +96,13 @@ chivgent --continue                                  # 这个目录里的上一�
 
 ## 网页搜索
 
-只有指定后端时才会注册 `web_search`：
+使用已登录的 DeepSeek 官方模型时，直接启动 `chivgent` 并提问即可按需搜索，无需逐次审批。用 `--no-web-search` 临时关闭。见[网页搜索](docs/web-search.md)。
+
+使用 SearXNG 时，指定搜索接口地址。
 
 ```bash
-chivgent --provider deepseek --web-search deepseek --approve-web-search
 CHIVGENT_WEB_SEARCH_TOKEN=… chivgent --web-search https://search.example.com
 ```
-
-可以选内置的 DeepSeek Search API，也可以填写 SearXNG 的 JSON 接口。加上 `--approve-web-search` 后，本进程对该后端的查询直接执行。见[网页搜索](docs/web-search.md)。
 
 ## 它怎么接在一起
 
@@ -123,7 +122,7 @@ CHIVGENT_WEB_SEARCH_TOKEN=… chivgent --web-search https://search.example.com
 | 读这个项目 | 开着 | 当前目录。被忽略的、生成的和凭据路径会跳过。 |
 | 改文件 | `--allow-writes` | 工作区内的文件。修改必须精确匹配，写入是原子的。 |
 | 跑命令 | `--allow-shell` | macOS 用 Seatbelt，其他系统用 Docker。默认没有网络。每条命令都要确认。 |
-| 搜索网页 | `--web-search URL\|deepseek` | 选择搜索后端。加 `--approve-web-search` 可授权本进程的查询。 |
+| 搜索网页 | `--web-search URL\|deepseek` | 显式选择后端。加 `--approve-web-search` 可授权本进程的查询。使用 DeepSeek 官方模型可直接搜索。 |
 | 选一种策略 | `--permission-mode` | `ask-first`、`workspace` 或 `unrestricted`。在这个进程里代替上面的开关。 |
 
 费用付给你选的供应商，按他们的价格。chivgent 显示 token 数，不折算成费用。

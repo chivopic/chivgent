@@ -84,11 +84,11 @@ try {
       if (job.task.fixture) {
         result.backendRequests = (requests.get(job.task.id) ?? 0) - before;
         result.fixturePassed = result.fact && (result.citation ?? true) &&
-          result.backendRequests === 1 && result.searches.length === 1 &&
+          result.backendRequests === 1 && result.searches.length === 1 && result.shellCalls === 0 &&
           result.searches[0].error === ((job.task.fixture.status ?? 200) !== 200);
       }
       reports.push(result);
-      console.log(`${result.id} #${result.attempt} ${result.status} fact=${result.fact} citation=${result.citation ?? "-"} searches=${result.searches.length}`);
+      console.log(`${result.id} #${result.attempt} ${result.status} fact=${result.fact} citation=${result.citation ?? "-"} searches=${result.searches.length} shell=${result.shellCalls}`);
     }
   }));
   reports.sort((a, b) => a.id.localeCompare(b.id) || a.attempt - b.attempt);
@@ -99,6 +99,7 @@ try {
     supportedCitations: reports.filter((r) => r.citation === true).length,
     citationTasks: reports.filter((r) => r.citation !== undefined).length,
     searchCalls: reports.flatMap((r) => r.searches).length,
+    shellCalls: reports.reduce((sum, report) => sum + report.shellCalls, 0),
     usefulRetrievals: reports.filter((r) => r.retrievedEvidence).length,
     unexpectedSearchOnControl: reports.filter((r) => r.id === "stable" && r.searches.length > 0).length,
     toolErrors: reports.flatMap((r) => r.searches).filter((result) => result.error).length,
@@ -118,11 +119,13 @@ async function evaluate(task, attempt, endpoint) {
   const args = [
     cli,
     "--provider", "deepseek", "--model", values.model, "--no-session", "--no-extensions",
-    "--json", "--max-turns", "5",
+    "--json", "--max-turns", "5", "--permission-mode", "ask-first",
   ];
-  if (endpoint !== "off") {
+  if (endpoint === "off") {
+    args.push("--no-web-search");
+  } else if (endpoint !== "deepseek") {
     args.push("--web-search", task.fixture ? `${endpoint}/${task.id}` : endpoint,
-      "--permission-mode", "ask-first", "--approve-web-search");
+      "--approve-web-search");
   }
   const ask = task.fixture || task.id === "stable"
     ? task.question
@@ -141,6 +144,7 @@ async function evaluate(task, attempt, endpoint) {
   const events = stdout.trim().split("\n").filter(Boolean).map(JSON.parse);
   const final = events.findLast((e) => e.type === "agent_end");
   const answer = final?.messages.findLast((m) => m.role === "assistant")?.content ?? "";
+  const shellCalls = events.filter((e) => e.type === "tool_execution_start" && e.toolName === "bash").length;
   const searches = events.filter((e) => e.type === "tool_execution_end" && e.toolName === "web_search")
     .map((e) => ({
       error: e.isError,
@@ -172,7 +176,7 @@ async function evaluate(task, attempt, endpoint) {
   const evidence = (hits) => matches(task.evidence ?? task.facts, hits.map((r) => `${r.title} ${r.snippet}`).join("\n"));
   const status = final?.status ?? "error";
   return {
-    id: task.id, attempt, status, fact, searches, answer, elapsedMs: Date.now() - started,
+    id: task.id, attempt, status, fact, searches, shellCalls, answer, elapsedMs: Date.now() - started,
     ...(task.source === undefined ? {} : {
       citation: Boolean(fact && evidence(sources.filter((r) => urls.has(normalUrl(r.url))))),
       retrievedEvidence: evidence(sources),

@@ -129,8 +129,8 @@ export function parsePermissionMode(value: string): PermissionMode {
 
 export function describePermissionMode(mode: PermissionMode): string {
   switch (mode) {
-    case "ask-first": return "File changes and shell commands require approval. Configured web search asks per query unless approved at startup.";
-    case "workspace": return "Workspace file changes and sandboxed shell commands run automatically with network disabled. Commands needing network or host access require per-command approval. Configured web search asks per query unless approved at startup.";
+    case "ask-first": return "File changes and shell commands require approval.";
+    case "workspace": return "Workspace file changes and sandboxed shell commands run automatically with network disabled. Commands needing network or host access require per-command approval.";
     case "unrestricted": return "Shell commands run automatically with broad host file access and network inside the OS sandbox; configured web search runs without a prompt; workspace file tools remain workspace-bound.";
   }
 }

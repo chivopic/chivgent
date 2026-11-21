@@ -1,5 +1,4 @@
 import type { CliOptions } from "../cli-options.js";
-import type { LLMClient } from "../llm.js";
 import { RetryingLLMClient } from "../retry.js";
 import { defaultProviderRegistry, ProviderRegistry } from "./registry.js";
 import { CredentialResolver } from "../auth/credentials.js";
@@ -8,6 +7,9 @@ import { EnvCredentialSource } from "../auth/env-credentials.js";
 import { defaultAuthFile, FileCredentialSource } from "../auth/file-credentials.js";
 import { refreshSavedOAuthCredential } from "../auth/oauth.js";
 import { OAuthRefreshingLLMClient } from "./oauth-client.js";
+import type { ConfiguredLLMClient } from "./deferred-client.js";
+import { DEEPSEEK_BASE_URL } from "./deepseek.js";
+import { DeepSeekSearchBackend } from "../websearch/backend.js";
 
 /** Returns the configured client, or the message explaining what is missing. */
 export async function createConfiguredClient(
@@ -15,7 +17,7 @@ export async function createConfiguredClient(
   registry: ProviderRegistry = defaultProviderRegistry,
   resolver: CredentialResolver = defaultCredentialResolver(options),
   oauthFile?: string,
-): Promise<LLMClient | string> {
+): Promise<ConfiguredLLMClient | string> {
   const definition = registry.get(options.provider);
   if (options.model === undefined) {
     const variables = definition.modelEnvKeys.join(" or ");
@@ -57,13 +59,19 @@ export async function createConfiguredClient(
     ...(options.baseURL === undefined ? {} : { baseURL: options.baseURL }),
   });
 
-  return new RetryingLLMClient(client, {
+  const retryingClient = new RetryingLLMClient(client, {
     onRetry: ({ attempt, delayMs, reason }) => {
       process.stderr.write(
         `Provider call failed (${reason}); retry ${attempt} in ${delayMs}ms.\n`,
       );
     },
   });
+  if (definition.id === "deepseek" && (options.baseURL ?? DEEPSEEK_BASE_URL).replace(/\/$/, "") === DEEPSEEK_BASE_URL) {
+    return Object.assign(retryingClient, {
+      webSearchBackend: new DeepSeekSearchBackend({ apiKey: credential.apiKey }),
+    });
+  }
+  return retryingClient;
 }
 
 export function defaultCredentialResolver(options: Pick<CliOptions, "apiKey">): CredentialResolver {

@@ -96,14 +96,13 @@ chivgent --continue                                      # last session in this 
 
 ## Web search
 
-`web_search` is off unless you name a backend:
+With a signed-in DeepSeek model on the official endpoint, launch `chivgent` and ask your question. Web search runs as needed without approval. Use `--no-web-search` to turn it off for the process. See [web search](docs/web-search.md).
+
+To use a SearXNG endpoint, supply its URL.
 
 ```bash
-chivgent --provider deepseek --web-search deepseek --approve-web-search
 CHIVGENT_WEB_SEARCH_TOKEN=… chivgent --web-search https://search.example.com
 ```
-
-Select the built-in DeepSeek Search API or supply a SearXNG JSON endpoint. Add `--approve-web-search` to approve queries to that backend for the process. See [web search](docs/web-search.md).
 
 ## How it fits together
 
@@ -123,7 +122,7 @@ This is the build, not the auto-style default above.
 | Read the project | on | This directory. Ignored, generated, and credential paths are skipped. |
 | Change files | `--allow-writes` | Files inside the workspace. An edit has to match exactly, and it is written atomically. |
 | Run a command | `--allow-shell` | Seatbelt on macOS, Docker elsewhere. Network is off. Each command requires confirmation. |
-| Search the web | `--web-search URL\|deepseek` | Select a search backend. `--approve-web-search` approves its queries for this process. |
+| Search the web | `--web-search URL\|deepseek` | Select a backend explicitly. `--approve-web-search` approves its queries for this process. Automatic DeepSeek Search is available without flags. |
 | Pick a policy | `--permission-mode` | `ask-first`, `workspace`, or `unrestricted`. Replaces the flags for this process. |
 
 You pay the provider you picked, at their prices. chivgent shows token counts; it does not convert them into costs.

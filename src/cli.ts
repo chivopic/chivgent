@@ -267,7 +267,6 @@ export async function main(argv: readonly string[]): Promise<number> {
     }
     webSearchBackend = new DeepSeekSearchBackend({ apiKey: credential.apiKey });
   }
-  const webSearchConfig = webSearchBackend === undefined ? {} : { webSearchBackend };
   const webSearchName = webSearchBackend?.name ??
     (searchOptions !== undefined && "url" in searchOptions ? webSearchProviderName(searchOptions.url) : undefined);
 
@@ -284,6 +283,13 @@ export async function main(argv: readonly string[]): Promise<number> {
   if (typeof configured !== "string") {
     llm.set(configured);
   }
+  const automaticWebSearch = searchOptions === undefined && !options.noWebSearch && !options.serve
+    ? () => llm.webSearchBackend
+    : undefined;
+  const webSearchConfig = {
+    ...(webSearchBackend === undefined ? {} : { webSearchBackend }),
+    ...(automaticWebSearch === undefined ? {} : { automaticWebSearch }),
+  };
 
   const restored = await restoreSession(options, store, cwd);
   if (typeof restored === "string") {
@@ -420,6 +426,9 @@ export async function main(argv: readonly string[]): Promise<number> {
               provider: webSearchName,
               ...(searchOptions?.approved === true ? { approved: true } : {}),
             } }),
+        ...(automaticWebSearch === undefined ? {} : {
+          automaticWebSearch: () => automaticWebSearch()?.name,
+        }),
         permissions: [
           ...(options.permissionMode === undefined ? [] : [`mode:${options.permissionMode}`]),
           ...(options.allowWrites ? ["file-write"] : []),

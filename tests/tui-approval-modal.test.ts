@@ -51,7 +51,7 @@ function createApprovalSession(command: string, gate: ShellApprovalGate, execute
 }
 
 describe("TUI approval modal terminal integration", () => {
-  it("pauses live output during a shell approval, denies by default and restores terminal input", async () => {
+  it("pauses live output during a shell approval, skips on n and restores terminal input", async () => {
     vi.stubEnv("TERM", "xterm-256color");
     const screen = terminalHarness(80, 24);
     const gate = new ShellApprovalGate();
@@ -73,7 +73,7 @@ describe("TUI approval modal terminal integration", () => {
       await screen.flush();
       expect(screen.visible().join("\n")).toContain("npm test");
       expect(screen.bytes()).toContain("native (Seatbelt, network denied)");
-      screen.input.write("\r"); // The default/Enter is DENY.
+      screen.input.write("n");
       await vi.waitFor(() => expect(screen.bytes()).toContain("Completed"));
       expect(executed).toEqual([]);
       expect(session.messages.filter(m => m.role === "tool")[0]).toMatchObject({
@@ -92,7 +92,7 @@ describe("TUI approval modal terminal integration", () => {
     }
   });
 
-  it("approves once on a single y keystroke, without Enter or queued input", async () => {
+  it.each([["Y", "y"], ["Enter", "\r"]])("approves once using a single %s keystroke", async (_label, key) => {
     vi.stubEnv("TERM", "xterm-256color");
     const screen = terminalHarness(80, 24);
     const gate = new ShellApprovalGate();
@@ -105,14 +105,47 @@ describe("TUI approval modal terminal integration", () => {
     try {
       screen.input.write("run tests\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("Approve once?"));
-      screen.input.write("y");
-      await vi.waitFor(() => expect(executed).toEqual(["npm test"]));
+      screen.input.write(key);
       await vi.waitFor(() => expect(screen.bytes()).toContain("Completed"));
+      expect(executed).toEqual(["npm test"]);
       screen.input.write("/session\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("prompts:   1"));
       screen.input.write("\x04");
       expect(await repl).toBe(0);
     } finally { screen.input.end(); region.stop(); await repl; screen.dispose(); }
+  });
+
+  it("shows all approval shortcuts in a compact narrow terminal", async () => {
+    vi.stubEnv("TERM", "xterm-256color");
+    const screen = terminalHarness(34, 15);
+    const gate = new ShellApprovalGate();
+    const executed: string[] = [];
+    const { session } = createApprovalSession("npm test", gate, executed);
+    const region = createLiveRegion({ stream: screen.output, width: () => screen.output.columns });
+    session.subscribe(region.listener);
+    const repl = runRepl({
+      session, ...screen, stderr: screen.output, tui: true, shellApproval: gate, liveRegion: region,
+    });
+    try {
+      screen.input.write("run tests\r");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("Approve once?"));
+      await screen.flush();
+      const rendered = screen.history().join("\n");
+      screen.input.write("\x1b");
+      await vi.waitFor(() => expect(screen.bytes()).toContain("Completed"));
+      screen.input.write("\x04");
+      expect(await repl).toBe(0);
+      expect(executed).toEqual([]);
+      expect(rendered).toContain("Enter/Y Allow");
+      expect(rendered).toContain("Esc/N Skip");
+      expect(rendered).toContain("Ctrl+C Stop");
+      expect(rendered).not.toContain("│=source line");
+    } finally {
+      screen.input.end();
+      region.stop();
+      await repl;
+      screen.dispose();
+    }
   });
 
   it("preserves explicit newlines and repeated spaces through review and execution", async () => {
@@ -234,7 +267,7 @@ describe("TUI approval modal terminal integration", () => {
     } finally { screen.input.end(); region.stop(); await repl; screen.dispose(); }
   });
 
-  it("rechecks the current terminal width before accepting y", async () => {
+  it("rechecks the current terminal width before accepting Enter", async () => {
     vi.stubEnv("TERM", "xterm-256color");
     const screen = terminalHarness(80, 15);
     const gate = new ShellApprovalGate();
@@ -252,9 +285,9 @@ describe("TUI approval modal terminal integration", () => {
       await vi.waitFor(() => expect(screen.bytes()).toContain("Approve once?"));
       screen.resize(32, 15);
       screen.resize(80, 15);
-      screen.input.write("y");
-      await vi.waitFor(() => expect(screen.bytes()).toContain("resized"));
+      screen.input.write("\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("Completed"));
+      expect(screen.bytes()).toContain("resized");
       expect(executed).toEqual([]);
       expect(session.messages.find(message => message.role === "tool")?.content).toContain("cannot be safely displayed");
       screen.input.write("\x04");
@@ -308,9 +341,9 @@ describe("TUI approval modal terminal integration", () => {
       expect(visible).toContain("Web search via fake (test)");
       for (const word of query.split(" ")) expect(visible).toContain(word);
       expect(screen.bytes()).not.toContain("cannot be fully reviewed");
-      screen.input.write("y");
-      await vi.waitFor(() => expect(queries).toEqual([query]));
+      screen.input.write("\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("Completed"));
+      expect(queries).toEqual([query]);
       screen.input.write("\x04");
       await repl;
     } finally {

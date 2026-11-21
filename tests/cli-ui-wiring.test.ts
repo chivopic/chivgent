@@ -225,6 +225,23 @@ describe("CLI terminal UI wiring", () => {
     });
   });
 
+  it("offers the active model's search backend in the TUI without launch flags", async () => {
+    const backend = { name: "DeepSeek Search (api.deepseek.com)", search: vi.fn() };
+    harness.createConfiguredClient.mockResolvedValueOnce({ webSearchBackend: backend });
+    expect(await main(["--provider", "deepseek", "--no-session", "--no-extensions"])).toBe(0);
+    const config = harness.createLocalSession.mock.calls[0]?.[0];
+    expect(config?.automaticWebSearch).toEqual(expect.any(Function));
+    expect((config?.automaticWebSearch as (() => unknown) | undefined)?.()).toBe(backend);
+    expect(backend.search).not.toHaveBeenCalled();
+  });
+
+  it("honors --no-web-search even when the active model has a search backend", async () => {
+    harness.createConfiguredClient.mockResolvedValueOnce({ webSearchBackend: { name: "DeepSeek Search" } });
+    expect(await main(["--provider", "deepseek", "--no-session", "--no-extensions", "--no-web-search"])).toBe(0);
+    expect(harness.createLocalSession.mock.calls[0]?.[0]).not.toHaveProperty("automaticWebSearch");
+    expect(harness.runRepl.mock.calls[0]?.[0]).not.toHaveProperty("automaticWebSearch");
+  });
+
   it("leaves the rich interface active under NO_COLOR without passing ANSI color", async () => {
     harness.process.env.NO_COLOR = "1";
 

@@ -10,13 +10,13 @@ type TerminalInput = NodeJS.ReadableStream & {
  * out of the terminal scrollback:
  * - `rawHandler` forwards raw bytes exclusively to modal/composer controllers.
  * - `busy` drops ordinary typing while keeping Ctrl+C cancellation responsive.
- * - `approvalMode` turns y/n/Escape into an immediate confirmation answer.
+ * - `approvalMode` maps a confirmation keystroke to an explicit answer.
  * - `escapeHandler` disambiguates standalone Escape for structured questions.
  */
 export class TuiInput extends PassThrough {
   readonly isTTY: boolean;
   private busy = false;
-  private approvalMode = false;
+  private approvalMode?: "allow" | "skip";
   private rawHandler?: (chunk: Buffer) => void;
   private escapeHandler?: () => void;
   private submitted = false;
@@ -41,9 +41,9 @@ export class TuiInput extends PassThrough {
     this.busy = busy;
   }
 
-  /** While approving, y/n/Escape answer immediately without Enter. */
-  setApprovalMode(enabled: boolean): void {
-    this.approvalMode = enabled;
+  /** Set what Enter does in an approval, or leave approval mode. */
+  setApprovalMode(enter?: "allow" | "skip"): void {
+    this.approvalMode = enter;
   }
 
   /** Exclusive input for cursor-addressed controllers (composer, picker, review). */
@@ -102,18 +102,34 @@ export class TuiInput extends PassThrough {
     this.afterCR = false;
     if (bytes.length === 0) return;
 
-    if (this.approvalMode && !this.submitted) {
-      // Single-key approval; ignore extra pasted bytes and always allow Ctrl+C.
+    if (this.approvalMode !== undefined) {
       if (bytes.includes(3)) {
         this.write("\u0003");
         return;
       }
-      const first = bytes[0];
-      if (first === 121 || first === 89 || first === 110 || first === 78 || first === 27) {
-        this.submitted = true;
-        this.write(first === 121 || first === 89 ? "y\r" : "n\r");
-        return;
+      const key = bytes[0];
+      const crlf = bytes.length === 2 && key === 13 && bytes[1] === 10;
+      // A pasted chunk cannot approve. Escape sequences still skip.
+      if (this.submitted || (bytes.length !== 1 && !crlf && key !== 27)) return;
+      let answer: "y" | "n";
+      switch (key) {
+        case 13:
+        case 10:
+          this.afterCR = key === 13 && !crlf;
+          answer = this.approvalMode === "allow" ? "y" : "n";
+          break;
+        case 121: case 89: // y / Y
+          answer = "y";
+          break;
+        case 110: case 78: case 27: // n / N / Escape
+          answer = "n";
+          break;
+        default:
+          return;
       }
+      this.submitted = true;
+      this.write(`${answer}\r`);
+      return;
     }
 
     if (this.busy || this.submitted) {

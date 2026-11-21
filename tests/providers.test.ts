@@ -138,6 +138,19 @@ describe("createConfiguredClient", () => {
     expect(typeof result).not.toBe("string");
   });
 
+  it("offers built-in search only for a DeepSeek client using the official endpoint", async () => {
+    const resolver = new CredentialResolver([new RuntimeCredentialSource("test-key")]);
+    const options = parseCliArgs(["--provider", "deepseek"], {});
+    const direct = await createConfiguredClient(options, undefined, resolver);
+    const proxy = await createConfiguredClient(
+      { ...options, baseURL: "https://proxy.example" }, undefined, resolver,
+    );
+
+    expect(direct).toHaveProperty("webSearchBackend.name", "DeepSeek Search (api.deepseek.com)");
+    expect(proxy).toBeTypeOf("object");
+    expect(proxy).not.toHaveProperty("webSearchBackend");
+  });
+
   it("surfaces an unreadable auth file instead of throwing", async () => {
     const failing = new CredentialResolver([
       {

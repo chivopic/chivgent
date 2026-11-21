@@ -42,6 +42,7 @@ export class ToolExecutionError extends Error {
 }
 
 export interface Tool extends ToolDefinition {
+  isAvailable?(): boolean;
   execute(
     argumentsValue: unknown,
     context: ToolContext,

@@ -27,7 +27,7 @@ describe("consent and real-terminal git diff review", () => {
       await vi.waitFor(() => expect(screen.bytes()).toContain("/help for shortcuts"));
       screen.input.write("/diff\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("Approve once?"));
-      screen.input.write("n"); // single-key denial
+      screen.input.write("\r");
       await vi.waitFor(() => expect(screen.bytes()).toContain("review denied"));
       expect(read).not.toHaveBeenCalled();
       screen.input.write("\u0004");

@@ -67,6 +67,7 @@ export interface CliOptions {
     | { readonly url: string; readonly token?: string }
     | { readonly provider: "deepseek" }
   ) & { readonly approved?: true };
+  readonly noWebSearch?: true;
   /** Explicit policy for tool approval boundaries; absent preserves legacy flags. */
   readonly permissionMode?: PermissionMode;
   /** Explicitly request the rich terminal interface. */
@@ -121,6 +122,7 @@ export function parseCliArgs(
   let shellNetwork = false;
   let webSearchURL: string | undefined;
   let approveWebSearch = false;
+  let noWebSearch = false;
   let permissionMode: PermissionMode | undefined;
   let tui = false;
   let simple = false;
@@ -199,6 +201,8 @@ export function parseCliArgs(
       webSearchURL = readOptionValue(argv, index, "--web-search");
       if (webSearchURL !== "deepseek") parseBackendURL(webSearchURL);
       index += 1;
+    } else if (argument === "--no-web-search") {
+      noWebSearch = true;
     } else if (argument === "--approve-web-search") {
       approveWebSearch = true;
     } else if (argument === "--permission-mode") {
@@ -252,6 +256,9 @@ export function parseCliArgs(
   if (approveWebSearch && webSearchURL === undefined) {
     throw new TypeError("--approve-web-search requires --web-search.");
   }
+  if (noWebSearch && webSearchURL !== undefined) {
+    throw new TypeError("--no-web-search cannot be combined with --web-search.");
+  }
   if (permissionMode !== undefined && serve) {
     throw new TypeError("--permission-mode cannot be used with --serve because served sessions do not have an interactive approval channel.");
   }
@@ -287,6 +294,7 @@ export function parseCliArgs(
     approveAllShell,
     shellBackend,
     shellNetwork,
+    ...(noWebSearch ? { noWebSearch: true as const } : {}),
     ...(webSearchURL === undefined ? {} : {
       webSearch: {
         ...(webSearchURL === "deepseek" ? { provider: "deepseek" as const } : {
@@ -342,6 +350,7 @@ Options:
   --shell-backend MODE  auto, native, or docker (default: auto; macOS uses native).
   --shell-network  Allow shell network access (explicit opt-in for either backend).
   --web-search URL|deepseek  Enable web_search through SearXNG or DeepSeek Search.
+  --no-web-search  Disable automatic web search for the active DeepSeek model.
   --approve-web-search  Approve queries to the configured backend for this process.
   --permission-mode MODE  ask-first, workspace, or unrestricted (network enabled).
   --approve-all-shell  Explicitly approve all shell commands this session;
