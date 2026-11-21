@@ -27,7 +27,7 @@ import { WriteFileTool } from "./tools/write-file.js";
 import { UpdatePlanTool } from "./tools/update-plan.js";
 import { QuestionTool } from "./tools/question.js";
 import { QuestionBroker } from "./questions.js";
-import { SearxngBackend, type WebSearchBackend } from "./websearch/backend.js";
+import { DEEPSEEK_SEARCH_QUERY_CHARACTERS, SearxngBackend, type WebSearchBackend } from "./websearch/backend.js";
 import { LocalWorkspace } from "./workspace.js";
 
 interface LocalSessionConfig {
@@ -50,6 +50,7 @@ interface LocalSessionConfig {
   readonly shellApproval?: ShellApprovalGate;
   readonly permissionPolicy?: PermissionPolicy;
   readonly webSearchBackend?: WebSearchBackend;
+  readonly automaticWebSearch?: () => WebSearchBackend | undefined;
   readonly allowShellForPolicy?: boolean;
 }
 
@@ -69,7 +70,21 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
       }));
   if (allowWrites) prompt.push(WRITE_SYSTEM_PROMPT);
   if (allowShell) prompt.push(modernPolicy ? MODERN_SHELL_SYSTEM_PROMPT : SHELL_SYSTEM_PROMPT);
-  if (webSearchBackend !== undefined) prompt.push(WEB_SEARCH_SYSTEM_PROMPT);
+  let webSearchTool: WebSearchTool | undefined;
+  if (webSearchBackend !== undefined) {
+    const policy = config.permissionPolicy;
+    webSearchTool = new WebSearchTool({
+      backend: webSearchBackend,
+      ...(policy !== undefined && options.webSearch?.approved !== true ? {
+        authorize: (query, signal) => policy.authorizeWebSearch(query, webSearchBackend.name, signal),
+      } : {}),
+    });
+  } else if (config.automaticWebSearch !== undefined) {
+    webSearchTool = new WebSearchTool({
+      backend: config.automaticWebSearch,
+      queryCharacters: DEEPSEEK_SEARCH_QUERY_CHARACTERS,
+    });
+  }
   if (modernPolicy) prompt.push(modernPermissionPrompt());
   prompt.push(...(extensions?.systemPromptContributions ?? []));
 
@@ -89,7 +104,10 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
   const agent: Omit<AgentOptions, "onEvent"> = {
     systemPrompt: () => [
       ...prompt,
-      ...(webSearchDatePrompt === undefined ? [] : [webSearchDatePrompt]),
+      ...(webSearchTool?.isAvailable() ? [
+        WEB_SEARCH_SYSTEM_PROMPT,
+        ...(webSearchDatePrompt === undefined ? [] : [webSearchDatePrompt]),
+      ] : []),
       modelSelectionPrompt(config.modelSelection?.() ?? options),
     ].join("\n"),
     maxTurns: options.maxTurns,
@@ -97,13 +115,7 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
     tools: [
       new ListFilesTool(),
       new SearchTextTool(),
-      ...(webSearchBackend === undefined ? [] : [new WebSearchTool({
-        backend: webSearchBackend,
-        ...(modernPolicy && options.webSearch?.approved !== true ? {
-          authorize: (query: string, signal?: AbortSignal) =>
-            config.permissionPolicy!.authorizeWebSearch(query, webSearchBackend.name, signal),
-        } : {}),
-      })]),
+      ...(webSearchTool === undefined ? [] : [webSearchTool]),
       new ReadFileTool(),
       new UpdatePlanTool(),
       new QuestionTool(new QuestionBroker()),
@@ -163,7 +175,7 @@ export function createLocalSession(config: LocalSessionConfig): AgentSession {
     planMode: restored.planMode ?? false,
     ...(store === undefined ? {} : { store }),
   });
-  if (webSearchBackend !== undefined) {
+  if (webSearchTool !== undefined) {
     session.subscribe((event) => {
       if (event.type === "agent_start") {
         // Keep the provider prompt stable through tool calls, even at midnight.

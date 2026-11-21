@@ -154,7 +154,7 @@ export function approvalPreview(
   command: string,
   columns: number,
   context = "Shell command",
-  options: { readonly wrap?: boolean } = {},
+  options: { readonly wrap?: boolean; readonly compact?: boolean } = {},
 ): string {
   const width = Math.max(12, columns - 1);
   const shell = options.wrap !== true;
@@ -162,14 +162,32 @@ export function approvalPreview(
     ? wrapShellCommand(terminalText(command), width).lines
     : wrapText(terminalText(command), Math.max(1, width - 4));
   const truncated = shell && !commandReviewable(command, columns);
+  const contentLines = shell
+    ? visibleLines.slice(0, MAX_APPROVAL_DISPLAY_LINES)
+    : visibleLines.map(line => `  │ ${line}`);
+  if (options.compact) {
+    const labelWidth = Math.max(1, width - 2);
+    const shortcuts = ["Enter/Y Allow", "Esc/N Skip", "Ctrl+C Stop"];
+    const shortcutLine = shortcuts.join("  ·  ");
+    const questionLine = `Approve once?  ${shortcutLine}`;
+    const footer = truncated
+      ? wrapText("Command cannot be safely displayed. Shorten it to request approval.", labelWidth)
+      : displayWidth(questionLine) <= labelWidth
+      ? [questionLine]
+      : ["Approve once?", ...(displayWidth(shortcutLine) <= labelWidth
+        ? [shortcutLine]
+        : shortcuts.flatMap(shortcut => wrapText(shortcut, labelWidth)))];
+    const header = wrapText(context, labelWidth).map(line => `  ${line}`);
+    const legend = contentLines.some(line => line.startsWith("  ↳ "))
+      ? wrapText("│ Source line  ·  ↳ Visual wrap", labelWidth).map(line => `  ${line}`)
+      : [];
+    return `\n${[...header, ...legend, ...contentLines, ...footer.map(line => `  ${line}`)].join("\n")}\n`;
+  }
   const prefix = [
     `  ${context}`,
     "  ──────────────────────────────────────────",
     ...(shell ? ["  │=source line", "  ↳=visual wrap"] : []),
   ];
-  const contentLines = shell
-    ? visibleLines.slice(0, MAX_APPROVAL_DISPLAY_LINES)
-    : visibleLines.map(line => `  │ ${line}`);
   const lines = [
     ...prefix,
     ...contentLines,

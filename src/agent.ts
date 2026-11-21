@@ -144,7 +144,7 @@ export class Agent {
   }
 
   get toolNames(): readonly string[] {
-    return [...this.registry.keys()];
+    return [...this.registry.values()].filter(tool => tool.isAvailable?.() !== false).map(tool => tool.name);
   }
 
   clearSessionData(): void {
@@ -302,6 +302,7 @@ export class Agent {
     state: RunState,
     signal: AbortSignal | undefined,
     systemPrompt: string,
+    tools: readonly ToolDefinition[],
     prefixMessages: readonly Message[] = [],
   ): Promise<readonly Message[]> {
     const snapshot = snapshotMessages(state.messages);
@@ -317,7 +318,7 @@ export class Agent {
         prefixMessages,
         fixedMessages: [
           { role: "user", content: systemPrompt },
-          { role: "user", content: JSON.stringify(this.toolDefinitions) },
+          { role: "user", content: JSON.stringify(tools) },
         ],
       });
     } catch (error: unknown) {
@@ -386,14 +387,16 @@ export class Agent {
       delete state.continuation;
       state.systemPromptText = systemPrompt;
     }
-    const messages = await this.buildContext(state, signal, systemPrompt, prefixMessages);
+    const tools = this.toolDefinitions.filter((definition) => {
+      const tool = this.registry.get(definition.name);
+      return tool?.isAvailable?.() !== false && (!state.planMode || isPlanModeTool(tool));
+    });
+    const messages = await this.buildContext(state, signal, systemPrompt, tools, prefixMessages);
     const modelMessages: readonly Message[] = [...prefixMessages, ...messages];
     const request = {
       systemPrompt,
       messages: modelMessages,
-      tools: state.planMode
-        ? this.toolDefinitions.filter((definition) => isPlanModeTool(this.registry.get(definition.name)))
-        : this.toolDefinitions,
+      tools,
       ...(state.continuation === undefined
         ? {}
         : { continuation: state.continuation }),
@@ -509,7 +512,7 @@ export class Agent {
 
     if (state.planMode && !isPlanModeTool(tool)) {
       output = { content: `Plan Mode blocked tool: ${toolCall.name}. Only built-in read tools, update_plan, and question can run.`, isError: true };
-    } else if (tool === undefined) {
+    } else if (tool === undefined || tool.isAvailable?.() === false) {
       output = {
         content: `Unknown tool: ${toolCall.name}`,
         isError: true,

@@ -4,6 +4,11 @@ import type {
   LLMResponse,
   LLMStreamHandlers,
 } from "../llm.js";
+import type { WebSearchBackend } from "../websearch/backend.js";
+
+export interface ConfiguredLLMClient extends LLMClient {
+  readonly webSearchBackend?: WebSearchBackend;
+}
 
 export class NotSignedInError extends Error {
   constructor(message: string) {
@@ -22,7 +27,7 @@ export class NotSignedInError extends Error {
  * that turned out to be wrong.
  */
 export class DeferredLLMClient implements LLMClient {
-  private client: LLMClient | undefined;
+  private client: ConfiguredLLMClient | undefined;
 
   constructor(private missingMessage: string) {}
 
@@ -30,12 +35,16 @@ export class DeferredLLMClient implements LLMClient {
     return this.client !== undefined;
   }
 
+  get webSearchBackend(): WebSearchBackend | undefined {
+    return this.client?.webSearchBackend;
+  }
+
   /** The message explaining what is missing, for callers that ask first. */
   get guidance(): string {
     return this.missingMessage;
   }
 
-  set(client: LLMClient): void {
+  set(client: ConfiguredLLMClient): void {
     this.client = client;
   }
 

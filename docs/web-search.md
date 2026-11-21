@@ -1,8 +1,14 @@
 # Web search
 
-`web_search` lets the Agent look up current information. It is off by default.
-Select a backend at launch. Add `--approve-web-search` to approve its queries
-for that process, including in the TUI.
+`web_search` lets the Agent look up current information. Launch `chivgent`
+normally and use a signed-in DeepSeek model on its official endpoint. The
+Agent can search as needed without asking you to approve each query. The same
+behavior applies when you switch to DeepSeek in a local session. Pass
+`--no-web-search` to disable automatic search for the process.
+
+Use `--web-search` to select a backend explicitly, including when serving
+sessions. Add `--approve-web-search` to approve queries to that backend for
+the process.
 
 ```sh
 chivgent --provider deepseek --web-search deepseek --approve-web-search
@@ -11,11 +17,13 @@ chivgent --web-search https://search.example.com --approve-web-search
 
 ## Backend
 
-With `--web-search deepseek`, the adapter calls the official
+Automatic and explicit DeepSeek search both call the official
 [DeepSeek Search API](https://api-docs.deepseek.com/zh-cn/guides/search/).
-It uses the DeepSeek API key from the environment or saved CLI credentials,
-or the explicit `--api-key` when the startup model provider is DeepSeek.
-Successful searches can incur a separate charge.
+Automatic search uses the active DeepSeek model's key and sends a request only
+when the model calls the tool. Explicit `--web-search deepseek` resolves a
+DeepSeek key from the environment or saved CLI credentials, or from
+`--api-key` when the startup model provider is DeepSeek. Successful searches
+can incur a separate charge.
 
 A URL selects a [SearXNG](https://docs.searxng.org/) instance with its JSON
 API enabled (`format=json`). The adapter appends `/search` when needed.
@@ -33,17 +41,17 @@ reporting stay the same.
 
 | Session | Behavior |
 | --- | --- |
-| No `--web-search` | `web_search` is not registered or described to the model. |
+| Automatic DeepSeek Search | Queries run without a prompt in local sessions using the official DeepSeek endpoint. Plan Mode blocks search. |
+| `--no-web-search`, or no available backend | `web_search` is unavailable. |
 | `--approve-web-search` with a backend | Approves that backend's queries for this process. Shell and write approvals follow their own policy. |
-| `ask-first` | Each query prompts with the provider and the exact query text. Enter denies. |
-| `workspace` | Each query prompts. A web search is network access, so it is not covered by the workspace grant. |
+| Explicit backend in `ask-first` or `workspace` | Each query prompts with the provider and the exact query text. It uses the same keys as [shell approval](shell-sandbox.md#shell-safety-and-approval). |
 | `unrestricted` | Queries run without a prompt. |
 | Legacy flags (`--allow-writes`, `--allow-shell`, …) | `--web-search` itself is the explicit consent; there is no per-query policy. |
 | Non-interactive `ask-first`/`workspace` without startup search approval | No approval channel exists, so the tool returns a denial and sends nothing. |
 
 `/permissions` changes the process policy as usual. `/status` names the
-configured search provider and shows explicit startup approval. Saved conversations
-do not restore this approval. The per-query prompt wraps long queries instead of
+available search provider and shows automatic search or explicit startup approval.
+Saved conversations do not restore startup approval. The per-query prompt wraps long queries instead of
 truncating them, so the user sees what leaves the machine. A denial, a missing
 approval channel, or cancellation produces a tool error and no request.
 

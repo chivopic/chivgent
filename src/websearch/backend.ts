@@ -125,12 +125,16 @@ export class SearxngBackend implements WebSearchBackend {
   }
 }
 
+export const DEEPSEEK_SEARCH_QUERY_CHARACTERS = 128;
+
 export class DeepSeekSearchBackend implements WebSearchBackend {
   readonly name = "DeepSeek Search (api.deepseek.com)";
-  readonly queryCharacters = 128;
+  readonly queryCharacters = DEEPSEEK_SEARCH_QUERY_CHARACTERS;
   private readonly fetcher: typeof fetch;
+  readonly #apiKey: string;
 
-  constructor(private readonly options: { readonly apiKey: string; readonly fetch?: typeof fetch }) {
+  constructor(options: { readonly apiKey: string; readonly fetch?: typeof fetch }) {
+    this.#apiKey = options.apiKey;
     this.fetcher = options.fetch ?? fetch;
   }
 
@@ -144,7 +148,7 @@ export class DeepSeekSearchBackend implements WebSearchBackend {
       method: "POST",
       headers: {
         accept: "application/json",
-        authorization: `Bearer ${this.options.apiKey}`,
+        authorization: `Bearer ${this.#apiKey}`,
         "content-type": "application/json",
       },
       body: JSON.stringify({ query: request.query, count: request.maxResults }),

@@ -241,6 +241,23 @@ it("latches submission across chunks and consumes a split CRLF only once", () =>
   } finally { gate.dispose(); }
 });
 
+it("does not turn pasted text or a split CRLF into an extra approval", () => {
+  const source = new Input();
+  const gate = new TuiInput(source);
+  let received = "";
+  gate.on("data", (chunk) => { received += chunk.toString(); });
+  try {
+    gate.setApprovalMode("allow");
+    source.write("yes\r");
+    expect(received).toBe("");
+    source.write("\r");
+    expect(received).toBe("y\r");
+    gate.acceptLine();
+    source.write("\n");
+    expect(received).toBe("y\r");
+  } finally { gate.dispose(); }
+});
+
 describe("TUI REPL", () => {
   it("clears draft on Ctrl+C and exits on Ctrl+D while idle", async () => {
     vi.stubEnv("TERM", "xterm-256color");
